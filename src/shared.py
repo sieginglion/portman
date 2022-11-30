@@ -1,11 +1,10 @@
 import asyncio
+import json
 import math
-import operator
 import os
-import pickle
 import re
-import time
-from typing import Any, Dict, List
+from dataclasses import dataclass
+from typing import Any
 
 import arrow
 import dotenv
@@ -19,7 +18,7 @@ from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as A
 
-dotenv.load_dotenv('../.env')
+dotenv.load_dotenv()
 
 FMP_KEY = os.environ['FMP_KEY']
 market_to_timezone = {'t': 'Asia/Taipei', 'u': 'America/New_York', 'c': 'UTC'}
@@ -39,11 +38,11 @@ def to_date(time: Any, timezone: str = '') -> str:
     return time.format('YYYY-MM-DD')
 
 
-def gen_dates(start: Arrow, end: Arrow) -> List[str]:
+def gen_dates(start: Arrow, end: Arrow) -> list[str]:
     return [to_date(a) for a in Arrow.range('day', start, end)]
 
 
-def get_values(D: Dict[str, float]) -> A[f8]:
+def get_values(D: dict[str, float]) -> A[f8]:
     return np.array([e[1] for e in sorted(D.items(), key=lambda x: x[0])])
 
 

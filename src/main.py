@@ -7,7 +7,7 @@ app = FastAPI()
 
 
 @app.get('/derived')
-async def get_derived(market: str, symbol: str) -> Dict[str, f8]:
+async def get_derived(market: str, symbol: str) -> dict[str, f8]:
     n_iters = 365
     p = await position.Position(market, symbol, n_iters)
     return {'score': p.calc_score(), 'signal': p.calc_signal()}
@@ -26,7 +26,9 @@ async def get_margin(market: str) -> f8:
         else stock.get_prices(market, symbol, n)
     )
     ema = calc_ema(prices, a, k)
-    return ema[-1] / prices[-1]
+    M = np.clip(ema / prices[-n_iters:], 0, 1)
+    M = (M - 1) * (-0.2 / np.median(M - 1)) + 1
+    return M[-1]
 
 
 if __name__ == '__main__':
