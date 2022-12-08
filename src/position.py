@@ -10,70 +10,63 @@ def calc_trends(prices: A[f8], a: float, k: int) -> A[f8]:
 
 
 @nb.njit
-def simulate_position(prices: A[f8], s_trends: A[f8], l_trends: A[f8]) -> float:
+def simulate_strategy(prices: A[f8], l_trends: A[f8], s_trends: A[f8]) -> float:
     last_price = 0.0
-    b_price, profit = 0.0, 0.0
-    cash, units = 1000.0, 0.0
-    for price, s_trend, l_trend in zip(prices, s_trends, l_trends):
+    cash, position = 1000.0, 0.0
+    for price, l_trend, s_trend in zip(prices, l_trends, s_trends):
         if price != last_price:
-            if s_trend > 0 and l_trend < 0 and b_price == 0:
-                b_price = price
-                cash, units = 0, cash / price
-            elif s_trend < 0 and l_trend > 0 and b_price != 0:
-                profit, b_price = profit + units * (price - b_price), 0
-                cash, units = units * price, 0
+            if l_trend < 0 and s_trend > 0 and cash > 0:
+                cash, position = 0, cash / price
+            elif l_trend > 0 and s_trend < 0 and cash == 0:
+                cash, position = position * price, 0
         last_price = price
-    return profit
+    return cash + position * last_price
 
 
 class Position:
-    def __init__(self, market: str, symbol: str, n_iters: int) -> None:
+    def __init__(self, market: str, symbol: str, scale: int = 364) -> None:
         self.market = market
         self.symbol = symbol
-        self.n_iters = n_iters
-        self.k = round(math.log(0.1) / np.log(1 - 2 / (n_iters + 1)))
+        self.scale = scale
+        self.W = [7, 14, 28] + [91 * 2**i for i in range(int(math.log2(scale / 91)))]
 
     async def ainit(self):
-        n = self.n_iters + (self.k - 1) + 1
+        k = round(math.log(0.1) / math.log(1 - 2 / (self.W[-1] + 1)))
+        n = self.scale + (k - 1) + 1
         self.prices = await (
             crypto.get_prices(self.symbol, n)
             if self.market == 'c'
             else stock.get_prices(self.market, self.symbol, n)
         )
+        self.w_to_trends = {w: calc_trends(self.prices, 2 / (w + 1), k) for w in self.W}
         return self
 
     def __await__(self):
         return self.ainit().__await__()
 
     def calc_score(self) -> f8:
-        prices = self.prices[-(self.n_iters + 1) :]
+        prices = self.prices[-(self.scale + 1) :]
         returns = np.log(prices[1:] / prices[:-1])
         return np.sum(returns[returns > 0]) / np.sum(returns[returns < 0]) ** 2
 
-    def calc_signal(self) -> f8:
-        prices = self.prices[-self.n_iters :]
-        window_to_trends = {
-            window: calc_trends(self.prices, 2 / (window + 1), self.k)
-            for window in range(7, self.n_iters + 1, 7)
-        }
-        windows_to_score = {}
-        for s_window in range(7, int(self.n_iters / 2) + 1, 7):
-            for l_window in range(s_window * 2, self.n_iters + 1, 7):
-                windows_to_score[(s_window, l_window)] = simulate_position(
-                    prices, window_to_trends[s_window], window_to_trends[l_window]
+    def calc_signal(self, scale: int = 364, fixed: bool = False) -> int:
+        W_to_score = {}
+        for w_l in self.W[-1 if fixed else 1 :]:
+            for w_s in filter(lambda x: x < w_l, self.W):
+                W_to_score[(w_l, w_s)] = simulate_strategy(
+                    self.prices[-scale:],
+                    self.w_to_trends[w_l][-scale:],
+                    self.w_to_trends[w_s][-scale:],
                 )
-        s_window, l_window = max(windows_to_score.items(), key=lambda x: x[1])[0]
-        s_trend, l_trend = (
-            window_to_trends[s_window][-1],
-            window_to_trends[l_window][-1],
-        )
-        return s_trend if s_trend * l_trend < 0 else f8(0)
+        w_l, w_s = max(W_to_score.items(), key=lambda x: x[1])[0]
+        l_trend, s_trend = self.w_to_trends[w_l][-1], self.w_to_trends[w_s][-1]
+        return int((s_trend - l_trend) / 2)
 
 
 # async def main():
-#     p = await Position('t', '2330', 365)
-#     p.calc_score()
-#     p.calc_signal()
+#     p = await Position('t', '2330')
+#     print(p.calc_score())
+#     print(p.calc_signal())
 
 
 # asyncio.run(main())

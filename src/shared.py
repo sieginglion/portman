@@ -4,7 +4,7 @@ import math
 import os
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypedDict
 
 import arrow
 import dotenv
