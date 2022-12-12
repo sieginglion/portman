@@ -4,20 +4,22 @@ from shared import *
 
 
 @nb.njit(parallel=True)
-def calc_trends(prices: A[f8], a: float, k: int) -> A[f8]:
+def calc_trends(prices: Array[f8], a: float, k: int) -> Array[f8]:
     ema = calc_ema(prices, a, k)
     return np.sign(ema[1:] - ema[:-1])
 
 
 @nb.njit
-def simulate_strategy(prices: A[f8], l_trends: A[f8], s_trends: A[f8]) -> float:
+def simulate_strategy(
+    prices: Array[f8], l_trends: Array[f8], s_trends: Array[f8]
+) -> float:
     last_price = 0.0
     cash, position = 1000.0, 0.0
     for price, l_trend, s_trend in zip(prices, l_trends, s_trends):
         if price != last_price:
-            if l_trend < 0 and s_trend > 0 and cash > 0:
+            if l_trend < 0 < s_trend and cash > 0:
                 cash, position = 0, cash / price
-            elif l_trend > 0 and s_trend < 0 and cash == 0:
+            elif s_trend < 0 < l_trend and cash == 0:
                 cash, position = position * price, 0
         last_price = price
     return cash + position * last_price

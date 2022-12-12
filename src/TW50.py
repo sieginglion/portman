@@ -1,7 +1,7 @@
 from shared import *
 
 try:
-    with open('.TW50.json', 'r') as f:
+    with open('.TW50.json', 'r', encoding='utf-8') as f:
         cache = json.load(f)
 except FileNotFoundError:
     cache = {}
@@ -12,23 +12,24 @@ class CachedResponse:
     hit: bool
     text: str
 
-    def json(self):
+    def json(self) -> dict:
         return json.loads(self.text)
 
 
 async def cached_get(url: str) -> CachedResponse:
     if not (hit := url in cache):
+        print(url)
         async with AsyncClient(http2=True) as h:
             res = await h.get(url)
-        print(url)
         res.raise_for_status()
         cache[url] = res.text
-        with open('.TW50.json', 'w') as f:
+        with open('.TW50.json', 'w', encoding='utf-8') as f:
             json.dump(cache, f)
     return CachedResponse(hit, cache[url])
 
 
-async def get_indices(n: int) -> A[f8]:
+async def get_indices(n: int) -> Array[f8]:
+    del cache[max(cache)]
     now = arrow.now(market_to_timezone['t'])
     start = now.shift(days=-(n + 13))
     date_to_price = dict.fromkeys(gen_dates(start, now), 0.0)
@@ -48,4 +49,4 @@ async def get_indices(n: int) -> A[f8]:
     return get_patched(get_values(date_to_price))[-n:]
 
 
-# asyncio.run(get_indices(32))
+asyncio.run(get_indices(32))

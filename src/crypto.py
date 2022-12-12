@@ -1,16 +1,19 @@
 from shared import *
 
-res = r.get(
-    'https://api.coingecko.com/api/v3/coins/markets',
-    params={
-        'per_page': 100,
-        'vs_currency': 'usd',
-    },
-)
-symbol_to_id = {e['symbol'].upper(): e['id'] for e in res.json()}
+symbol_to_id = {
+    e['symbol'].upper(): e['id']
+    for e in r.get(
+        'https://api.coingecko.com/api/v3/coins/markets',
+        params={
+            'per_page': 100,
+            'vs_currency': 'usd',
+        },
+        timeout=10,
+    ).json()
+}
 
 
-async def get_prices(symbol: str, n: int) -> A[f8]:
+async def get_prices(symbol: str, n: int) -> Array[f8]:
     now = arrow.now('UTC')
     date_to_price = dict.fromkeys(gen_dates(now.shift(days=-n), now), 0.0)
     async with AsyncClient(http2=True) as h:
@@ -23,8 +26,7 @@ async def get_prices(symbol: str, n: int) -> A[f8]:
             },
         )
     for e in res.json()['prices']:
-        date = to_date(e[0], 'UTC')
-        if date in date_to_price:
+        if (date := to_date(e[0], 'UTC')) in date_to_price:
             date_to_price[date] = e[1]
     return get_patched(get_values(date_to_price))[-n:]
 

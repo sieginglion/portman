@@ -16,7 +16,7 @@ from arrow import Arrow
 from fastapi import FastAPI
 from httpx import AsyncClient
 from numpy import float64 as f8
-from numpy.typing import NDArray as A
+from numpy.typing import NDArray as Array
 
 dotenv.load_dotenv()
 
@@ -42,12 +42,12 @@ def gen_dates(start: Arrow, end: Arrow) -> list[str]:
     return [to_date(a) for a in Arrow.range('day', start, end)]
 
 
-def get_values(D: dict[str, float]) -> A[f8]:
+def get_values(D: dict[str, float]) -> Array[f8]:
     return np.array([e[1] for e in sorted(D.items(), key=lambda x: x[0])])
 
 
 @nb.njit
-def get_patched(A: A[f8]) -> A[f8]:
+def get_patched(A: Array[f8]) -> Array[f8]:
     for i in range(1, len(A)):
         if not A[i] and A[i - 1]:
             A[i] = A[i - 1]
@@ -55,7 +55,7 @@ def get_patched(A: A[f8]) -> A[f8]:
 
 
 @nb.njit(parallel=True)
-def calc_ema(A: A[f8], a: float, k: int) -> A[f8]:
+def calc_ema(A: Array[f8], a: float, k: int) -> Array[f8]:
     K = a * (1 - a) ** np.arange(k - 1, -1, -1)
     K = K / np.sum(K)
     return np.array([np.sum(A[i : i + k] * K) for i in range(len(A) - k + 1)])
