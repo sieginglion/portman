@@ -49,4 +49,4 @@ async def get_indices(n: int) -> Array[f8]:
     return get_patched(get_values(date_to_price))[-n:]
 
 
-asyncio.run(get_indices(32))
+# asyncio.run(get_indices(32))
