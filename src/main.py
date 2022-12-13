@@ -1,4 +1,5 @@
 import position
+import ranking
 from shared import *
 
 app = FastAPI()
@@ -7,6 +8,11 @@ app = FastAPI()
 class Derived(TypedDict):
     score: f8
     signal: int
+
+
+@app.get('/ranking')
+def get_ranking(k: int) -> HTMLResponse:
+    return HTMLResponse(ranking.get_ranking(k))
 
 
 @app.get('/derived')

@@ -47,8 +47,9 @@ class Position:
         return self.ainit().__await__()
 
     def calc_score(self) -> f8:
-        prices = self.prices[-(self.scale + 1) :]
-        returns = np.log(prices[1:] / prices[:-1])
+        interval = 7
+        prices = self.prices[-(self.scale + interval) :]
+        returns = np.log(prices[interval:] / prices[:-interval])
         return np.sum(returns[returns > 0]) / np.sum(returns[returns < 0]) ** 2
 
     def calc_signal(self, scale: int = 364, fixed: bool = False) -> int:

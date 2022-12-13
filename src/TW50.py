@@ -18,7 +18,7 @@ class CachedResponse:
 
 async def cached_get(url: str) -> CachedResponse:
     if not (hit := url in cache):
-        print(url)
+        logging.info(url)
         async with AsyncClient(http2=True) as h:
             res = await h.get(url)
         res.raise_for_status()
