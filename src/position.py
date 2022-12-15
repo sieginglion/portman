@@ -17,7 +17,7 @@ def simulate_strategy(
     cash, position = 1000.0, 0.0
     for price, l_trend, s_trend in zip(prices, l_trends, s_trends):
         if price != last_price:
-            if l_trend < 0 < s_trend and cash > 0:
+            if s_trend > 0 > l_trend and cash > 0:
                 cash, position = 0, cash / price
             elif s_trend < 0 < l_trend and cash == 0:
                 cash, position = position * price, 0

@@ -12,7 +12,7 @@ async def get_unadjusted(h: AsyncClient, market: str, symbol: str, n: int) -> Ar
                 f'https://financialmodelingprep.com/api/v3/historical-price-full/{ symbol }{ ".TW" if market == "t" else "" }',
                 params={
                     'from': min(date_to_price),
-                    'serietype': 'bar',
+                    'serietype': 'line',
                 },
             ),
             h.get(
@@ -34,8 +34,7 @@ async def get_today_dividend(h: AsyncClient, market: str, symbol: str) -> float:
         for e in res.json()['data']:
             if e[1] == symbol and e[3] == '息':
                 y, m, d = map(int, re.findall('\\d+', e[0]))
-                date = to_date(Arrow(y + 1911, m, d))
-                return float(e[7]) if date == today else 0.0
+                return float(e[7]) if to_date(Arrow(y + 1911, m, d)) == today else 0.0
     else:
         res = await h.get(
             'https://financialmodelingprep.com/api/v3/stock_dividend_calendar',
@@ -66,6 +65,24 @@ async def get_dividends(h: AsyncClient, market: str, symbol: str, n: int) -> Arr
     return get_values(date_to_dividend)[-n:]
 
 
+async def get_rates(h: AsyncClient, market: str, n: int) -> Array[f8]:
+    if market == 'u':
+        return np.ones(n)
+    now = arrow.now(market_to_timezone['t'])
+    date_to_rate = dict.fromkeys(gen_dates(now.shift(days=-n), now), 0.0)
+    res = await h.get(
+        'https://financialmodelingprep.com/api/v3/historical-price-full/USDTWD',
+        params={
+            'from': min(date_to_rate),
+            'serietype': 'line',
+        },
+    )
+    for e in res.json()['historical']:
+        if e['date'] in date_to_rate:
+            date_to_rate[e['date']] = e['close']
+    return np.array(get_patched(get_values(date_to_rate))[-n:])
+
+
 @nb.njit
 def calc_adjusted(unadjusted: Array[f8], dividends: Array[f8]) -> Array[f8]:
     A = np.ones(len(dividends))
@@ -79,10 +96,12 @@ async def get_prices(market: str, symbol: str, n: int) -> Array[f8]:
     if symbol == 'TW50':
         return await TW50.get_indices(n)
     async with AsyncClient(http2=True, params={'apikey': FMP_KEY}) as h:
-        unadjusted, dividends = await asyncio.gather(
-            get_unadjusted(h, market, symbol, n), get_dividends(h, market, symbol, n)
+        unadjusted, dividends, rates = await asyncio.gather(
+            get_unadjusted(h, market, symbol, n),
+            get_dividends(h, market, symbol, n),
+            get_rates(h, market, n),
         )
-    return calc_adjusted(unadjusted, dividends)
+    return calc_adjusted(unadjusted, dividends) / rates
 
 
 # asyncio.run(get_prices('t', '2330', 1))

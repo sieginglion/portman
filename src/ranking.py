@@ -18,7 +18,12 @@ def get_symbol_to_name_and_sector(k: int) -> dict[str, tuple[str, str]]:
 
 def get_profits(symbol: str) -> Array[f8]:
     res = r.get(
-        f'https://financialmodelingprep.com/api/v3/income-statement/{ symbol }?period=quarter&limit={ N_QTR + 1 }&apikey={ FMP_KEY }',
+        f'https://financialmodelingprep.com/api/v3/income-statement/{ symbol }',
+        params={
+            'apikey': FMP_KEY,
+            'limit': N_QTR + 1,
+            'period': 'quarter',
+        },
         timeout=10,
     )
     time.sleep(0.2)
