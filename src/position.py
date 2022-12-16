@@ -25,6 +25,11 @@ def simulate_strategy(
     return cash + position * last_price
 
 
+class Metrics(TypedDict):
+    omega: f8
+    downside: f8
+
+
 class Position:
     def __init__(self, market: str, symbol: str, scale: int = 364) -> None:
         self.market = market
@@ -46,11 +51,17 @@ class Position:
     def __await__(self):
         return self.ainit().__await__()
 
-    def calc_score(self) -> f8:
-        interval = 7
-        prices = self.prices[-(self.scale + interval) :]
-        returns = np.log(prices[interval:] / prices[:-interval])
-        return np.sum(returns[returns > 0]) / np.sum(returns[returns < 0]) ** 2
+    def calc_metrics(self) -> Metrics:
+        d = 7
+        P = self.prices[-(self.scale + d) :]
+        I = np.arange(0, len(P), d)
+        P = np.flip(np.flip(P)[I])
+        R = np.log(P[1:] / P[:-1])
+        D = R[R < 0]
+        return {
+            'omega': np.sum(R[R > 0]) / np.abs(np.sum(D)),
+            'downside': (np.sum(D**2) / len(R)) ** 0.5,
+        }
 
     def calc_signal(self, scale: int = 364, fixed: bool = False) -> int:
         W_to_score = {}
@@ -68,7 +79,7 @@ class Position:
 
 # async def main():
 #     p = await Position('t', '2330')
-#     print(p.calc_score())
+#     print(p.calc_metrics())
 #     print(p.calc_signal())
 
 

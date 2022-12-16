@@ -6,7 +6,8 @@ app = FastAPI()
 
 
 class Derived(TypedDict):
-    score: f8
+    omega: f8
+    downside: f8
     signal: int
 
 
@@ -18,7 +19,7 @@ def get_ranking(k: int) -> HTMLResponse:
 @app.get('/derived')
 async def get_derived(market: str, symbol: str) -> Derived:
     p = await position.Position(market, symbol)
-    return {'score': p.calc_score(), 'signal': p.calc_signal()}
+    return {**p.calc_metrics(), 'signal': p.calc_signal()}
 
 
 @app.get('/margin')
