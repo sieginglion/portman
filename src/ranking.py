@@ -1,7 +1,5 @@
 from shared import *
 
-N_QTR = 8
-
 
 def get_symbol_to_name_and_sector(k: int) -> dict[str, tuple[str, str]]:
     res = r.get(
@@ -21,7 +19,7 @@ def get_profits(symbol: str) -> Array[f8]:
         f'https://financialmodelingprep.com/api/v3/income-statement/{ symbol }',
         params={
             'apikey': FMP_KEY,
-            'limit': N_QTR + 1,
+            'limit': 9,
             'period': 'quarter',
         },
         timeout=10,
@@ -29,10 +27,7 @@ def get_profits(symbol: str) -> Array[f8]:
     time.sleep(0.2)
     res.raise_for_status()
     return np.array(
-        [
-            e['grossProfit']
-            for e in sorted(res.json(), key=lambda x: x['date'])[-N_QTR:]
-        ],
+        [e['grossProfit'] for e in sorted(res.json(), key=lambda x: x['date'])[-8:]],
         f8,
     )
 
@@ -45,7 +40,7 @@ def get_symbol_to_profits(symbols: list[str]) -> dict[str, Array[f8]]:
         except r.HTTPError:
             logging.error(symbol)
         else:
-            if not (len(profits) == N_QTR and all(profits) > 0):
+            if len(profits) != 8:
                 logging.warning(symbol)
             else:
                 symbol_to_profits[symbol] = profits
@@ -55,8 +50,8 @@ def get_symbol_to_profits(symbols: list[str]) -> dict[str, Array[f8]]:
 def calc_symbol_to_score(symbol_to_profits: dict[str, Array[f8]]) -> dict[str, float]:
     symbol_to_score = {}
     for symbol, profits in symbol_to_profits.items():
-        ma = np.convolve(profits, np.full(4, 0.25), 'valid')
-        symbol_to_score[symbol] = (ma[-1] - ma[0]).item()
+        ttm = np.convolve(profits, np.ones(4), 'valid')
+        symbol_to_score[symbol] = (ttm[4] - ttm[0]).item()
     return symbol_to_score
 
 

@@ -58,7 +58,7 @@ async def get_dividends(h: AsyncClient, market: str, symbol: str, n: int) -> Arr
         ),
         get_today_dividend(h, market, symbol),
     )
-    for e in res.json()['historical']:
+    for e in res.json().get('historical', []):
         if e['date'] in date_to_dividend:
             date_to_dividend[e['date']] = e['adjDividend']
     date_to_dividend[max(date_to_dividend)] = today
