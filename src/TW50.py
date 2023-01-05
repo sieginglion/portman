@@ -29,7 +29,8 @@ async def cached_get(url: str) -> CachedResponse:
 
 
 async def get_indices(n: int) -> Array[f8]:
-    del cache[max(cache)]
+    if cache:
+        del cache[max(cache)]
     now = arrow.now(market_to_timezone['t'])
     start = now.shift(days=-(n + 13))
     date_to_price = dict.fromkeys(gen_dates(start, now), 0.0)

@@ -8,7 +8,7 @@ def get_symbol_to_name_and_sector(k: int) -> dict[str, tuple[str, str]]:
     )
     return {
         r.Ticker.replace('.', '-'): (r.Name, r.Sector)
-        for _, r in itertools.islice(
+        for _, r in islice(
             pd.read_excel(io.BytesIO(res.content), header=4).iterrows(), k
         )
     }

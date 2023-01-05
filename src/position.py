@@ -13,16 +13,19 @@ def calc_trends(prices: Array[f8], a: float, k: int) -> Array[f8]:
 def simulate_strategy(
     prices: Array[f8], l_trends: Array[f8], s_trends: Array[f8]
 ) -> float:
-    last_price = 0.0
-    cash, position = 1000.0, 0.0
+    last_trade, earned = 0, 0
+    cash, position = 1000, 0
+    last_price = 0
     for price, l_trend, s_trend in zip(prices, l_trends, s_trends):
         if price != last_price:
             if s_trend > 0 > l_trend and cash > 0:
+                last_trade = price
                 cash, position = 0, cash / price
             elif s_trend < 0 < l_trend and cash == 0:
+                earned += position * (price - last_trade)
                 cash, position = position * price, 0
         last_price = price
-    return cash + position * last_price
+    return earned
 
 
 class Metrics(TypedDict):
@@ -31,15 +34,21 @@ class Metrics(TypedDict):
 
 
 class Position:
-    def __init__(self, market: str, symbol: str, scale: int = 364) -> None:
+    def __init__(
+        self, market: str, symbol: str, metrics_scale: int, max_signal_scale: int
+    ) -> None:
         self.market = market
         self.symbol = symbol
-        self.scale = scale
-        self.W = [7, 14, 28] + [91 * 2**i for i in range(int(math.log2(scale / 91)))]
+        self.metrics_scale = metrics_scale
+        self.max_signal_scale = max_signal_scale
+        self.d = 7
+        self.W = [7, 14, 28] + [
+            2**i * 91 for i in range(int(math.log2(max_signal_scale / 91)))
+        ]
 
     async def ainit(self):
         k = round(math.log(0.1) / math.log(1 - 2 / (self.W[-1] + 1)))
-        n = self.scale + (k - 1) + 1
+        n = max(self.metrics_scale + self.d, self.max_signal_scale + (k - 1))
         self.prices = await (
             crypto.get_prices(self.symbol, n)
             if self.market == 'c'
@@ -52,9 +61,8 @@ class Position:
         return self.ainit().__await__()
 
     def calc_metrics(self) -> Metrics:
-        d = 7
-        P = self.prices[-(self.scale + d) :]
-        I = np.arange(0, len(P), d)
+        P = self.prices[-(self.metrics_scale + self.d) :]
+        I = np.arange(0, len(P), self.d)
         P = np.flip(np.flip(P)[I])
         R = np.log(P[1:] / P[:-1])
         D = R[R < 0]
@@ -63,9 +71,9 @@ class Position:
             'downside': (np.sum(D**2) / len(R)) ** 0.5,
         }
 
-    def calc_signal(self, scale: int = 364, fixed: bool = False) -> int:
+    def calc_signal(self, scale: int, fixed: bool) -> int:
         W_to_score = {}
-        for w_l in self.W[-1 if fixed else 1 :]:
+        for w_l in islice(filter(lambda x: x < scale, self.W))[-1 if fixed else 0 :]:
             for w_s in filter(lambda x: x < w_l, self.W):
                 W_to_score[(w_l, w_s)] = simulate_strategy(
                     self.prices[-scale:],
@@ -78,9 +86,9 @@ class Position:
 
 
 # async def main():
-#     p = await Position('t', '2330')
+#     p = await Position('u', 'MSFT', 364, 364)
 #     print(p.calc_metrics())
-#     print(p.calc_signal())
+#     print(p.calc_signal(364, False))
 
 
 # asyncio.run(main())

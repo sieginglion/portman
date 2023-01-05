@@ -1,6 +1,5 @@
 import asyncio
 import io
-import itertools
 import json
 import logging
 import math
@@ -21,6 +20,7 @@ from arrow import Arrow
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from httpx import AsyncClient
+from more_itertools import islice_extended as islice
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
