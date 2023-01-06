@@ -27,8 +27,7 @@ def get_profits(symbol: str) -> Array[f8]:
     time.sleep(0.2)
     res.raise_for_status()
     return np.array(
-        [e['grossProfit'] for e in sorted(res.json(), key=lambda x: x['date'])[-8:]],
-        f8,
+        [e['grossProfit'] for e in sorted(res.json(), key=lambda x: x['date'])[-8:]], f8
     )
 
 
@@ -74,4 +73,4 @@ def get_ranking(k: int) -> str:
     return gen_ranking(symbol_to_score, symbol_to_name_and_sector)
 
 
-# print(get_ranking(10))
+# get_ranking(10)

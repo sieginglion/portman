@@ -25,6 +25,7 @@ from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
 dotenv.load_dotenv()
+logging.basicConfig(level=logging.INFO)
 
 FMP_KEY = os.environ['FMP_KEY']
 market_to_timezone = {'t': 'Asia/Taipei', 'u': 'America/New_York', 'c': 'UTC'}

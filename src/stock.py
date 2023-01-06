@@ -105,4 +105,4 @@ async def get_prices(market: str, symbol: str, n: int) -> Array[f8]:
 
 
 # asyncio.run(get_prices('t', '2330', 1))
-# asyncio.run(get_prices('u', 'AAPL', 1))
+# asyncio.run(get_prices('u', 'MSFT', 1))

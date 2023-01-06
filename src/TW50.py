@@ -1,7 +1,7 @@
 from shared import *
 
 try:
-    with open('.TW50.json', 'r', encoding='utf-8') as f:
+    with open('.TW50.json', 'r') as f:
         cache = json.load(f)
 except FileNotFoundError:
     cache = {}
@@ -50,4 +50,4 @@ async def get_indices(n: int) -> Array[f8]:
     return get_patched(get_values(date_to_price))[-n:]
 
 
-# asyncio.run(get_indices(32))
+# asyncio.run(get_indices(1))

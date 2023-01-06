@@ -35,20 +35,19 @@ class Metrics(TypedDict):
 
 class Position:
     def __init__(
-        self, market: str, symbol: str, metrics_scale: int, max_signal_scale: int
+        self, market: str, symbol: str, m_scale: int, max_s_scale: int
     ) -> None:
         self.market = market
         self.symbol = symbol
-        self.metrics_scale = metrics_scale
-        self.max_signal_scale = max_signal_scale
-        self.d = 7
+        self.m_scale = m_scale
+        self.max_s_scale = max_s_scale
         self.W = [7, 14, 28] + [
-            2**i * 91 for i in range(int(math.log2(max_signal_scale / 91)))
+            2**i * 91 for i in range(int(math.log2(max_s_scale / 91)))
         ]
 
     async def ainit(self):
         k = round(math.log(0.1) / math.log(1 - 2 / (self.W[-1] + 1)))
-        n = max(self.metrics_scale + self.d, self.max_signal_scale + (k - 1))
+        n = max(self.m_scale + 1, self.max_s_scale + (k - 1))
         self.prices = await (
             crypto.get_prices(self.symbol, n)
             if self.market == 'c'
@@ -61,9 +60,7 @@ class Position:
         return self.ainit().__await__()
 
     def calc_metrics(self) -> Metrics:
-        P = self.prices[-(self.metrics_scale + self.d) :]
-        I = np.arange(0, len(P), self.d)
-        P = np.flip(np.flip(P)[I])
+        P = self.prices[-(self.m_scale + 1) :]
         R = np.log(P[1:] / P[:-1])
         D = R[R < 0]
         return {
@@ -73,7 +70,7 @@ class Position:
 
     def calc_signal(self, scale: int, fixed: bool) -> int:
         W_to_score = {}
-        for w_l in islice(filter(lambda x: x < scale, self.W))[-1 if fixed else 0 :]:
+        for w_l in islice(filter(lambda x: x < scale, self.W))[-1 if fixed else 1 :]:
             for w_s in filter(lambda x: x < w_l, self.W):
                 W_to_score[(w_l, w_s)] = simulate_strategy(
                     self.prices[-scale:],
