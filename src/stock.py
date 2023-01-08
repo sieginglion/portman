@@ -69,7 +69,7 @@ async def get_rates(h: AsyncClient, market: str, n: int) -> Array[f8]:
     if market == 'u':
         return np.ones(n)
     now = arrow.now(market_to_timezone['t'])
-    date_to_rate = dict.fromkeys(gen_dates(now.shift(days=-n), now), 0.0)
+    date_to_rate = dict.fromkeys(gen_dates(now.shift(days=-(n + 13)), now), 0.0)
     res = await h.get(
         'https://financialmodelingprep.com/api/v3/historical-price-full/USDTWD',
         params={
