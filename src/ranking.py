@@ -71,6 +71,3 @@ def get_ranking(k: int) -> str:
     symbol_to_profits = get_symbol_to_profits(list(symbol_to_name_and_sector.keys()))
     symbol_to_score = calc_symbol_to_score(symbol_to_profits)
     return gen_ranking(symbol_to_score, symbol_to_name_and_sector)
-
-
-# get_ranking(10)

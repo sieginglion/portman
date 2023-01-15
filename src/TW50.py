@@ -48,6 +48,3 @@ async def get_indices(n: int) -> Array[f8]:
             if (date := to_date(Arrow(y + 1911, m, d))) in date_to_price:
                 date_to_price[date] = float(e[1].replace(',', ''))
     return get_patched(get_values(date_to_price))[-n:]
-
-
-# asyncio.run(get_indices(1))

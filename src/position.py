@@ -34,26 +34,29 @@ class Metrics(TypedDict):
 
 
 class Position:
-    def __init__(
-        self, market: str, symbol: str, m_scale: int, max_s_scale: int
-    ) -> None:
+    def __init__(self, market: str, symbol: str, m_scale: int, max_w: int) -> None:
         self.market = market
         self.symbol = symbol
         self.m_scale = m_scale
-        self.max_s_scale = max_s_scale
         self.W = [7, 14, 28] + [
-            2**i * 91 for i in range(int(math.log2(max_s_scale / 91)))
+            2**i * 91 for i in range(int(math.log2(max_w / 91)) + 1)
         ]
 
     async def ainit(self):
-        k = round(math.log(0.1) / math.log(1 - 2 / (self.W[-1] + 1)))
-        n = max(self.m_scale + 1, self.max_s_scale + (k - 1))
+        def calc_k(w: int) -> int:
+            return round(math.log(0.1) / math.log(1 - 2 / (w + 1)))
+
+        n = max(self.m_scale + 1, self.W[-1] * 2 + calc_k(self.W[-1]))
         self.prices = await (
             crypto.get_prices(self.symbol, n)
             if self.market == 'c'
             else stock.get_prices(self.market, self.symbol, n)
         )
-        self.w_to_trends = {w: calc_trends(self.prices, 2 / (w + 1), k) for w in self.W}
+        if len(self.prices) < self.m_scale + 1:
+            raise ValueError
+        W = list(filter(lambda w: w * 2 + calc_k(w) <= len(self.prices), self.W))
+        k = calc_k(W[-1])
+        self.w_to_trends = {w: calc_trends(self.prices, 2 / (w + 1), k) for w in W}
         return self
 
     def __await__(self):
@@ -68,24 +71,27 @@ class Position:
             'downside': (np.sum(D**2) / len(R)) ** 0.5,
         }
 
-    def calc_signal(self, scale: int, fixed: bool) -> int:
-        W_to_score = {}
-        for w_l in islice(filter(lambda x: x < scale, self.W))[-1 if fixed else 1 :]:
-            for w_s in filter(lambda x: x < w_l, self.W):
-                W_to_score[(w_l, w_s)] = simulate_strategy(
-                    self.prices[-scale:],
-                    self.w_to_trends[w_l][-scale:],
-                    self.w_to_trends[w_s][-scale:],
-                )
-        w_l, w_s = max(W_to_score.items(), key=lambda x: x[1])[0]
+    def calc_signal(self, w_l: int) -> int:
+        if w_l not in self.w_to_trends:
+            return 0
+        scale = w_l * 2
+        w_s_to_score = {
+            w_s: simulate_strategy(
+                self.prices[-scale:],
+                self.w_to_trends[w_l][-scale:],
+                self.w_to_trends[w_s][-scale:],
+            )
+            for w_s in filter(lambda w: w < w_l, self.W)
+        }
+        w_s = max(w_s_to_score.items(), key=lambda x: x[1])[0]
         l_trend, s_trend = self.w_to_trends[w_l][-1], self.w_to_trends[w_s][-1]
         return int((s_trend - l_trend) / 2)
 
 
 # async def main():
-#     p = await Position('u', 'MSFT', 364, 364)
+#     p = await Position('c', 'ETH', 364 * 4, 364 * 4)
 #     print(p.calc_metrics())
-#     print(p.calc_signal(364, False))
+#     print(p.calc_signal(364 * 2))
 
 
 # asyncio.run(main())

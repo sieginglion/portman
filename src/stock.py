@@ -80,7 +80,7 @@ async def get_rates(h: AsyncClient, market: str, n: int) -> Array[f8]:
     for e in res.json()['historical']:
         if e['date'] in date_to_rate:
             date_to_rate[e['date']] = e['close']
-    return np.array(get_patched(get_values(date_to_rate))[-n:])
+    return get_patched(get_values(date_to_rate))[-n:]
 
 
 @nb.njit
@@ -102,7 +102,3 @@ async def get_prices(market: str, symbol: str, n: int) -> Array[f8]:
             get_rates(h, market, n),
         )
     return calc_adjusted(unadjusted, dividends) / rates
-
-
-# asyncio.run(get_prices('t', '2330', 1))
-# asyncio.run(get_prices('u', 'MSFT', 1))

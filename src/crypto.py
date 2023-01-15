@@ -28,7 +28,4 @@ async def get_prices(symbol: str, n: int) -> Array[f8]:
     for e in res.json()['prices']:
         if (date := to_date(e[0], 'UTC')) in date_to_price:
             date_to_price[date] = e[1]
-    return get_patched(get_values(date_to_price))[-n:]
-
-
-# asyncio.run(get_prices('BTC', 1))
+    return get_patched(np.trim_zeros(get_values(date_to_price), 'f'))[-n:]
