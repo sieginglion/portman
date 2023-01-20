@@ -43,20 +43,17 @@ class Position:
         ]
 
     async def ainit(self):
-        def calc_k(w: int) -> int:
-            return round(math.log(0.1) / math.log(1 - 2 / (w + 1)))
-
         n = max(self.m_scale + 1, self.W[-1] * 2 + calc_k(self.W[-1]))
         self.prices = await (
             crypto.get_prices(self.symbol, n)
             if self.market == 'c'
             else stock.get_prices(self.market, self.symbol, n)
         )
-        if len(self.prices) < self.m_scale + 1:
+        if len(self.prices) != n:
             raise ValueError
-        W = list(filter(lambda w: w * 2 + calc_k(w) <= len(self.prices), self.W))
-        k = calc_k(W[-1])
-        self.w_to_trends = {w: calc_trends(self.prices, 2 / (w + 1), k) for w in W}
+        self.w_to_trends = {
+            w: calc_trends(self.prices, 2 / (w + 1), calc_k(w)) for w in self.W
+        }
         return self
 
     def __await__(self):
@@ -71,9 +68,7 @@ class Position:
             'downside': (np.sum(D**2) / len(R)) ** 0.5,
         }
 
-    def calc_signal(self, w_l: int) -> int:
-        if w_l not in self.w_to_trends:
-            return 0
+    def calc_signal(self, w_l: int) -> Literal[-1, 0, 1]:
         scale = w_l * 2
         w_s_to_score = {
             w_s: simulate_strategy(
@@ -81,17 +76,21 @@ class Position:
                 self.w_to_trends[w_l][-scale:],
                 self.w_to_trends[w_s][-scale:],
             )
-            for w_s in filter(lambda w: w < w_l, self.W)
+            for w_s in self.W
+            if w_s < w_l
         }
         w_s = max(w_s_to_score.items(), key=lambda x: x[1])[0]
         l_trend, s_trend = self.w_to_trends[w_l][-1], self.w_to_trends[w_s][-1]
         return int((s_trend - l_trend) / 2)
 
+    def calc_signals(self) -> list[Literal[-1, 0, 1]]:
+        return [self.calc_signal(w_l) for w_l in self.W[3:]]
+
 
 # async def main():
-#     p = await Position('c', 'ETH', 364 * 4, 364 * 4)
+#     p = await Position('c', 'ETH', 364 * 4, 364)
 #     print(p.calc_metrics())
-#     print(p.calc_signal(364 * 2))
+#     print(p.calc_signals())
 
 
 # asyncio.run(main())

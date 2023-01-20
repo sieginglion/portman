@@ -7,7 +7,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 import arrow
 import dotenv
@@ -29,7 +29,7 @@ dotenv.load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 FMP_KEY = os.environ['FMP_KEY']
-market_to_timezone = {'t': 'Asia/Taipei', 'u': 'America/New_York', 'c': 'UTC'}
+MARKET_TO_TIMEZONE = {'t': 'Asia/Taipei', 'u': 'America/New_York', 'c': 'UTC'}
 
 
 def to_date(time: Any, timezone: str = '') -> str:
@@ -55,11 +55,21 @@ def get_values(D: dict[str, float]) -> Array[f8]:
 
 
 @nb.njit
-def get_patched(A: Array[f8]) -> Array[f8]:
+def clean_up(A: Array[f8]) -> Array[f8]:
+    def diff(a: f8, b: f8) -> f8:
+        return np.abs(np.log(a / b))
+
     for i in range(1, len(A)):
-        if not A[i] and A[i - 1]:
+        if A[i - 1] and not A[i]:
+            A[i] = A[i - 1]
+    for i in range(1, len(A) - 1):
+        if A[i - 1] and diff(A[i - 1], A[i]) > 0.693 and diff(A[i], A[i + 1]) > 0.693:
             A[i] = A[i - 1]
     return A
+
+
+def calc_k(w: int) -> int:
+    return round(math.log(0.05) / math.log(1 - 2 / (w + 1)))
 
 
 @nb.njit(parallel=True)
