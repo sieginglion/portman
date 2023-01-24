@@ -29,21 +29,20 @@ def simulate_strategy(
 
 
 class Metrics(TypedDict):
+    ER: f8
     omega: f8
     downside: f8
 
 
 class Position:
-    def __init__(self, market: str, symbol: str, m_scale: int, max_w: int) -> None:
+    def __init__(self, market: Literal['c', 't', 'u'], symbol: str, scale: int) -> None:
         self.market = market
         self.symbol = symbol
-        self.m_scale = m_scale
-        self.W = [7, 14, 28] + [
-            2**i * 91 for i in range(int(math.log2(max_w / 91)) + 1)
-        ]
+        self.scale = scale
+        self.W = [7, 14, 28, 91, 182, 364]
 
     async def ainit(self):
-        n = max(self.m_scale + 1, self.W[-1] * 2 + calc_k(self.W[-1]))
+        n = max(self.scale + 1, self.W[-1] * 2 + calc_k(self.W[-1]))
         self.prices = await (
             crypto.get_prices(self.symbol, n)
             if self.market == 'c'
@@ -59,12 +58,15 @@ class Position:
     def __await__(self):
         return self.ainit().__await__()
 
-    def calc_metrics(self) -> Metrics:
-        P = self.prices[-(self.m_scale + 1) :]
+    def calc_metrics(self, theta: float = 0) -> Metrics:
+        P = self.prices[-(self.scale + 1) :]
         R = np.log(P[1:] / P[:-1])
+        u = np.mean(R)
+        R -= theta
         D = R[R < 0]
         return {
-            'omega': np.sum(R[R > 0]) / np.abs(np.sum(D)),
+            'ER': u,
+            'omega': np.sum(R[R > 0]) / -np.sum(D),
             'downside': (np.sum(D**2) / len(R)) ** 0.5,
         }
 
@@ -88,7 +90,7 @@ class Position:
 
 
 # async def main():
-#     p = await Position('c', 'ETH', 364 * 4, 364)
+#     p = await Position('c', 'ETH', 364 * 4)
 #     print(p.calc_metrics())
 #     print(p.calc_signals())
 

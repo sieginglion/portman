@@ -1,13 +1,12 @@
-import crypto
 import position
 import ranking
-import stock
 from shared import *
 
 app = FastAPI()
 
 
 class Derived(TypedDict):
+    ER: f8
     omega: f8
     downside: f8
     signals: list[Literal[-1, 0, 1]]
@@ -19,27 +18,9 @@ def get_ranking(k: int) -> HTMLResponse:
 
 
 @app.get('/derived')
-async def get_derived(market: str, symbol: str, m_scale: int, max_w: int) -> Derived:
-    p = await position.Position(market, symbol, m_scale, max_w)
-    return {**p.calc_metrics(), 'signals': p.calc_signals()}
-
-
-@app.get('/margin')
-async def get_margin(market: str, symbol: str) -> float:
-    w = 364 * 4
-    k = calc_k(w)
-    n = w * 2 + (k - 1)
-    prices = await (
-        crypto.get_prices(symbol, n)
-        if market == 'c'
-        else stock.get_prices(market, symbol, n)
-    )
-    ema = calc_ema(prices, 2 / (w + 1), k)
-    ratios = ema / prices[-len(ema) :]
-    p50, p95 = np.percentile(ratios, 50), np.percentile(ratios, 95)
-    margins = (ratios - p50) / (p95 - p50) * 0.1 + 0.9
-    logging.info(min(margins), max(margins))
-    return margins[-1].item()
+async def get_derived(market: Literal['c', 't', 'u'], symbol: str, scale: int, theta: float = 0) -> Derived:
+    p = await position.Position(market, symbol, scale)
+    return {**p.calc_metrics(theta), 'signals': p.calc_signals()}
 
 
 if __name__ == '__main__':

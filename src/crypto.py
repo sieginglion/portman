@@ -1,6 +1,6 @@
 from shared import *
 
-symbol_to_id = {
+SYMBOL_TO_ID = {
     e['symbol'].upper(): e['id']
     for e in r.get(
         'https://api.coingecko.com/api/v3/coins/markets',
@@ -18,7 +18,7 @@ async def get_prices(symbol: str, n: int) -> Array[f8]:
     date_to_price = dict.fromkeys(gen_dates(now.shift(days=-n), now), 0.0)
     async with AsyncClient(http2=True) as h:
         res = await h.get(
-            f'https://api.coingecko.com/api/v3/coins/{ symbol_to_id[symbol] }/market_chart',
+            f'https://api.coingecko.com/api/v3/coins/{ SYMBOL_TO_ID[symbol] }/market_chart',
             params={
                 'days': n + 1,
                 'interval': 'daily',
