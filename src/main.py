@@ -18,7 +18,9 @@ def get_ranking(k: int) -> HTMLResponse:
 
 
 @app.get('/derived')
-async def get_derived(market: Literal['c', 't', 'u'], symbol: str, scale: int, theta: float = 0) -> Derived:
+async def get_derived(
+    market: Literal['c', 't', 'u'], symbol: str, scale: int, theta: float = 0.0
+) -> Derived:
     p = await position.Position(market, symbol, scale)
     return {**p.calc_metrics(theta), 'signals': p.calc_signals()}
 

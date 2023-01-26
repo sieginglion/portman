@@ -29,7 +29,7 @@ dotenv.load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 FMP_KEY = os.environ['FMP_KEY']
-MARKET_TO_TIMEZONE = {'t': 'Asia/Taipei', 'u': 'America/New_York', 'c': 'UTC'}
+MARKET_TO_TIMEZONE = {'c': 'UTC', 't': 'Asia/Taipei', 'u': 'America/New_York'}
 
 
 def to_date(time: Any, timezone: str = '') -> str:

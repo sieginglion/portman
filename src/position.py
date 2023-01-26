@@ -58,16 +58,15 @@ class Position:
     def __await__(self):
         return self.ainit().__await__()
 
-    def calc_metrics(self, theta: float = 0) -> Metrics:
+    def calc_metrics(self, theta: float = 0.0) -> Metrics:
         P = self.prices[-(self.scale + 1) :]
         R = np.log(P[1:] / P[:-1])
         u = np.mean(R)
         R -= theta
-        D = R[R < 0]
         return {
             'ER': u,
-            'omega': np.sum(R[R > 0]) / -np.sum(D),
-            'downside': (np.sum(D**2) / len(R)) ** 0.5,
+            'omega': np.sum(R[R > 0]) / -np.sum(R[R < 0]),
+            'downside': (np.sum(R[R < 0] ** 2) / len(R)) ** 0.5,
         }
 
     def calc_signal(self, w_l: int) -> Literal[-1, 0, 1]:
