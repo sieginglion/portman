@@ -60,11 +60,9 @@ class Position:
 
     def calc_metrics(self, theta: float = 0.0) -> Metrics:
         P = self.prices[-(self.scale + 1) :]
-        R = np.log(P[1:] / P[:-1])
-        u = np.mean(R)
-        R -= theta
+        R = np.log(P[1:] / P[:-1]) - theta
         return {
-            'ER': u,
+            'ER': np.mean(R) + theta,
             'omega': np.sum(R[R > 0]) / -np.sum(R[R < 0]),
             'downside': (np.sum(R[R < 0] ** 2) / len(R)) ** 0.5,
         }
