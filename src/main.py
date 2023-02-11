@@ -11,7 +11,7 @@ class Derived(TypedDict):
     ER: f8
     omega: f8
     downside: f8
-    signals: list[Literal[-1, 0, 1]]
+    signal: Literal[-1, 0, 1]
 
 
 @app.get('/ranking')
@@ -24,7 +24,7 @@ async def get_derived(
     market: Literal['c', 't', 'u'], symbol: str, scale: int, theta: float = 0.0
 ) -> Derived:
     p = await position.Position(market, symbol, scale)
-    return {**p.calc_metrics(theta), 'signals': p.calc_signals()}
+    return {**p.calc_metrics(theta), 'signal': p.calc_signal()}
 
 
 @app.get('/margin')
