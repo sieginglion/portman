@@ -17,17 +17,19 @@ def calc_signals(prices: Array[f8], w_s, w_l) -> Array[f8]:
 
 @nb.njit
 def simulate(prices: Array[f8], signals: Array[f8]) -> float:
-    last_trade, earned = 0, 0
-    cash, position = 1000, 0
+    cost, profit = 0, 0
+    units = 0
     for i, price in enumerate(prices):
         if i and price != prices[i - 1]:
-            if cash > 0 and signals[i] > 0:
-                last_trade = price
-                cash, position = 0, cash / price
-            elif cash == 0 and signals[i] < 0:
-                earned += position * (price - last_trade)
-                cash, position = position * price, 0
-    return earned
+            value = units * price
+            if value < 1000 and signals[i] > 0:
+                cost += 1000 - value
+                units = 1000 / price
+            elif value > 1000 and signals[i] < 0:
+                profit += (value - 1000) - cost
+                cost = 0
+                units = 1000 / price
+    return profit
 
 
 class Metrics(TypedDict):
@@ -79,11 +81,13 @@ class Position:
             if w_s < w_l
         }
         (w_s, w_l), score = max(W_to_score.items(), key=lambda x: x[1])
+        if not score:
+            raise ValueError
         return calc_signals(self.prices, w_s, w_l)[-1]
 
 
 # async def main():
-#     p = await Position('c', 'ETH', 364 * 2, 182)
+#     p = await Position('u', 'MSFT', 364 * 2, 182)
 #     print(p.calc_metrics())
 #     print(p.search_signal())
 
