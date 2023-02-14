@@ -1,7 +1,5 @@
-import crypto
 import position
 import ranking
-import stock
 from shared import *
 
 app = FastAPI()
@@ -28,7 +26,7 @@ async def get_derived(
     theta: float = 0,
 ) -> Derived:
     p = await position.Position(market, symbol, m_scale, s_scale)
-    return {**p.calc_metrics(theta), 'signal': p.search_signal() if s_scale else None}
+    return {**p.calc_metrics(theta), 'signal': p.calc_signal() if s_scale else None}
 
 
 if __name__ == '__main__':

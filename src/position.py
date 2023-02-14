@@ -7,29 +7,27 @@ def calc_signals(prices: Array[f8], w_s, w_l) -> Array[f8]:
     s_ema = calc_ema(prices, 2 / (w_s + 1), calc_k(w_s))
     l_ema = calc_ema(prices, 2 / (w_l + 1), calc_k(w_l))
     macd = s_ema[-len(l_ema) :] - l_ema
-    slow = calc_ema(macd, 2 / (7 + 1), calc_k(7))
-    macd = macd[-len(slow) :]
-    signals = np.zeros(len(macd))
-    signals[(macd < 0) & (macd > slow)] = 1
-    signals[(macd > 0) & (macd < slow)] = -1
+    slope = macd[1:] - macd[:-1]
+    macd = macd[-len(slope) :]
+    signals = np.zeros(len(slope))
+    signals[(macd < 0) & (slope > 0)] = 1
+    signals[(macd > 0) & (slope < 0)] = -1
     return signals
 
 
 @nb.njit
 def simulate(prices: Array[f8], signals: Array[f8]) -> float:
-    cost, profit = 0, 0
-    units = 0
+    cash, position = 0, 0
     for i, price in enumerate(prices):
         if i and price != prices[i - 1]:
-            value = units * price
+            value = position * price
             if value < 1000 and signals[i] > 0:
-                cost += 1000 - value
-                units = 1000 / price
+                cash -= 1000 - value
+                position = 1000 / price
             elif value > 1000 and signals[i] < 0:
-                profit += (value - 1000) - cost
-                cost = 0
-                units = 1000 / price
-    return profit
+                cash += value - 1000
+                position = 1000 / price
+    return cash + value
 
 
 class Metrics(TypedDict):
@@ -69,27 +67,28 @@ class Position:
             'downside': (np.sum(R[R < 0] ** 2) / len(R)) ** 0.5,
         }
 
-    def search_signal(self) -> f8:
-        s, W = self.s_scale + 1, [7, 14, 28]
+    def calc_signal(self) -> f8:
+        s = self.s_scale + 1
         W_to_score = {
             (w_s, w_l): simulate(
                 self.prices[-s:],
                 calc_signals(self.prices, w_s, w_l)[-s:],
             )
-            for w_s in W
-            for w_l in W
+            for w_s in range(2, 92)
+            for w_l in range(2, 92)
             if w_s < w_l
         }
-        (w_s, w_l), score = max(W_to_score.items(), key=lambda x: x[1])
-        if not score:
-            raise ValueError
+        (w_s, w_l), score = max(
+            W_to_score.items(), key=lambda x: x[1] if x[1] else -INF
+        )
+        print((w_s, w_l), score)
         return calc_signals(self.prices, w_s, w_l)[-1]
 
 
 # async def main():
 #     p = await Position('u', 'MSFT', 364 * 2, 182)
 #     print(p.calc_metrics())
-#     print(p.search_signal())
+#     print(p.calc_signal())
 
 
 # asyncio.run(main())
