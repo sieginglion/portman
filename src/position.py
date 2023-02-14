@@ -74,8 +74,8 @@ class Position:
                 self.prices[-s:],
                 calc_signals(self.prices, w_s, w_l)[-s:],
             )
-            for w_s in range(2, 92)
-            for w_l in range(2, 92)
+            for w_s in range(7, 92, 7)
+            for w_l in range(7, 92, 7)
             if w_s < w_l
         }
         (w_s, w_l), score = max(
@@ -86,7 +86,7 @@ class Position:
 
 
 # async def main():
-#     p = await Position('u', 'MSFT', 364 * 2, 182)
+#     p = await Position('u', 'MSFT', 364 * 2, 364)
 #     print(p.calc_metrics())
 #     print(p.calc_signal())
 
