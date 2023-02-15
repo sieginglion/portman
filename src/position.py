@@ -36,6 +36,12 @@ class Metrics(TypedDict):
     downside: f8
 
 
+class Signal(TypedDict):
+    w_s: int
+    w_l: int
+    signal: f8
+
+
 class Position:
     def __init__(
         self, market: Literal['c', 't', 'u'], symbol: str, m_scale: int, s_scale: int
@@ -67,7 +73,7 @@ class Position:
             'downside': (np.sum(R[R < 0] ** 2) / len(R)) ** 0.5,
         }
 
-    def calc_signal(self) -> f8:
+    def calc_signal(self) -> Signal:
         s = self.s_scale + 1
         W_to_score = {
             (w_s, w_l): simulate(
@@ -82,7 +88,11 @@ class Position:
             W_to_score.items(), key=lambda x: x[1] if x[1] else -INF
         )
         print((w_s, w_l), score)
-        return calc_signals(self.prices, w_s, w_l)[-1]
+        return {
+            'w_s': w_s,
+            'w_l': w_l,
+            'signal': calc_signals(self.prices, w_s, w_l)[-1],
+        }
 
 
 # async def main():

@@ -5,11 +5,14 @@ from shared import *
 app = FastAPI()
 
 
-class Derived(TypedDict):
+@dataclass
+class Derived:
     ER: f8
     omega: f8
     downside: f8
-    signal: f8 | None
+    w_s: int | None = None
+    w_l: int | None = None
+    signal: f8 | None = None
 
 
 @app.get('/ranking')
@@ -26,7 +29,7 @@ async def get_derived(
     theta: float = 0,
 ) -> Derived:
     p = await position.Position(market, symbol, m_scale, s_scale)
-    return {**p.calc_metrics(theta), 'signal': p.calc_signal() if s_scale else None}
+    return Derived(**p.calc_metrics(theta), **(p.calc_signal() if s_scale else {}))
 
 
 if __name__ == '__main__':

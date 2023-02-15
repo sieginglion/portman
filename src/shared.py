@@ -21,7 +21,6 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from httpx import AsyncClient
 from more_itertools import islice_extended as islice
-from more_itertools import last
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
