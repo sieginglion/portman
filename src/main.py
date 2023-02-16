@@ -29,7 +29,10 @@ async def get_derived(
     theta: float = 0,
 ) -> Derived:
     p = await position.Position(market, symbol, m_scale, s_scale)
-    return Derived(**p.calc_metrics(theta), **(p.calc_signal() if s_scale else {}))
+    return Derived(
+        **p.calc_metrics(theta),
+        **(p.calc_signal() if s_scale else {}),
+    )
 
 
 if __name__ == '__main__':

@@ -77,8 +77,7 @@ class Position:
         s = self.s_scale + 1
         W_to_score = {
             (w_s, w_l): simulate(
-                self.prices[-s:],
-                calc_signals(self.prices, w_s, w_l)[-s:],
+                self.prices[-s:], calc_signals(self.prices, w_s, w_l)[-s:]
             )
             for w_s in range(7, 92, 7)
             for w_l in range(7, 92, 7)
