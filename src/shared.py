@@ -1,33 +1,20 @@
-import asyncio
-import io
-import json
 import logging
-import math
-import os
-import re
-import time
-from dataclasses import dataclass
-from typing import Any, Literal, TypedDict
+from math import log
+from os import environ
+from typing import Any
 
 import arrow
-import dotenv
 import numba as nb
 import numpy as np
-import pandas as pd
-import requests as r
-import uvicorn
 from arrow import Arrow
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
-from httpx import AsyncClient
-from more_itertools import islice_extended as islice
+from dotenv import load_dotenv
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
-dotenv.load_dotenv()
+load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
-FMP_KEY = os.environ['FMP_KEY']
+FMP_KEY = environ['FMP_KEY']
 INF = float('inf')
 MARKET_TO_TIMEZONE = {'c': 'UTC', 't': 'Asia/Taipei', 'u': 'America/New_York'}
 
@@ -69,7 +56,7 @@ def clean_up(A: Array[f8]) -> Array[f8]:
 
 
 def calc_k(w: int) -> int:
-    return round(math.log(0.05) / math.log(1 - 2 / (w + 1)))
+    return round(log(0.05) / log(1 - 2 / (w + 1)))
 
 
 @nb.njit(parallel=True)

@@ -1,4 +1,12 @@
-from shared import *
+import asyncio
+
+import arrow
+import requests as r
+from httpx import AsyncClient
+from numpy import float64 as f8
+from numpy.typing import NDArray as Array
+
+from shared import FMP_KEY, clean_up, gen_dates, get_values, to_date
 
 SYMBOL_TO_ID = {
     e['symbol'].upper(): e['id']
@@ -8,7 +16,6 @@ SYMBOL_TO_ID = {
             'per_page': 100,
             'vs_currency': 'usd',
         },
-        timeout=10,
     ).json()
 }
 

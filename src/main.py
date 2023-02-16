@@ -1,6 +1,11 @@
+from dataclasses import dataclass
+from typing import Literal
+
+import uvicorn
+from fastapi import FastAPI
+from numpy import float64 as f8
+
 import position
-import ranking
-from shared import *
 
 app = FastAPI()
 
@@ -15,9 +20,9 @@ class Derived:
     signal: f8 | None = None
 
 
-@app.get('/ranking')
-def get_ranking(k: int) -> HTMLResponse:
-    return HTMLResponse(ranking.get_ranking(k))
+# @app.get('/ranking')
+# def get_ranking(k: int) -> HTMLResponse:
+#     return HTMLResponse(ranking.get_ranking(k))
 
 
 @app.get('/derived')

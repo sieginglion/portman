@@ -1,6 +1,14 @@
+import logging
+from typing import Literal, TypedDict
+
+import numba as nb
+import numpy as np
+from numpy import float64 as f8
+from numpy.typing import NDArray as Array
+
 import crypto
 import stock
-from shared import *
+from shared import INF, calc_ema, calc_k
 
 
 def calc_signals(prices: Array[f8], w_s, w_l) -> Array[f8]:
@@ -17,7 +25,7 @@ def calc_signals(prices: Array[f8], w_s, w_l) -> Array[f8]:
 
 @nb.njit
 def simulate(prices: Array[f8], signals: Array[f8]) -> float:
-    cash, position = 0, 0
+    cash = position = value = 0
     for i, price in enumerate(prices):
         if i and price != prices[i - 1]:
             value = position * price
@@ -56,7 +64,7 @@ class Position:
         self.prices = await (
             crypto.get_prices(self.symbol, n)
             if self.market == 'c'
-            else stock.get_prices(self.market, self.symbol, n)
+            else stock.get_prices(self.market, self.symbol, n)  # type: ignore
         )
         if len(self.prices) != n:
             raise ValueError
@@ -86,7 +94,7 @@ class Position:
         (w_s, w_l), score = max(
             W_to_score.items(), key=lambda x: x[1] if x[1] else -INF
         )
-        print((w_s, w_l), score)
+        logging.info((w_s, w_l, score))
         return {
             'w_s': w_s,
             'w_l': w_l,
@@ -94,8 +102,11 @@ class Position:
         }
 
 
+# import asyncio
+
+
 # async def main():
-#     p = await Position('u', 'MSFT', 364 * 2, 364)
+#     p = await Position('u', 'MSFT', 364 * 2, 182)
 #     print(p.calc_metrics())
 #     print(p.calc_signal())
 
