@@ -15,11 +15,11 @@ def calc_signals(prices: Array[f8], w_s, w_l) -> Array[f8]:
     s_ema = calc_ema(prices, 2 / (w_s + 1), calc_k(w_s))
     l_ema = calc_ema(prices, 2 / (w_l + 1), calc_k(w_l))
     macd = s_ema[-len(l_ema) :] - l_ema
-    slope = macd[1:] - macd[:-1]
-    macd = macd[-len(slope) :]
-    signals = np.zeros(len(slope))
-    signals[(macd < 0) & (slope > 0)] = 1
-    signals[(macd > 0) & (slope < 0)] = -1
+    slow = calc_ema(macd, 2 / (2 + 1), calc_k(2))
+    macd = macd[-len(slow) :]
+    signals = np.zeros(len(slow))
+    signals[(macd < 0) & (macd > slow)] = 1
+    signals[(macd > 0) & (macd < slow)] = -1
     return signals
 
 
