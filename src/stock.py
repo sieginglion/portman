@@ -45,7 +45,7 @@ async def get_today_dividend(
 ) -> float:
     today = to_date(arrow.now(MARKET_TO_TIMEZONE[market]))
     if market == 't':
-        res = await h.get('https://www.twse.com.tw/exchangeReport/TWT48U')
+        res = await h.get('https://www.twse.com.tw/exchangeReport/TWT48U', timeout=10)
         for e in res.json()['data']:
             if e[1] == symbol and e[3] == '息':
                 y, m, d = map(int, re.findall('\\d+', e[0]))
