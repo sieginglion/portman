@@ -29,14 +29,13 @@ class Derived:
 async def get_derived(
     market: Literal['c', 't', 'u'],
     symbol: str,
-    m_scale: int,
-    s_scale: int = 0,
+    scale: int,
     theta: float = 0,
+    min_trades: int = 0,
 ) -> Derived:
-    p = await position.Position(market, symbol, m_scale, s_scale)
+    p = await position.Position(market, symbol, scale)
     return Derived(
-        **p.calc_metrics(theta),
-        **(p.calc_signal() if s_scale else {}),
+        **p.calc_metrics(theta), **(p.calc_signal(min_trades) if min_trades else {})
     )
 
 
