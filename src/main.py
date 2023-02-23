@@ -15,9 +15,9 @@ class Derived:
     ER: f8
     omega: f8
     downside: f8
-    w_s: int | None = None
-    w_l: int | None = None
-    signal: f8 | None = None
+    w_s: int
+    w_l: int
+    signal: f8
 
 
 # @app.get('/ranking')
@@ -27,16 +27,10 @@ class Derived:
 
 @app.get('/derived')
 async def get_derived(
-    market: Literal['c', 't', 'u'],
-    symbol: str,
-    scale: int,
-    theta: float = 0,
-    min_trades: int = 0,
+    market: Literal['c', 't', 'u'], symbol: str, scale: int, theta: float
 ) -> Derived:
     p = await position.Position(market, symbol, scale)
-    return Derived(
-        **p.calc_metrics(theta), **(p.calc_signal(min_trades) if min_trades else {})
-    )
+    return Derived(**p.calc_metrics(theta), **p.calc_signal())
 
 
 if __name__ == '__main__':

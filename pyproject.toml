@@ -23,6 +23,7 @@ black = "^23.1.0"
 flake8 = "^6.0.0"
 ipykernel = "^6.19.4"
 matplotlib = "^3.6.2"
+snakeviz = "^2.1.1"
 
 [build-system]
 requires = ["poetry-core"]

@@ -1,5 +1,5 @@
 import logging
-from math import log
+from math import ceil, log
 from os import environ
 from typing import Any
 
@@ -56,7 +56,7 @@ def clean_up(A: Array[f8]) -> Array[f8]:
 
 
 def calc_k(w: int) -> int:
-    return round(log(0.05) / log(1 - 2 / (w + 1)))
+    return ceil(log(0.05) / log(1 - 2 / (w + 1)))
 
 
 @nb.njit(parallel=True)

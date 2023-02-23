@@ -17,29 +17,24 @@ def calc_signals(prices: Array[f8], w_s: int, w_l: int) -> Array[f8]:
     macd = s_ema[-len(l_ema) :] - l_ema
     slow = calc_ema(macd, 2 / (2 + 1), calc_k(2))
     macd = macd[-len(slow) :]
-    signals = np.zeros(len(slow))
-    signals[(macd < 0) & (macd > slow)] = 1
-    signals[(macd > 0) & (macd < slow)] = -1
-    return signals
+    return (macd > slow).astype(f8) - (macd < slow).astype(f8)
 
 
 @nb.njit
-def simulate(prices: Array[f8], signals: Array[f8], min_trades: int) -> float:
+def simulate(prices: Array[f8], signals: Array[f8]) -> float:
     cash = position = value = 0
-    last_side = trades = 0
+    traded = False
     for i, price in enumerate(prices):
         if i and price != prices[i - 1]:
             value = position * price
             if value < 1000 and signals[i] > 0:
                 cash -= 1000 - value
                 position = 1000 / price
-                last_side = 1
             elif value > 1000 and signals[i] < 0:
                 cash += value - 1000
                 position = 1000 / price
-                trades += 1 if last_side == 1 else 0
-                last_side = -1
-    return cash + value if trades >= min_trades else -INF
+                traded = True
+    return cash + value if traded else -INF
 
 
 class Metrics(TypedDict):
@@ -82,11 +77,11 @@ class Position:
             'downside': (np.sum(R[R < 0] ** 2) / len(R)) ** 0.5,
         }
 
-    def calc_signal(self, min_trades: int) -> Signal:
+    def calc_signal(self) -> Signal:
         s = 183
         W_to_score = {
             (w_s, w_l): simulate(
-                self.prices[-s:], calc_signals(self.prices, w_s, w_l)[-s:], min_trades
+                self.prices[-s:], calc_signals(self.prices, w_s, w_l)[-s:]
             )
             for w_s in range(7, 92, 7)
             for w_l in range(7, 92, 7)
@@ -107,7 +102,7 @@ class Position:
 # async def main():
 #     p = await Position('c', 'ETH', 364 * 2)
 #     print(p.calc_metrics(0))
-#     print(p.calc_signal(1))
+#     print(p.calc_signal())
 
 
 # asyncio.run(main())
