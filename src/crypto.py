@@ -11,11 +11,7 @@ from shared import FMP_KEY, clean_up, gen_dates, get_values, to_date
 SYMBOL_TO_ID = {
     e['symbol'].upper(): e['id']
     for e in r.get(
-        'https://api.coingecko.com/api/v3/coins/markets',
-        params={
-            'per_page': 100,
-            'vs_currency': 'usd',
-        },
+        'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd'
     ).json()
 }
 

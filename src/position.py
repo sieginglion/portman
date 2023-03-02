@@ -38,7 +38,7 @@ def simulate(prices: Array[f8], signals: Array[f8]) -> float:
 
 
 class Metrics(TypedDict):
-    ER: f8
+    expected: f8
     omega: f8
     downside: f8
 
@@ -72,7 +72,7 @@ class Position:
     def calc_metrics(self, theta: float) -> Metrics:
         R = np.log(self.prices[1:] / self.prices[:-1]) - theta
         return {
-            'ER': np.mean(R) + theta,
+            'expected': np.mean(R) + theta,
             'omega': np.sum(R[R > 0]) / -np.sum(R[R < 0]),
             'downside': (np.sum(R[R < 0] ** 2) / len(R)) ** 0.5,
         }

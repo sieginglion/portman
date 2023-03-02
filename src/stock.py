@@ -77,7 +77,7 @@ async def get_dividends(
     )
     for e in res.json().get('historical', []):
         if e['date'] in date_to_dividend:
-            date_to_dividend[e['date']] = e['adjDividend']
+            date_to_dividend[e['date']] = e['adjDividend']  # to avoid stock splits
     date_to_dividend[max(date_to_dividend)] = today
     return get_values(date_to_dividend)[-n:]
 

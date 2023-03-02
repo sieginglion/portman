@@ -12,7 +12,7 @@ app = FastAPI()
 
 @dataclass
 class Derived:
-    ER: f8
+    expected: f8
     omega: f8
     downside: f8
     w_s: int
