@@ -1,4 +1,6 @@
+import json
 import logging
+from dataclasses import dataclass
 from math import ceil, log
 from os import environ
 from typing import Any
@@ -6,6 +8,7 @@ from typing import Any
 import arrow
 import numba as nb
 import numpy as np
+import requests as r
 from arrow import Arrow
 from dotenv import load_dotenv
 from numpy import float64 as f8
@@ -14,9 +17,25 @@ from numpy.typing import NDArray as Array
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
+cache = {}
 FMP_KEY = environ['FMP_KEY']
 INF = float('inf')
 MARKET_TO_TIMEZONE = {'c': 'UTC', 't': 'Asia/Taipei', 'u': 'America/New_York'}
+
+
+@dataclass
+class CachedResponse:
+    text: str
+
+    def json(self) -> dict:
+        return json.loads(self.text)
+
+
+def cached_get(url: str) -> CachedResponse:
+    now = arrow.now().timestamp()
+    if (not (cached := cache.get(url))) or (cached['timestamp'] < now - 3600):
+        cache[url] = {'text': r.get(url).text, 'timestamp': now}
+    return CachedResponse(cache[url]['text'])
 
 
 def to_date(time: Any, timezone: str = '') -> str:

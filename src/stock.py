@@ -10,7 +10,8 @@ from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
-from shared import FMP_KEY, MARKET_TO_TIMEZONE, clean_up, gen_dates, get_values, to_date
+from shared import (FMP_KEY, MARKET_TO_TIMEZONE, cached_get, clean_up,
+                    gen_dates, get_values, to_date)
 
 
 async def get_unadjusted(
@@ -45,7 +46,7 @@ async def get_today_dividend(
 ) -> float:
     today = to_date(arrow.now(MARKET_TO_TIMEZONE[market]))
     if market == 't':
-        res = await h.get('https://www.twse.com.tw/exchangeReport/TWT48U', timeout=20)
+        res = cached_get('https://www.twse.com.tw/exchangeReport/TWT48U')
         for e in res.json()['data']:
             if e[1] == symbol and e[3] == '息':
                 y, m, d = map(int, re.findall('\\d+', e[0]))

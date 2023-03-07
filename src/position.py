@@ -25,7 +25,7 @@ def simulate(prices: Array[f8], signals: Array[f8]) -> float:
     cash = position = value = 0
     traded = False
     for i, price in enumerate(prices):
-        if i and price != prices[i - 1]:
+        if i and price != prices[i - 1] and abs(price / prices[i - 1] - 1) < 0.09:
             value = position * price
             if value < 1000 and signals[i] > 0:
                 cash -= 1000 - value
