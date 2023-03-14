@@ -17,7 +17,9 @@ def calc_signals(prices: Array[f8], w_s: int, w_l: int) -> Array[f8]:
     macd = s_ema[-len(l_ema) :] - l_ema
     slow = calc_ema(macd, 2 / (2 + 1), calc_k(2))
     macd = macd[-len(slow) :]
-    return (macd > slow).astype(f8) - (macd < slow).astype(f8)
+    return ((macd < 0) & (macd > slow)).astype(f8) - (
+        (macd > 0) & (macd < slow)
+    ).astype(f8)
 
 
 @nb.njit
@@ -78,7 +80,7 @@ class Position:
         }
 
     def calc_signal(self) -> Signal:
-        s = 183
+        s = 92
         W_to_score = {
             (w_s, w_l): simulate(
                 self.prices[-s:], calc_signals(self.prices, w_s, w_l)[-s:]
