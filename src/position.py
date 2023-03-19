@@ -24,12 +24,16 @@ def calc_signals(prices: Array[f8], w_s: int, w_l: int) -> Array[f8]:
 
 @nb.njit
 def simulate(prices: Array[f8], signals: Array[f8]) -> float:
-    cash = position = 0
-    for i, (price, signal) in enumerate(zip(prices, signals)):
-        if i and price != prices[i - 1] and abs(price / prices[i - 1] - 1) < 0.09:
-            if signal and signal != np.sign(position):
-                cash += position * price - 1000 * signal
-                position = 1000 * signal / price
+    cash = 1000
+    position = 0
+    for i, (price, signal) in enumerate(zip(prices[1:], signals[1:]), 1):
+        if price != prices[i - 1] and abs(price / prices[i - 1] - 1) < 0.09:
+            if signal == 1 and position == 0:
+                position = cash / price
+                cash = 0
+            elif signal == -1 and position > 0:
+                cash = position * price
+                position = 0
     return cash + position * prices[-1]
 
 
@@ -79,8 +83,8 @@ class Position:
             (w_s, w_l): simulate(
                 self.prices[-s:], calc_signals(self.prices, w_s, w_l)[-s:]
             )
-            for w_s in range(7, 92, 7)
-            for w_l in range(7, 92, 7)
+            for w_s in range(2, 92)
+            for w_l in range(2, 92)
             if w_s < w_l
         }
         (w_s, w_l), score = max(W_to_score.items(), key=lambda x: x[1])
