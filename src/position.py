@@ -24,19 +24,13 @@ def calc_signals(prices: Array[f8], w_s: int, w_l: int) -> Array[f8]:
 
 @nb.njit
 def simulate(prices: Array[f8], signals: Array[f8]) -> float:
-    cash = position = value = 0
-    traded = False
-    for i, price in enumerate(prices):
+    cash = position = 0
+    for i, (price, signal) in enumerate(zip(prices, signals)):
         if i and price != prices[i - 1] and abs(price / prices[i - 1] - 1) < 0.09:
-            value = position * price
-            if value < 1000 and signals[i] > 0:
-                cash -= 1000 - value
-                position = 1000 / price
-            elif value > 1000 and signals[i] < 0:
-                cash += value - 1000
-                position = 1000 / price
-                traded = True
-    return cash + value if traded else -INF
+            if signal and signal != np.sign(position):
+                cash += position * price - 1000 * signal
+                position = 1000 * signal / price
+    return cash + position * prices[-1]
 
 
 class Metrics(TypedDict):
