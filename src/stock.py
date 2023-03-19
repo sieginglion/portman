@@ -46,11 +46,11 @@ async def get_today_dividend(
 ) -> float:
     today = to_date(arrow.now(MARKET_TO_TIMEZONE[market]))
     if market == 't':
-        res = cached_get('https://www.twse.com.tw/exchangeReport/TWT48U')
+        res = cached_get('https://www.twse.com.tw/rwd/zh/exRight/TWT48U?response=json')
         for e in res.json()['data']:
-            if e[1] == symbol and e[3] == '息':
-                y, m, d = map(int, re.findall('\\d+', e[0]))
-                return float(e[7]) if to_date(Arrow(y + 1911, m, d)) == today else 0.0
+            y, m, d = map(int, re.findall('\\d+', e[0]))
+            if to_date(Arrow(y + 1911, m, d)) == today and e[1] == symbol:
+                return float(e[7])
     else:
         res = await h.get(
             'https://financialmodelingprep.com/api/v3/stock_dividend_calendar',
@@ -60,8 +60,8 @@ async def get_today_dividend(
             },
         )
         for e in res.json():
-            if e['symbol'] == symbol:
-                return e['dividend'] if e['date'] == today else 0.0
+            if e['date'] == today and e['symbol'] == symbol:
+                return e['dividend']
     return 0.0
 
 

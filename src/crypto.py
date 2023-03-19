@@ -15,5 +15,5 @@ async def get_prices(symbol: str, n: int) -> Array[f8]:
         )
     for e in res.json():
         if (date := to_date(e[0], 'UTC')) in date_to_price:
-            date_to_price[date] = e[4]
+            date_to_price[date] = float(e[4])
     return clean_up(get_values(date_to_price))[-n:]
