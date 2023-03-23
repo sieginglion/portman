@@ -3,7 +3,6 @@ import logging
 from dataclasses import dataclass
 from math import ceil, log
 from os import environ
-from typing import Any
 
 import arrow
 import numba as nb
@@ -38,17 +37,13 @@ def cached_get(url: str) -> CachedResponse:
     return CachedResponse(cache[url]['text'])
 
 
-def to_date(time: Any, timezone: str = '') -> str:
-    if isinstance(time, Arrow):
-        if timezone:
-            time.to(timezone)
-        else:
-            pass
-    else:
-        if timezone:
-            time = arrow.get(time, tzinfo=timezone)
-        else:
-            time = arrow.get(time)
+def to_date(time: Arrow | float | int | str, timezone: str = '') -> str:
+    if not isinstance(time, Arrow):
+        time = arrow.get(time)
+
+    if timezone:
+        time = time.to(timezone)
+
     return time.format('YYYY-MM-DD')
 
 
@@ -82,4 +77,7 @@ def calc_k(w: int) -> int:
 def calc_ema(A: Array[f8], a: float, k: int) -> Array[f8]:
     K = a * (1 - a) ** np.arange(k - 1, -1, -1)
     K = K / np.sum(K)
-    return np.array([np.sum(A[i : i + k] * K) for i in range(len(A) - k + 1)])
+    ema = np.empty(len(A) - k + 1)
+    for i in nb.prange(len(A) - k + 1):
+        ema[i] = np.sum(A[i : i + k] * K)
+    return ema

@@ -1,7 +1,9 @@
 import asyncio
+import json
 import re
 from typing import Literal
 
+import aiofiles
 import arrow
 import numba as nb
 import numpy as np
@@ -10,8 +12,7 @@ from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
-from shared import (FMP_KEY, MARKET_TO_TIMEZONE, cached_get, clean_up,
-                    gen_dates, get_values, to_date)
+from shared import FMP_KEY, MARKET_TO_TIMEZONE, clean_up, gen_dates, get_values, to_date
 
 
 async def get_unadjusted(
@@ -46,8 +47,9 @@ async def get_today_dividend(
 ) -> float:
     today = to_date(arrow.now(MARKET_TO_TIMEZONE[market]))
     if market == 't':
-        res = cached_get('https://www.twse.com.tw/rwd/zh/exRight/TWT48U?response=json')
-        for e in res.json()['data']:
+        async with aiofiles.open('../TWT48U.json') as f:
+            text = await f.read()
+        for e in json.loads(text)['data']:
             y, m, d = map(int, re.findall('\\d+', e[0]))
             if to_date(Arrow(y + 1911, m, d)) == today and e[1] == symbol:
                 return float(e[7])

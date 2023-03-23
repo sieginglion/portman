@@ -5,7 +5,7 @@ import uvicorn
 from fastapi import FastAPI
 from numpy import float64 as f8
 
-import position
+from position import Position, Signal
 
 app = FastAPI()
 
@@ -15,9 +15,7 @@ class Derived:
     expected: f8
     omega: f8
     downside: f8
-    w_s: int
-    w_l: int
-    signal: f8
+    signals: tuple[Signal, Signal]
 
 
 # @app.get('/ranking')
@@ -27,10 +25,12 @@ class Derived:
 
 @app.get('/derived')
 async def get_derived(
-    market: Literal['c', 't', 'u'], symbol: str, scale: int, theta: float
+    market: Literal['c', 't', 'u'], symbol: str, metric_scale: int, theta: float
 ) -> Derived:
-    p = await position.Position(market, symbol, scale)
-    return Derived(**p.calc_metrics(theta), **p.calc_signal())
+    p = await Position(market, symbol, metric_scale)
+    return Derived(
+        **p.calc_metrics(theta), signals=(p.calc_signal(91), p.calc_signal(182))
+    )
 
 
 if __name__ == '__main__':

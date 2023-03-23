@@ -6,6 +6,7 @@ authors = ["sieginglion <sieginglion@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
+aiofiles = "^23.1.0"
 arrow = "^1.2.3"
 fastapi = "^0.88.0"
 httpx = { extras = ["http2"], version = "^0.23.1" }
