@@ -1,24 +1,21 @@
 import asyncio
-import json
-import re
 from typing import Literal
 
-import aiofiles
 import arrow
 import numba as nb
 import numpy as np
-from arrow.arrow import Arrow
 from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
+from . import yahoo
 from .shared import (
     FMP_KEY,
     MARKET_TO_TIMEZONE,
     clean_up,
     gen_dates,
     get_sorted_values,
-    to_date,
+    get_today_dividend,
 )
 
 
@@ -49,29 +46,6 @@ async def get_unadjusted(
     return clean_up(get_sorted_values(date_to_price), n)
 
 
-async def get_today_dividend(h: AsyncClient, market: Literal['t', 'u'], symbol: str):
-    today = to_date(arrow.now(MARKET_TO_TIMEZONE[market]))
-    if market == 't':
-        async with aiofiles.open('TWT48U.json') as f:
-            text = await f.read()
-        for e in json.loads(text)['data']:
-            y, m, d = map(int, re.findall('\\d+', e[0]))
-            if to_date(Arrow(y + 1911, m, d)) == today and e[1] == symbol:
-                return float(e[7])
-    else:
-        res = await h.get(
-            'https://financialmodelingprep.com/api/v3/stock_dividend_calendar',
-            params={
-                'from': today,
-                'to': today,
-            },
-        )
-        for e in res.json():
-            if e['date'] == today and e['symbol'] == symbol:
-                return e['dividend']
-    return 0.0
-
-
 async def get_dividends(h: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int):
     now = arrow.now(MARKET_TO_TIMEZONE[market])
     date_to_dividend = dict.fromkeys(gen_dates(now.shift(days=-n), now), 0.0)
@@ -99,7 +73,17 @@ def calc_adjusted(unadjusted: Array[f8], dividends: Array[f8]):
 
 async def get_adjusted(h: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int):
     unadjusted, dividends = await asyncio.gather(
-        get_unadjusted(h, market, symbol, n), get_dividends(h, market, symbol, n)
+        *(
+            (
+                yahoo.get_unadjusted(h, market, symbol, n),
+                yahoo.get_dividends(h, market, symbol, n),
+            )
+            if symbol == '6830'
+            else (
+                get_unadjusted(h, market, symbol, n),
+                get_dividends(h, market, symbol, n),
+            )
+        )
     )
     return calc_adjusted(unadjusted, dividends)
 

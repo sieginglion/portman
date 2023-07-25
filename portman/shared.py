@@ -1,10 +1,15 @@
+import json
 import os
+import re
+from typing import Literal
 
+import aiofiles
 import arrow
 import dotenv
 import numba as nb
 import numpy as np
 from arrow.arrow import Arrow
+from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
@@ -51,3 +56,26 @@ def clean_up(A: Array[f8], n: int):
     A = A[-n:]  # pyright: ignore
     assert A[0]
     return A
+
+
+async def get_today_dividend(h: AsyncClient, market: Literal['t', 'u'], symbol: str):
+    today = to_date(arrow.now(MARKET_TO_TIMEZONE[market]))
+    if market == 't':
+        async with aiofiles.open('TWT48U.json') as f:
+            text = await f.read()
+        for e in json.loads(text)['data']:
+            y, m, d = map(int, re.findall('\\d+', e[0]))
+            if to_date(Arrow(y + 1911, m, d)) == today and e[1] == symbol:
+                return float(e[7])
+    else:
+        res = await h.get(
+            'https://financialmodelingprep.com/api/v3/stock_dividend_calendar',
+            params={
+                'from': today,
+                'to': today,
+            },
+        )
+        for e in res.json():
+            if e['date'] == today and e['symbol'] == symbol:
+                return e['dividend']
+    return 0.0
