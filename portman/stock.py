@@ -102,7 +102,7 @@ async def get_rates(h: AsyncClient, market: Literal['t', 'u'], n: int):
 
 
 async def get_prices(market: Literal['t', 'u'], symbol: str, n: int):
-    async with AsyncClient(params={'apikey': FMP_KEY}) as h:
+    async with AsyncClient(timeout=60, params={'apikey': FMP_KEY}) as h:
         adjusted, rates = await asyncio.gather(
             get_adjusted(h, market, symbol, n), get_rates(h, market, n)
         )

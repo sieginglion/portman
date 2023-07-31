@@ -6,7 +6,7 @@ authors = ["sieginglion <sieginglion@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.10"
 aiofiles = "^23.1.0"
 arrow = "^1.2.3"
 fastapi = "^0.100.0"
