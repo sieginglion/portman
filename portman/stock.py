@@ -11,6 +11,7 @@ from numpy.typing import NDArray as Array
 from . import yahoo
 from .shared import (
     FMP_KEY,
+    FROM_YAHOO,
     MARKET_TO_TIMEZONE,
     clean_up,
     gen_dates,
@@ -64,27 +65,21 @@ async def get_dividends(h: AsyncClient, market: Literal['t', 'u'], symbol: str, 
 
 @nb.njit
 def calc_adjusted(unadjusted: Array[f8], dividends: Array[f8]):
-    A = np.ones(len(dividends))
+    factors = np.ones(len(dividends))
     for i, dividend in enumerate(dividends, 1):
         if dividend:
-            A[i - 1] = 1 - dividend / unadjusted[i - 1]
-    return unadjusted * np.flip(np.cumprod(np.flip(A)))
+            factors[i - 1] = 1 - dividend / unadjusted[i - 1]
+    return unadjusted * np.flip(np.cumprod(np.flip(factors)))
 
 
 async def get_adjusted(h: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int):
-    unadjusted, dividends = await asyncio.gather(
-        *(
-            (
-                yahoo.get_unadjusted(h, market, symbol, n),
-                yahoo.get_dividends(h, market, symbol, n),
-            )
-            if symbol == '6830'
-            else (
-                get_unadjusted(h, market, symbol, n),
-                get_dividends(h, market, symbol, n),
-            )
-        )
+    args = (h, market, symbol, n)
+    funcs = (
+        (yahoo.get_unadjusted(*args), yahoo.get_dividends(*args))
+        if symbol in FROM_YAHOO
+        else (get_unadjusted(*args), get_dividends(*args))
     )
+    unadjusted, dividends = await asyncio.gather(*funcs)
     return calc_adjusted(unadjusted, dividends)
 
 

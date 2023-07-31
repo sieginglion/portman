@@ -1,3 +1,4 @@
+import logging
 import math
 from typing import Literal, TypedDict
 
@@ -14,11 +15,11 @@ def calc_k(w: int):
 
 
 @nb.njit
-def calc_ema(A: Array[f8], a: float, k: int):
-    K = a * (1 - a) ** np.arange(k - 1, -1, -1)
-    ema = np.empty(len(A) - k + 1)
-    for i in range(len(A) - k + 1):
-        ema[i] = np.sum(A[i : i + k] * K)
+def calc_ema(arr: Array[f8], a: float, k: int):
+    W = a * (1 - a) ** np.arange(k - 1, -1, -1)
+    ema = np.empty(len(arr) - k + 1)
+    for i in range(len(arr) - k + 1):
+        ema[i] = np.sum(arr[i : i + k] * W)
     return ema
 
 
@@ -76,22 +77,20 @@ class Position:
         return self.ainit().__await__()
 
     def calc_score(self, scale: int):
-        n = scale + 1
-        assert len(self.prices) >= n
-        prices = self.prices[-n:]
-        R = np.log(prices[1:] / prices[:-1])
-        return np.exp(np.mean(R)) / np.std(R)
+        P = self.prices[-(scale + 1) :]
+        R = np.log(P[1:] / P[:-1])
+        return np.exp(np.mean(R) * 91) / np.std(R)
 
     def calc_signal(self, scale: int):
         n = scale * 2 + 1
-        assert len(self.prices) >= n + (calc_k(scale) - 1)
         prices = self.prices[-n:]
         W_to_score = {
             (w_s, w_l): simulate(prices, gen_signals(self.prices, w_s, w_l)[-n:])
             for w_s in range(2, scale + 1)
             for w_l in range(w_s + 1, scale + 1)
         }
-        (w_s, w_l), _ = max(W_to_score.items(), key=lambda x: x[1])
+        (w_s, w_l), score = max(W_to_score.items(), key=lambda x: x[1])
+        logging.info(score)
         return Signal(w_s=w_s, w_l=w_l, value=gen_signals(self.prices, w_s, w_l)[-1])
 
 
@@ -99,7 +98,7 @@ class Position:
 
 
 # async def main():
-#     p = await Position('t', '2330', 637)
+#     p = await Position('u', 'MSFT', 637)
 #     print(p.calc_signal(182))
 
 

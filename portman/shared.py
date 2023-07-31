@@ -16,6 +16,7 @@ from numpy.typing import NDArray as Array
 dotenv.load_dotenv()
 
 FMP_KEY = os.environ['FMP_KEY']
+FROM_YAHOO = set(os.environ['FROM_YAHOO'].split(','))
 MARKET_TO_TIMEZONE = {'c': 'UTC', 't': 'Asia/Taipei', 'u': 'America/New_York'}
 
 
@@ -36,26 +37,26 @@ def get_sorted_values(D: dict[str, float]):
 
 
 @nb.njit
-def clean_up(A: Array[f8], n: int):
-    A = A.copy()  # pyright: ignore
+def clean_up(arr: Array[f8], n: int):
+    arr = arr.copy()  # pyright: ignore
 
     def diff(a: f8, b: f8):
         return np.abs(np.log(a / b))
 
     prev_diff = 0
-    for i in range(1, len(A)):
-        if not A[i]:
-            A[i] = A[i - 1]
+    for i in range(1, len(arr)):
+        if not arr[i]:
+            arr[i] = arr[i - 1]
             prev_diff = 0
-        elif A[i - 1]:
-            curr_diff = diff(A[i - 1], A[i])
+        elif arr[i - 1]:
+            curr_diff = diff(arr[i - 1], arr[i])
             if prev_diff > 0.693 and curr_diff > 0.693:
-                A[i - 1] = A[i - 2]
+                arr[i - 1] = arr[i - 2]
             prev_diff = curr_diff
 
-    A = A[-n:]  # pyright: ignore
-    assert A[0]
-    return A
+    arr = arr[-n:]  # pyright: ignore
+    assert arr[0]
+    return arr
 
 
 async def get_today_dividend(h: AsyncClient, market: Literal['t', 'u'], symbol: str):
