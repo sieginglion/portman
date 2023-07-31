@@ -16,6 +16,7 @@ from numpy.typing import NDArray as Array
 dotenv.load_dotenv()
 
 FMP_KEY = os.environ['FMP_KEY']
+FROM_GECKO = set(os.environ['FROM_GECKO'].split(','))
 FROM_YAHOO = set(os.environ['FROM_YAHOO'].split(','))
 MARKET_TO_TIMEZONE = {'c': 'UTC', 't': 'Asia/Taipei', 'u': 'America/New_York'}
 
