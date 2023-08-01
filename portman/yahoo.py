@@ -30,7 +30,7 @@ async def get_unadjusted(
         },
     )
     for l in res.text.split('\n')[1:]:
-        if len(l := l.split(',')) > 1:
+        if len(l := l.split(',')) > 5:
             if l[0] in date_to_price:
                 date_to_price[l[0]] = float(l[4])
     return clean_up(get_sorted_values(date_to_price), n)

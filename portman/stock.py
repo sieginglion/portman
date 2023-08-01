@@ -69,7 +69,7 @@ def calc_adjusted(unadjusted: Array[f8], dividends: Array[f8]):
     for i, dividend in enumerate(dividends, 1):
         if dividend:
             factors[i - 1] = 1 - dividend / unadjusted[i - 1]
-    return unadjusted * np.flip(np.cumprod(np.flip(factors)))
+    return unadjusted * np.cumprod(factors[::-1])[::-1]
 
 
 async def get_adjusted(h: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int):

@@ -79,7 +79,7 @@ class Position:
     def calc_score(self, scale: int):
         P = self.prices[-(scale + 1) :]
         R = np.log(P[1:] / P[:-1])
-        return np.exp(np.mean(R) * 91) / np.std(R)
+        return np.sum(R[R > 0]) / -np.sum(R[R < 0]) / np.sqrt(np.mean(R**2))
 
     def calc_signal(self, scale: int):
         n = scale * 2 + 1
@@ -98,8 +98,9 @@ class Position:
 
 
 # async def main():
-#     p = await Position('u', 'MSFT', 637)
-#     print(p.calc_signal(182))
+#     p = await Position('u', 'MSFT', 319)
+#     print(p.calc_score(364))
+#     print(p.calc_signal(91))
 
 
 # asyncio.run(main())
