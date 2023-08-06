@@ -1,6 +1,7 @@
 import logging
 import math
-from typing import Literal, TypedDict
+from dataclasses import dataclass
+from typing import Literal
 
 import numba as nb
 import numpy as np
@@ -53,10 +54,11 @@ def simulate(prices: Array[f8], signals: Array[f8]):
     return cash + position * prices[-1]
 
 
-class Signal(TypedDict):
+@dataclass
+class Signals:
     w_s: int
     w_l: int
-    value: f8
+    values: Array[f8]
 
 
 class Position:
@@ -81,7 +83,7 @@ class Position:
         R = np.log(P[1:] / P[:-1])
         return np.sum(R[R > 0]) / -np.sum(R[R < 0]) / np.sqrt(np.mean(R**2))
 
-    def calc_signal(self, scale: int):
+    def calc_signals(self, scale: int):
         n = scale * 2 + 1
         prices = self.prices[-n:]
         W_to_score = {
@@ -91,7 +93,7 @@ class Position:
         }
         (w_s, w_l), score = max(W_to_score.items(), key=lambda x: x[1])
         logging.info(score)
-        return Signal(w_s=w_s, w_l=w_l, value=gen_signals(self.prices, w_s, w_l)[-1])
+        return Signals(w_s, w_l, gen_signals(self.prices, w_s, w_l)[-scale:])
 
 
 # import asyncio
