@@ -81,18 +81,18 @@ class Position:
     def calc_score(self, scale: int):
         P = self.prices[-(scale + 1) :]
         R = np.log(P[1:] / P[:-1])
-        return np.sum(R[R > 0]) / -np.sum(R[R < 0]) / np.sqrt(np.mean(R**2))
+        return np.sum(R[R > 0]) / -np.sum(R[R < 0]) / np.std(R)
 
     def calc_signals(self, scale: int):
         n = scale * 2 + 1
-        prices = self.prices[-n:]
-        W_to_score = {
-            (w_s, w_l): simulate(prices, gen_signals(self.prices, w_s, w_l)[-n:])
+        P = self.prices[-n:]
+        W_to_s = {
+            (w_s, w_l): simulate(P, gen_signals(self.prices, w_s, w_l)[-n:])
             for w_s in range(2, scale + 1)
             for w_l in range(w_s + 1, scale + 1)
         }
-        (w_s, w_l), score = max(W_to_score.items(), key=lambda x: x[1])
-        logging.info(score)
+        (w_s, w_l), s = max(W_to_s.items(), key=lambda x: x[1])
+        logging.info(s)
         return Signals(w_s, w_l, gen_signals(self.prices, w_s, w_l)[-scale:])
 
 
@@ -102,7 +102,7 @@ class Position:
 # async def main():
 #     p = await Position('u', 'MSFT', 319)
 #     print(p.calc_score(364))
-#     print(p.calc_signal(91))
+#     print(p.calc_signals(91))
 
 
 # asyncio.run(main())

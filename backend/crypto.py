@@ -12,7 +12,13 @@ from .shared import (
 
 
 async def get_id(h: AsyncClient, symbol: str):
-    res = await h.get('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd')
+    res = await h.get(
+        'https://api.coingecko.com/api/v3/coins/markets',
+        params={
+            'per_page': 200,
+            'vs_currency': 'usd',
+        },
+    )
     for e in res.json():
         if e['symbol'].upper() == symbol:
             return e['id']

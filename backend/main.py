@@ -12,11 +12,11 @@ app = fastapi.FastAPI()
 logging.basicConfig(level=logging.INFO)
 
 
-@app.get('/proxy')
-async def proxy(url: str):
+@app.get('/content')
+async def get_content(url: str):
     async with AsyncClient(timeout=60) as h:
-        res = await h.get(unquote(url))
-        return fastapi.Response(res.content, res.status_code, res.headers)
+        r = await h.get(unquote(url))
+        return fastapi.Response(r.content, r.status_code, r.headers)
 
 
 @app.get('/score')
