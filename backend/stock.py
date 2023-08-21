@@ -65,11 +65,14 @@ async def get_dividends(h: AsyncClient, market: Literal['t', 'u'], symbol: str, 
 
 @nb.njit
 def calc_adjusted(unadjusted: Array[f8], dividends: Array[f8]):
-    factors = np.ones(len(dividends))
-    for i, dividend in enumerate(dividends, 1):
-        if dividend:
-            factors[i - 1] = 1 - dividend / unadjusted[i - 1]
-    return unadjusted * np.cumprod(factors[::-1])[::-1]
+    n = len(dividends)
+    adjusted = np.empty(n)
+    factor = 1
+    for i in range(n - 1, -1, -1):
+        adjusted[i] = unadjusted[i] * factor
+        if i and dividends[i]:
+            factor *= 1 - dividends[i] / unadjusted[i - 1]
+    return adjusted
 
 
 async def get_adjusted(h: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int):
