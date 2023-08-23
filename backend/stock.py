@@ -70,7 +70,7 @@ def calc_adjusted(unadjusted: Array[f8], dividends: Array[f8]):
     factor = 1
     for i in range(n - 1, -1, -1):
         adjusted[i] = unadjusted[i] * factor
-        if i and dividends[i]:
+        if dividends[i]:
             factor *= 1 - dividends[i] / unadjusted[i - 1]
     return adjusted
 
