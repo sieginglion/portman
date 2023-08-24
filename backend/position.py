@@ -39,14 +39,17 @@ def simulate(prices: Array[f8], signals: Array[f8]):
     for i in range(1, len(prices)):
         price, signal = prices[i], signals[i]
         if 0 < abs(price / last - 1) < 0.09 and signal:
-            diff = 1000 - position * price
-            if np.sign(diff) == signal:
-                cash -= diff
-                position = 1000 / price
+            if signal == 1 and position == 0:
+                position = cash / price
+                cash = 0
+            elif signal == -1 and position > 0:
+                cash = position * price
+                position = 0
         if i == mid:
-            factor = 1000 / (cash + position * price)
-            cash *= factor
-            position *= factor
+            if cash:
+                cash = 1000
+            else:
+                position = 1000 / price
         last = price
     return cash + position * prices[-1]
 
