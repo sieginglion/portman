@@ -17,8 +17,13 @@ dotenv.load_dotenv()
 
 FMP_KEY = os.environ['FMP_KEY']
 FROM_GECKO = set(os.environ['FROM_GECKO'].split(','))
+FROM_TPEX = set(os.environ['FROM_TPEX'].split(','))
 FROM_YAHOO = set(os.environ['FROM_YAHOO'].split(','))
 MARKET_TO_TIMEZONE = {'c': 'UTC', 't': 'Asia/Taipei', 'u': 'America/New_York'}
+
+
+def get_suffix(market: Literal['c', 't', 'u'], symbol: str):
+    return '.TW' + ('O' if symbol in FROM_TPEX else '') if market == 't' else ''
 
 
 def to_date(time: Arrow | int | str, timezone: str = ''):

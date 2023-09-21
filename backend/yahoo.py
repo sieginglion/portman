@@ -9,6 +9,7 @@ from .shared import (
     clean_up,
     gen_dates,
     get_sorted_values,
+    get_suffix,
     get_today_dividend,
 )
 
@@ -20,7 +21,7 @@ async def get_unadjusted(
     now = arrow.now(tz)
     date_to_price = dict.fromkeys(gen_dates(now.shift(days=-(n + 13)), now), 0.0)
     res = await h.get(
-        f'https://query1.finance.yahoo.com/v7/finance/download/{symbol}{ ".TW" if market == "t" else "" }',
+        f'https://query1.finance.yahoo.com/v7/finance/download/{symbol}{ get_suffix(market, symbol) }',
         params={
             'events': 'history',
             'period1': int(arrow.get(min(date_to_price), tzinfo=tz).timestamp()),
@@ -42,7 +43,7 @@ async def get_dividends(h: AsyncClient, market: Literal['t', 'u'], symbol: str, 
     date_to_dividend = dict.fromkeys(gen_dates(now.shift(days=-n), now), 0.0)
     res, today = await asyncio.gather(
         h.get(
-            f'https://query1.finance.yahoo.com/v7/finance/download/{symbol}{ ".TW" if market == "t" else "" }',
+            f'https://query1.finance.yahoo.com/v7/finance/download/{symbol}{ get_suffix(market, symbol) }',
             params={
                 'events': 'div',
                 'period1': int(arrow.get(min(date_to_dividend), tzinfo=tz).timestamp()),

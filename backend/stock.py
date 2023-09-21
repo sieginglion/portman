@@ -16,6 +16,7 @@ from .shared import (
     clean_up,
     gen_dates,
     get_sorted_values,
+    get_suffix,
     get_today_dividend,
 )
 
@@ -29,14 +30,14 @@ async def get_unadjusted(
         lambda x: x.json(),
         await asyncio.gather(
             h.get(
-                f'https://financialmodelingprep.com/api/v3/historical-price-full/{ symbol }{ ".TW" if market == "t" else "" }',
+                f'https://financialmodelingprep.com/api/v3/historical-price-full/{ symbol }{ get_suffix(market, symbol) }',
                 params={
                     'from': min(date_to_price),
                     'serietype': 'line',
                 },
             ),
             h.get(
-                f'https://financialmodelingprep.com/api/v3/quote-short/{ symbol }{ ".TW" if market == "t" else "" }'
+                f'https://financialmodelingprep.com/api/v3/quote-short/{ symbol }{ get_suffix(market, symbol) }'
             ),
         ),
     )
@@ -52,7 +53,7 @@ async def get_dividends(h: AsyncClient, market: Literal['t', 'u'], symbol: str, 
     date_to_dividend = dict.fromkeys(gen_dates(now.shift(days=-n), now), 0.0)
     res, today = await asyncio.gather(
         h.get(
-            f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{ symbol }{ ".TW" if market == "t" else "" }'
+            f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{ symbol }{ get_suffix(market, symbol) }'
         ),
         get_today_dividend(h, market, symbol),
     )
