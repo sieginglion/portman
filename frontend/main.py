@@ -41,9 +41,9 @@ def plot_chart(chart: Chart):
 
 
 def main():
-    market = st.selectbox('market', ('c', 't', 'u'))
-    symbol = st.text_input('symbol', 'ETH')
-    if st.button('visualize'):
+    market = st.selectbox('Market', ('c', 't', 'u'))
+    symbol = st.text_input('Symbol', 'ETH')
+    if st.button('Run'):
         short, long = get_charts(market, symbol)
         plot_chart(short)
         plot_chart(long)

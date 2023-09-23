@@ -3,11 +3,12 @@ import os
 import re
 from typing import Literal
 
-import aiofiles
 import arrow
+import cachetools
 import dotenv
 import numba as nb
 import numpy as np
+import requests as r
 from arrow.arrow import Arrow
 from httpx import AsyncClient
 from numpy import float64 as f8
@@ -65,11 +66,15 @@ def clean_up(arr: Array[f8], n: int):
     return arr
 
 
+@cachetools.cached(cachetools.TTLCache(1, 3600))
+def cached_get(url: str):
+    return r.get(url).text
+
+
 async def get_today_dividend(h: AsyncClient, market: Literal['t', 'u'], symbol: str):
     today = to_date(arrow.now(MARKET_TO_TIMEZONE[market]))
     if market == 't':
-        async with aiofiles.open('TWT48U.json') as f:
-            text = await f.read()
+        text = cached_get('https://www.twse.com.tw/rwd/zh/exRight/TWT48U?response=json')
         for e in json.loads(text)['data']:
             y, m, d = map(int, re.findall('\\d+', e[0]))
             if to_date(Arrow(y + 1911, m, d)) == today and e[1] == symbol:
