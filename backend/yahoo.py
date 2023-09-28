@@ -15,19 +15,18 @@ from .shared import (
 
 
 async def get_unadjusted(
-    h: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int
+    sess: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int
 ):
     tz = MARKET_TO_TIMEZONE[market]
     now = arrow.now(tz)
     date_to_price = dict.fromkeys(gen_dates(now.shift(days=-(n + 13)), now), 0.0)
-    res = await h.get(
+    res = await sess.get(
         f'https://query1.finance.yahoo.com/v7/finance/download/{symbol}{ get_suffix(market, symbol) }',
         params={
             'events': 'history',
             'period1': int(arrow.get(min(date_to_price), tzinfo=tz).timestamp()),
-            'period2': int(
-                arrow.get(max(date_to_price), tzinfo=tz).shift(days=1).timestamp()
-            ),
+            'period2': int(arrow.get(max(date_to_price), tzinfo=tz).timestamp())
+            + 86400,
         },
     )
     for l in res.text.split('\n')[1:]:
@@ -37,24 +36,23 @@ async def get_unadjusted(
     return clean_up(get_sorted_values(date_to_price), n)
 
 
-async def get_dividends(h: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int):
+async def get_dividends(
+    sess: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int
+):
     tz = MARKET_TO_TIMEZONE[market]
     now = arrow.now(tz)
     date_to_dividend = dict.fromkeys(gen_dates(now.shift(days=-n), now), 0.0)
     res, today = await asyncio.gather(
-        h.get(
+        sess.get(
             f'https://query1.finance.yahoo.com/v7/finance/download/{symbol}{ get_suffix(market, symbol) }',
             params={
                 'events': 'div',
                 'period1': int(arrow.get(min(date_to_dividend), tzinfo=tz).timestamp()),
-                'period2': int(
-                    arrow.get(max(date_to_dividend), tzinfo=tz)
-                    .shift(days=1)
-                    .timestamp()
-                ),
+                'period2': int(arrow.get(max(date_to_dividend), tzinfo=tz).timestamp())
+                + 86400,
             },
         ),
-        get_today_dividend(h, market, symbol),
+        get_today_dividend(sess, market, symbol),
     )
     for l in res.text.split('\n')[1:]:
         if len(l := l.split(',')) > 1:

@@ -14,8 +14,8 @@ logging.basicConfig(level=logging.INFO)
 
 @app.get('/content')
 async def get_content(url: str):
-    async with AsyncClient(timeout=60) as h:
-        r = await h.get(unquote(url))
+    async with AsyncClient(timeout=60) as sess:
+        r = await sess.get(unquote(url))
         return fastapi.Response(r.content, r.status_code, r.headers)
 
 
@@ -27,16 +27,16 @@ async def get_score(market: Literal['c', 't', 'u'], symbol: str, scale: int):
 
 @app.get('/signals')
 async def get_signals(market: Literal['c', 't', 'u'], symbol: str):
-    p = await Position(market, symbol, 364 + calc_k(182))
-    s, l = p.calc_signals(91), p.calc_signals(182)
-    return ((s.w_s, s.w_l, int(s.values[-1])), (l.w_s, l.w_l, int(l.values[-1])))
+    p = await Position(market, symbol, 363 + calc_k(182))
+    S, L = p.calc_signals(91), p.calc_signals(182)
+    return (int(S[-1]), int(L[-1]))
 
 
 @app.get('/charts')
 async def get_charts(market: Literal['c', 't', 'u'], symbol: str):
-    p = await Position(market, symbol, 364 + calc_k(182))
+    p = await Position(market, symbol, 363 + calc_k(182))
     P = p.prices.tolist()
-    S, L = p.calc_signals(91).values, p.calc_signals(182).values
+    S, L = p.calc_signals(91), p.calc_signals(182)
     return (
         (P[-91:], np.where(S > 0)[0].tolist(), np.where(S < 0)[0].tolist()),
         (P[-182:], np.where(L > 0)[0].tolist(), np.where(L < 0)[0].tolist()),

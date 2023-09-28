@@ -22,21 +22,21 @@ from .shared import (
 
 
 async def get_unadjusted(
-    h: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int
+    sess: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int
 ):
     now = arrow.now(MARKET_TO_TIMEZONE[market])
     date_to_price = dict.fromkeys(gen_dates(now.shift(days=-(n + 13)), now), 0.0)
     historical, quote = map(
         lambda x: x.json(),
         await asyncio.gather(
-            h.get(
+            sess.get(
                 f'https://financialmodelingprep.com/api/v3/historical-price-full/{ symbol }{ get_suffix(market, symbol) }',
                 params={
                     'from': min(date_to_price),
                     'serietype': 'line',
                 },
             ),
-            h.get(
+            sess.get(
                 f'https://financialmodelingprep.com/api/v3/quote-short/{ symbol }{ get_suffix(market, symbol) }'
             ),
         ),
@@ -48,14 +48,16 @@ async def get_unadjusted(
     return clean_up(get_sorted_values(date_to_price), n)
 
 
-async def get_dividends(h: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int):
+async def get_dividends(
+    sess: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int
+):
     now = arrow.now(MARKET_TO_TIMEZONE[market])
     date_to_dividend = dict.fromkeys(gen_dates(now.shift(days=-n), now), 0.0)
     res, today = await asyncio.gather(
-        h.get(
+        sess.get(
             f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{ symbol }{ get_suffix(market, symbol) }'
         ),
-        get_today_dividend(h, market, symbol),
+        get_today_dividend(sess, market, symbol),
     )
     for e in res.json().get('historical', []):
         if e['date'] in date_to_dividend:
@@ -76,8 +78,10 @@ def calc_adjusted(unadjusted: Array[f8], dividends: Array[f8]):
     return adjusted
 
 
-async def get_adjusted(h: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int):
-    args = (h, market, symbol, n)
+async def get_adjusted(
+    sess: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int
+):
+    args = (sess, market, symbol, n)
     funcs = (
         (yahoo.get_unadjusted(*args), yahoo.get_dividends(*args))
         if symbol in FROM_YAHOO
@@ -87,12 +91,12 @@ async def get_adjusted(h: AsyncClient, market: Literal['t', 'u'], symbol: str, n
     return calc_adjusted(unadjusted, dividends)
 
 
-async def get_rates(h: AsyncClient, market: Literal['t', 'u'], n: int):
+async def get_rates(sess: AsyncClient, market: Literal['t', 'u'], n: int):
     if market == 'u':
         return np.ones(n)
     now = arrow.now(MARKET_TO_TIMEZONE['t'])
     date_to_rate = dict.fromkeys(gen_dates(now.shift(days=-(n + 13)), now), 0.0)
-    res = await h.get(
+    res = await sess.get(
         'https://financialmodelingprep.com/api/v3/historical-price-full/USDTWD',
         params={
             'from': min(date_to_rate),
@@ -106,8 +110,8 @@ async def get_rates(h: AsyncClient, market: Literal['t', 'u'], n: int):
 
 
 async def get_prices(market: Literal['t', 'u'], symbol: str, n: int):
-    async with AsyncClient(timeout=60, params={'apikey': FMP_KEY}) as h:
+    async with AsyncClient(timeout=60, params={'apikey': FMP_KEY}) as sess:
         adjusted, rates = await asyncio.gather(
-            get_adjusted(h, market, symbol, n), get_rates(h, market, n)
+            get_adjusted(sess, market, symbol, n), get_rates(sess, market, n)
         )
     return adjusted / rates

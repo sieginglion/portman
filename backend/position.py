@@ -1,6 +1,4 @@
-import logging
 import math
-from dataclasses import dataclass
 from typing import Literal
 
 import numba as nb
@@ -34,31 +32,17 @@ def gen_signals(prices: Array[f8], w_s: int, w_l: int):
 
 @nb.njit
 def simulate(prices: Array[f8], signals: Array[f8]):
-    cash, position = 1000, 0
-    last, mid = prices[0], len(prices) // 2
-    for i in range(1, len(prices)):
+    cash, pos = 1000, 0
+    mid = len(prices) // 2 - 1
+    for i in range(len(prices)):
         price, signal = prices[i], signals[i]
-        if 0 < abs(price / last - 1) < 0.09 and signal:
-            if signal == 1 and position == 0:
-                position = cash / price
-                cash = 0
-            elif signal == -1 and position > 0:
-                cash = position * price
-                position = 0
+        if signal == 1 and pos == 0:
+            cash, pos = 0, cash / price
+        elif signal == -1 and pos > 0:
+            cash, pos = pos * price, 0
         if i == mid:
-            if cash:
-                cash = 1000
-            else:
-                position = 1000 / price
-        last = price
-    return cash + position * prices[-1]
-
-
-@dataclass
-class Signals:
-    w_s: int
-    w_l: int
-    values: Array[f8]
+            cash, pos = 1000 if cash else 0, 1000 / price if pos else 0
+    return cash + pos * prices[-1]
 
 
 class Position:
@@ -67,7 +51,7 @@ class Position:
         self.symbol = symbol
         self.n = n
 
-    async def ainit(self):
+    async def init(self):
         self.prices = await (
             crypto.get_prices(self.symbol, self.n)
             if self.market == 'c'
@@ -76,7 +60,7 @@ class Position:
         return self
 
     def __await__(self):
-        return self.ainit().__await__()
+        return self.init().__await__()
 
     def calc_score(self, scale: int):
         P = self.prices[-(scale + 1) :]
@@ -84,25 +68,22 @@ class Position:
         return np.sum(R[R > 0]) / -np.sum(R[R < 0]) / np.std(R)
 
     def calc_signals(self, scale: int):
-        n = scale * 2 + 1
+        n = scale * 2
         P = self.prices[-n:]
         W_to_s = {
             (w_s, w_l): simulate(P, gen_signals(self.prices, w_s, w_l)[-n:])
-            for w_s in range(2, scale + 1)
+            for w_s in range(2, scale)
             for w_l in range(w_s + 1, scale + 1)
         }
-        (w_s, w_l), s = max(W_to_s.items(), key=lambda x: x[1])
-        logging.info(s)
-        return Signals(w_s, w_l, gen_signals(self.prices, w_s, w_l)[-scale:])
+        (w_s, w_l), _ = max(W_to_s.items(), key=lambda x: x[1])
+        return gen_signals(self.prices, w_s, w_l)[-scale:]
 
 
 # import asyncio
 
-# logging.basicConfig(level=logging.INFO)
-
 
 # async def main():
-#     p = await Position('u', 'MSFT', 319)
+#     p = await Position('u', 'MSFT', 318)
 #     print(p.calc_score(364))
 #     print(p.calc_signals(91))
 
