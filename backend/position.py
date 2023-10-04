@@ -83,7 +83,7 @@ class Position:
 
 
 # async def main():
-#     p = await Position('u', 'MSFT', 318)
+#     p = await Position('u', 'MSFT', 365)
 #     print(p.calc_score(364))
 #     print(p.calc_signals(91))
 

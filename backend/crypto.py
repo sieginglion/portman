@@ -4,9 +4,9 @@ from httpx import AsyncClient
 from .shared import (
     FROM_COINGECKO,
     MARKET_TO_TIMEZONE,
-    clean_up,
     gen_dates,
     get_sorted_values,
+    patch_and_trunc,
     to_date,
 )
 
@@ -52,4 +52,4 @@ async def get_prices(symbol: str, n: int):
             for e in res.json():
                 if (date := to_date(e[0], tz)) in date_to_price:
                     date_to_price[date] = float(e[4])
-    return clean_up(get_sorted_values(date_to_price), n)
+    return patch_and_trunc(get_sorted_values(date_to_price), n)

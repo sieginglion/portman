@@ -71,7 +71,7 @@ def get_sorted_values(D: dict[str, float]):
 
 
 @nb.njit
-def clean_up(arr: Array[f8], n: int):
+def patch_and_trunc(arr: Array[f8], n: int):
     arr = arr.copy()
     for i in range(1, len(arr)):
         if not arr[i]:
