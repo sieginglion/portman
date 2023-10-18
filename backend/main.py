@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Literal
 from urllib.parse import unquote
@@ -5,6 +6,8 @@ from urllib.parse import unquote
 import fastapi
 import numpy as np
 from httpx import AsyncClient
+from numpy import float64 as f8
+from numpy.typing import NDArray as Array
 
 from .position import Position, calc_k
 
@@ -19,10 +22,27 @@ async def get_content(url: str):
         return fastapi.Response(r.content, r.status_code, r.headers)
 
 
-@app.get('/score')
-async def get_score(market: Literal['c', 't', 'u'], symbol: str, scale: int):
-    p = await Position(market, symbol, scale + 1)
-    return p.calc_score(scale)
+def calc_W(R: Array[f8], t: float) -> Array[f8]:
+    # R_ = (1 + R) / (1 + t) - 1
+    R_ = R - t
+    S = 1 / np.sum(R_ * (R_ < 0), 1)
+    W = S / np.sum(S)
+    u = np.dot(np.mean(R, 1), W)
+    if np.abs(u - t) < 1e-6:
+        return W
+    return calc_W(R, u)
+
+
+@app.post('/weights')
+async def get_weights(positions: list[tuple[Literal['c', 't', 'u'], str]]):
+    P = np.array(
+        [
+            p.prices
+            for p in await asyncio.gather(*[Position(m, s, 365) for m, s in positions])
+        ]
+    )
+    R = P[:, 1:] / P[:, :-1] - 1
+    return calc_W(R, 0).tolist()
 
 
 @app.get('/signals')

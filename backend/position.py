@@ -62,11 +62,6 @@ class Position:
     def __await__(self):
         return self.init().__await__()
 
-    def calc_score(self, scale: int):
-        P = self.prices[-(scale + 1) :]
-        R = np.log(P[1:] / P[:-1])
-        return np.sum(R[R > 0]) / -np.sum(R[R < 0]) / np.std(R)
-
     def calc_signals(self, scale: int):
         n = scale * 2
         P = self.prices[-n:]
@@ -84,7 +79,6 @@ class Position:
 
 # async def main():
 #     p = await Position('u', 'MSFT', 365)
-#     print(p.calc_score(364))
 #     print(p.calc_signals(91))
 
 
