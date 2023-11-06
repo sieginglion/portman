@@ -19,13 +19,11 @@ numba = "^0.58.0"
 python-dotenv = "^1.0.0"
 uvicorn = "^0.23.2"
 
-[tool.poetry.group.frontend.dependencies]
-plotly = "^5.15.0"
-streamlit = "^1.25.0"
-
 [tool.poetry.group.dev.dependencies]
 matplotlib = "^3.8.0"
 notebook = "^7.0.5"
+plotly = "^5.15.0"
+streamlit = "^1.25.0"
 
 [build-system]
 requires = ["poetry-core"]

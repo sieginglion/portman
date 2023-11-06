@@ -34,14 +34,23 @@ def gen_signals(prices: Array[f8], w_s: int, w_l: int):
 def simulate(prices: Array[f8], signals: Array[f8]):
     cash, pos = 1000, 0
     mid = len(prices) // 2 - 1
+    pending = 0
     for i in range(len(prices)):
         price, signal = prices[i], signals[i]
-        if signal == 1 and pos == 0:
-            cash, pos = 0, cash / price
-        elif signal == -1 and pos > 0:
-            cash, pos = pos * price, 0
+        if pending:
+            value = cash if pending == 1 else pos * price
+            cash -= pending * value
+            pos += pending * (value / price)
+            pending = 0
+        elif (signal == 1 and cash > 0) or (signal == -1 and pos > 0):
+            value = (cash if signal == 1 else pos * price) / 2
+            cash -= signal * value
+            pos += signal * (value / price)
+            pending = signal
         if i == mid:
-            cash, pos = 1000 if cash else 0, 1000 / price if pos else 0
+            factor = 1000 / (cash + pos * price)
+            cash *= factor
+            pos *= factor
     return cash + pos * prices[-1]
 
 
