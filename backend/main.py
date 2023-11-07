@@ -47,14 +47,14 @@ async def get_weights(positions: list[tuple[Literal['c', 't', 'u'], str]]):
 
 @app.get('/signals')
 async def get_signals(market: Literal['c', 't', 'u'], symbol: str):
-    p = await Position(market, symbol, 363 + calc_k(182))
+    p = await Position(market, symbol, 364 + calc_k(182))
     S, L = p.calc_signals(91), p.calc_signals(182)
     return (int(S[-1]), int(L[-1]))
 
 
 @app.get('/charts')
 async def get_charts(market: Literal['c', 't', 'u'], symbol: str):
-    p = await Position(market, symbol, 363 + calc_k(182))
+    p = await Position(market, symbol, 364 + calc_k(182))
     P = p.prices.tolist()
     S, L = p.calc_signals(91), p.calc_signals(182)
     return (

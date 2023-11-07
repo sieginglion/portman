@@ -26,7 +26,8 @@ def gen_signals(prices: Array[f8], w_s: int, w_l: int):
     s_ema = calc_ema(prices, 2 / (w_s + 1), calc_k(w_s))
     l_ema = calc_ema(prices, 2 / (w_l + 1), calc_k(w_l))
     macd = s_ema[-len(l_ema) :] - l_ema
-    diff = np.concatenate((np.zeros(1), np.diff(macd)))
+    diff = np.diff(macd)
+    macd = macd[1:]
     return ((macd < 0) & (diff > 0)).astype(f8) - ((macd > 0) & (diff < 0)).astype(f8)
 
 
