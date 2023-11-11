@@ -22,15 +22,15 @@ async def get_content(url: str):
         return fastapi.Response(r.content, r.status_code, r.headers)
 
 
-def calc_W(R: Array[f8], t: float) -> Array[f8]:
+def calc_W(R: Array[f8], V: Array[f8], t: float) -> Array[f8]:
     # R_ = (1 + R) / (1 + t) - 1
     R_ = R - t
-    S = 1 / np.sum(R_ * (R_ < 0), 1)
+    S = 1 / (R_ * (R_ < 0) @ V)
     W = S / np.sum(S)
-    u = np.dot(np.mean(R, 1), W)
+    u = (R @ V @ W).item()
     if np.abs(u - t) < 1e-6:
         return W
-    return calc_W(R, u)
+    return calc_W(R, V, u)
 
 
 @app.post('/weights')
@@ -38,11 +38,12 @@ async def get_weights(positions: list[tuple[Literal['c', 't', 'u'], str]]):
     P = np.array(
         [
             p.prices
-            for p in await asyncio.gather(*[Position(m, s, 365) for m, s in positions])
+            for p in await asyncio.gather(*[Position(m, s, 410) for m, s in positions])
         ]
     )
     R = P[:, 1:] / P[:, :-1] - 1
-    return calc_W(R, 0).tolist()
+    V = np.append(np.arange(1, 91) / (91 * 364), np.full(319, 1 / 364))
+    return calc_W(R, V, 0).tolist()
 
 
 @app.get('/signals')
