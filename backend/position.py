@@ -32,22 +32,20 @@ def gen_signals(prices: Array[f8], w_s: int, w_l: int):
 
 
 @nb.njit
-def simulate(prices: Array[f8], signals: Array[f8]):
+def simulate(prices: Array[f8], signals: Array[f8], parts: int = 2):
     cash, pos = 1000, 0
+    left, side = parts, 1
     mid = len(prices) // 2 - 1
-    pending = 0
     for i in range(len(prices)):
         price, signal = prices[i], signals[i]
-        if pending:
-            value = cash if pending == 1 else pos * price
-            cash -= pending * value
-            pos += pending * (value / price)
-            pending = 0
-        elif (signal == 1 and cash > 0) or (signal == -1 and pos > 0):
-            value = (cash if signal == 1 else pos * price) / 2
-            cash -= signal * value
-            pos += signal * (value / price)
-            pending = signal
+        if signal:
+            if signal != side:
+                left, side = parts, signal
+            if left:
+                size = (cash if side == 1 else pos * price) / left
+                cash -= side * size
+                pos += side * (size / price)
+                left -= 1
         if i == mid:
             factor = 1000 / (cash + pos * price)
             cash *= factor
