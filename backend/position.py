@@ -71,14 +71,15 @@ class Position:
         return self.init().__await__()
 
     def calc_signals(self, scale: int):
-        n = scale * 2
+        m, n = scale // 91, scale * 2
         P = self.prices[-n:]
-        W_to_s = {
-            (w_s, w_l): simulate(P, gen_signals(self.prices, w_s, w_l)[-n:])
-            for w_s in range(2, scale)
-            for w_l in range(w_s + 1, scale + 1)
+        params_to_score = {
+            (w_s, w_l, p): simulate(P, gen_signals(self.prices, w_s, w_l)[-n:], p)
+            for w_s in range(max(m, 2), scale, m)
+            for w_l in range(w_s + m, scale + 1, m)
+            for p in range(m, 7 * m + 1, m)
         }
-        (w_s, w_l), _ = max(W_to_s.items(), key=lambda x: x[1])
+        (w_s, w_l, p), s = max(params_to_score.items(), key=lambda x: x[1])
         return gen_signals(self.prices, w_s, w_l)[-scale:]
 
 
