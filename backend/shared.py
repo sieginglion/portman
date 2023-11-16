@@ -4,12 +4,12 @@ import re
 from typing import Literal
 
 import arrow
-import cachetools
 import dotenv
 import numba as nb
 import numpy as np
 import requests as r
 from arrow.arrow import Arrow
+from general_cache import cached
 from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
@@ -39,7 +39,7 @@ def get_suffix(market: Literal['c', 't', 'u'], symbol: str):
     return '.TW' + ('O' if symbol in ON_TPEX else '') if market == 't' else ''
 
 
-@cachetools.cached(cachetools.TTLCache(1, 3600))
+@cached(3600)
 def get_text(url: str):
     return r.get(url).text
 

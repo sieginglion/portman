@@ -5,6 +5,7 @@ from urllib.parse import unquote
 
 import fastapi
 import numpy as np
+from general_cache import cached
 from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
@@ -47,6 +48,7 @@ async def get_weights(positions: list[tuple[Literal['c', 't', 'u'], str]]):
 
 
 @app.get('/signals')
+@cached(600)
 async def get_signals(market: Literal['c', 't', 'u'], symbol: str):
     p = await Position(market, symbol, 364 + calc_k(182))
     S, L = p.calc_signals(91), p.calc_signals(182)
