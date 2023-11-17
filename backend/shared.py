@@ -39,7 +39,7 @@ def get_suffix(market: Literal['c', 't', 'u'], symbol: str):
     return '.TW' + ('O' if symbol in ON_TPEX else '') if market == 't' else ''
 
 
-@cached(3600)
+@cached(43200)
 def get_text(url: str):
     return r.get(url).text
 
@@ -71,8 +71,7 @@ def get_sorted_values(D: dict[str, float]):
 
 
 @nb.njit
-def patch_and_trunc(arr: Array[f8], n: int):
-    arr = arr.copy()
+def fill_and_trim(arr: Array[f8], n: int):
     for i in range(1, len(arr)):
         if not arr[i]:
             arr[i] = arr[i - 1]

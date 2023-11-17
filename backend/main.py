@@ -23,7 +23,7 @@ async def get_content(url: str):
         return fastapi.Response(r.content, r.status_code, r.headers)
 
 
-def calc_W(R: Array[f8], V: Array[f8], t: float) -> Array[f8]:
+def calc_weights(R: Array[f8], V: Array[f8], t: float) -> Array[f8]:
     # R_ = (1 + R) / (1 + t) - 1
     R_ = R - t
     S = 1 / (R_ * (R_ < 0) @ V)
@@ -31,11 +31,12 @@ def calc_W(R: Array[f8], V: Array[f8], t: float) -> Array[f8]:
     u = (R @ V @ W).item()
     if np.abs(u - t) < 1e-6:
         return W
-    return calc_W(R, V, u)
+    return calc_weights(R, V, u)
 
 
 @app.post('/weights')
-async def get_weights(positions: list[tuple[Literal['c', 't', 'u'], str]]):
+@cached(43200)
+async def get_weights(positions: tuple[tuple[Literal['c', 't', 'u'], str], ...]):
     P = np.array(
         [
             p.prices
@@ -44,7 +45,7 @@ async def get_weights(positions: list[tuple[Literal['c', 't', 'u'], str]]):
     )
     R = P[:, 1:] / P[:, :-1] - 1
     V = np.append(np.arange(1, 91) / (91 * 364), np.full(319, 1 / 364))
-    return calc_W(R, V, 0).tolist()
+    return calc_weights(R, V, 0).tolist()
 
 
 @app.get('/signals')
@@ -58,8 +59,8 @@ async def get_signals(market: Literal['c', 't', 'u'], symbol: str):
 @app.get('/charts')
 async def get_charts(market: Literal['c', 't', 'u'], symbol: str):
     p = await Position(market, symbol, 364 + calc_k(182))
-    P = p.prices.tolist()
     S, L = p.calc_signals(91), p.calc_signals(182)
+    P = p.prices.tolist()
     return (
         (P[-91:], np.where(S > 0)[0].tolist(), np.where(S < 0)[0].tolist()),
         (P[-182:], np.where(L > 0)[0].tolist(), np.where(L < 0)[0].tolist()),

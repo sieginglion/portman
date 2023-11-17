@@ -1,5 +1,4 @@
 __pycache__/
 .env
+*.js
 *.log
-*.py
-dev.js

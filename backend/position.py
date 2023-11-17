@@ -32,7 +32,7 @@ def gen_signals(prices: Array[f8], w_s: int, w_l: int):
 
 
 @nb.njit
-def simulate(prices: Array[f8], signals: Array[f8], parts: int = 2):
+def simulate(prices: Array[f8], signals: Array[f8], parts: int):
     cash, pos = 1000, 0
     left, side = parts, 1
     mid = len(prices) // 2 - 1
@@ -87,7 +87,7 @@ class Position:
 
 
 # async def main():
-#     p = await Position('u', 'MSFT', 365)
+#     p = await Position('u', 'MSFT', 319)
 #     print(p.calc_signals(91))
 
 
