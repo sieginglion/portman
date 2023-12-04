@@ -44,7 +44,7 @@ async def get_weights(positions: tuple[tuple[Literal['c', 't', 'u'], str], ...])
         ]
     )
     R = P[:, 1:] / P[:, :-1] - 1
-    V = np.append(np.arange(1, 91) / (91 * 364), np.full(319, 1 / 364))
+    V = np.concatenate((np.arange(1, 91) / (91 * 364), np.full(319, 1 / 364)))
     return calc_weights(R, V, 0).tolist()
 
 
@@ -57,6 +57,7 @@ async def get_signals(market: Literal['c', 't', 'u'], symbol: str):
 
 
 @app.get('/charts')
+@cached(600)
 async def get_charts(market: Literal['c', 't', 'u'], symbol: str):
     p = await Position(market, symbol, 364 + calc_k(182))
     S, L = p.calc_signals(91), p.calc_signals(182)
