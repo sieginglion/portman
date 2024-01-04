@@ -78,10 +78,9 @@ class Position:
             for w_l in range(m, scale + m, m):
                 if w_s == 1 or w_s >= w_l:
                     continue
+                S = gen_signals(self.prices, w_s, w_l)[-n:]
                 for p in range(m, 8 * m, m):
-                    params_to_score[(w_s, w_l, p)] = simulate(
-                        P, gen_signals(self.prices, w_s, w_l)[-n:], p
-                    )
+                    params_to_score[(w_s, w_l, p)] = simulate(P, S, p)
         (w_s, w_l, p), s = max(params_to_score.items(), key=lambda x: x[1])
         return gen_signals(self.prices, w_s, w_l)[-scale:]
 

@@ -29,15 +29,16 @@ def get_charts(market: Literal['c', 't', 'u'], symbol: str):
 
 
 def plot_chart(chart: Chart):
-    fig = go.Figure(
-        (
-            go.Scatter(y=chart.P),
-            go.Scatter(x=chart.X_b, y=chart.P[chart.X_b], mode='markers'),
-            go.Scatter(x=chart.X_s, y=chart.P[chart.X_s], mode='markers'),
+    st.plotly_chart(
+        go.Figure(
+            (
+                go.Scatter(y=chart.P),
+                go.Scatter(x=chart.X_b, y=chart.P[chart.X_b], mode='markers'),
+                go.Scatter(x=chart.X_s, y=chart.P[chart.X_s], mode='markers'),
+            ),
+            {'showlegend': False},
         )
     )
-    fig.update_layout(showlegend=False)
-    st.plotly_chart(fig)
 
 
 def main():

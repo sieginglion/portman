@@ -10,6 +10,7 @@ from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
+from . import stock
 from .position import Position, calc_k
 
 app = fastapi.FastAPI()
@@ -48,14 +49,6 @@ async def get_weights(positions: tuple[tuple[Literal['c', 't', 'u'], str], ...])
     return calc_weights(R, V, 0).tolist()
 
 
-@app.get('/signals')
-@cached(600)
-async def get_signals(market: Literal['c', 't', 'u'], symbol: str):
-    p = await Position(market, symbol, 364 + calc_k(182))
-    S, L = p.calc_signals(91), p.calc_signals(182)
-    return (int(S[-1]), int(L[-1]))
-
-
 @app.get('/charts')
 @cached(600)
 async def get_charts(market: Literal['c', 't', 'u'], symbol: str):
@@ -66,3 +59,9 @@ async def get_charts(market: Literal['c', 't', 'u'], symbol: str):
         (P[-91:], np.where(S > 0)[0].tolist(), np.where(S < 0)[0].tolist()),
         (P[-182:], np.where(L > 0)[0].tolist(), np.where(L < 0)[0].tolist()),
     )
+
+
+@app.get('/prices')
+async def get_prices(symbol: str, n: int):
+    market = 't' if symbol[0].isnumeric() else 'u'
+    return (await stock.get_prices(market, symbol, n, False)).tolist()

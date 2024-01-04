@@ -91,9 +91,7 @@ async def get_adjusted(
     return calc_adjusted(unadjusted, dividends)
 
 
-async def get_rates(sess: AsyncClient, market: Literal['t', 'u'], n: int):
-    if market == 'u':
-        return np.ones(n)
+async def get_rates(sess: AsyncClient, n: int):
     now = arrow.now(MARKET_TO_TIMEZONE['t'])
     date_to_rate = dict.fromkeys(gen_dates(now.shift(days=-(n + 13)), now), 0.0)
     res = await sess.get(
@@ -109,9 +107,12 @@ async def get_rates(sess: AsyncClient, market: Literal['t', 'u'], n: int):
     return fill_and_trim(get_sorted_values(date_to_rate), n)
 
 
-async def get_prices(market: Literal['t', 'u'], symbol: str, n: int):
+async def get_prices(
+    market: Literal['t', 'u'], symbol: str, n: int, to_usd: bool = True
+):
     async with AsyncClient(timeout=60, params={'apikey': FMP_KEY}) as sess:
-        adjusted, rates = await asyncio.gather(
-            get_adjusted(sess, market, symbol, n), get_rates(sess, market, n)
-        )
-    return adjusted / rates
+        tasks = [get_adjusted(sess, market, symbol, n)]
+        if to_usd:
+            tasks.append(get_rates(sess, n))
+        results = await asyncio.gather(*tasks)
+    return results[0] / results[1] if to_usd else results[0]
