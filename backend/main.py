@@ -41,11 +41,12 @@ async def get_weights(positions: tuple[tuple[Literal['c', 't', 'u'], str], ...])
     P = np.array(
         [
             p.prices
-            for p in await asyncio.gather(*[Position(m, s, 410) for m, s in positions])
+            for p in await asyncio.gather(*[Position(m, s, 183) for m, s in positions])
         ]
     )
     R = P[:, 1:] / P[:, :-1] - 1
-    V = np.concatenate((np.arange(1, 91) / (91 * 364), np.full(319, 1 / 364)))
+    # V = np.concatenate((np.arange(1, 91) / (91 * 364), np.full(319, 1 / 364)))
+    V = np.full(182, 1 / 182)
     return calc_weights(R, V, 0).tolist()
 
 
