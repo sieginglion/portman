@@ -49,6 +49,7 @@ async def get_prices(symbol: str, n: int):
                     'symbol': symbol + 'USDT',
                 },
             )
+            res.raise_for_status()
             for e in res.json():
                 if (date := to_date(e[0], tz)) in date_to_price:
                     date_to_price[date] = float(e[4])

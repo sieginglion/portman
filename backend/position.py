@@ -1,5 +1,5 @@
 import math
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import numba as nb
 import numpy as np
@@ -53,6 +53,12 @@ def simulate(prices: Array[f8], signals: Array[f8], parts: int):
     return cash + pos * prices[-1]
 
 
+class Best(NamedTuple):
+    w_s: int
+    w_l: int
+    s: float
+
+
 class Position:
     def __init__(self, market: Literal['c', 't', 'u'], symbol: str, n: int):
         self.market = market
@@ -73,23 +79,23 @@ class Position:
     def calc_signals(self, scale: int):
         m, n = scale // 91, scale * 2
         P = self.prices[-n:]
-        params_to_score = {}
+        best = Best(0, 0, 0)
         for w_s in range(m, scale + m, m):
             for w_l in range(m, scale + m, m):
                 if w_s == 1 or w_s >= w_l:
                     continue
                 S = gen_signals(self.prices, w_s, w_l)[-n:]
                 for p in range(m, 8 * m, m):
-                    params_to_score[(w_s, w_l, p)] = simulate(P, S, p)
-        (w_s, w_l, p), s = max(params_to_score.items(), key=lambda x: x[1])
-        return gen_signals(self.prices, w_s, w_l)[-scale:]
+                    if (s := simulate(P, S, p)) > best.s:
+                        best = Best(w_s, w_l, s)
+        return gen_signals(self.prices, best.w_s, best.w_l)[-scale:]
 
 
 # import asyncio
 
 
 # async def main():
-#     p = await Position('u', 'MSFT', 319)
+#     p = await Position('c', 'ETH', 319)
 #     print(p.calc_signals(91))
 
 

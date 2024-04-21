@@ -24,29 +24,26 @@ async def get_content(url: str):
         return fastapi.Response(r.content, r.status_code, r.headers)
 
 
-def calc_weights(R: Array[f8], V: Array[f8], t: float) -> Array[f8]:
-    # R_ = (1 + R) / (1 + t) - 1
+def calc_weights(R: Array[f8], t: float = 0) -> Array[f8]:
     R_ = R - t
-    S = 1 / (R_ * (R_ < 0) @ V)
+    S = 1 / np.sum(R_ * (R_ < 0), 1)
     W = S / np.sum(S)
-    u = (R @ V @ W).item()
-    if np.abs(u - t) < 1e-6:
+    u = np.log(np.exp(np.sum(R, 1)) @ W) / R.shape[1]
+    if abs(t - u * 2) < 1e-6:  # t = 2u
         return W
-    return calc_weights(R, V, u)
+    return calc_weights(R, u + abs(u))
 
 
 @app.post('/weights')
-@cached(43200)
-async def get_weights(positions: tuple[tuple[Literal['c', 't', 'u'], str], ...]):
+# @cached(43200)
+async def get_weights(positions: list[tuple[Literal['c', 't', 'u'], str]]):
     P = np.array(
         [
             p.prices
-            for p in await asyncio.gather(*[Position(m, s, 410) for m, s in positions])
+            for p in await asyncio.gather(*[Position(m, s, 365) for m, s in positions])
         ]
     )
-    R = P[:, 1:] / P[:, :-1] - 1
-    V = np.concatenate((np.arange(1, 91) / (91 * 364), np.full(319, 1 / 364)))
-    return calc_weights(R, V, 0).tolist()
+    return calc_weights(np.log(P[:, 1:] / P[:, :-1])).tolist()
 
 
 @app.get('/charts')
