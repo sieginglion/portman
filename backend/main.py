@@ -29,8 +29,7 @@ def calc_weights(R: Array[f8], t: float = 0) -> Array[f8]:
     S = 1 / np.sum(R_ * (R_ < 0), 1)
     W = S / np.sum(S)
     u = np.log(np.exp(np.sum(R, 1)) @ W) / R.shape[1]
-    # TODO: handling divergence
-    if abs(t - u * 2) < 1e-6:  # t = 2u
+    if abs(u) < 1e-4 or abs(t - u * 2) < 1e-6:  # t = 2u
         return W
     return calc_weights(R, u * 2)
 
