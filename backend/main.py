@@ -26,12 +26,12 @@ async def get_content(url: str):
 
 def calc_weights(R: Array[f8], t: float = 0) -> Array[f8]:
     R_ = R - t
-    S = 1 / np.sum(R_ * (R_ < 0), 1)
+    S = np.mean((R_ * (R_ > 0)) ** 2, 1) ** 0.5 / np.mean((R_ * (R_ < 0)) ** 2, 1)
     W = S / np.sum(S)
     u = np.log(np.exp(np.sum(R, 1)) @ W) / R.shape[1]
-    if abs(u) < 1e-4 or abs(t - u * 2) < 1e-6:  # t = 2u
+    if abs(u) < 1e-4 or abs(t - u) < 1e-6:
         return W
-    return calc_weights(R, u * 2)
+    return calc_weights(R, u)
 
 
 @app.post('/weights')
