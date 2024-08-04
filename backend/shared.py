@@ -70,9 +70,9 @@ def get_sorted_values(D: dict[str, float]):
     return np.array([e[1] for e in sorted(D.items(), key=lambda x: x[0])])
 
 
-# @nb.njit
-def break_limit(prices: Array[f8]) -> Array[f8]:
-    L = np.abs((prices[1:] - prices[:-1]) / prices[:-1]) > 0.095
+@nb.njit
+def break_limit(prices: Array[f8]):
+    L = np.abs((prices[1:] - prices[:-1]) / prices[:-1]) > 0.09
     s = 0
     for i, l in enumerate(L):
         if not s and l:
@@ -85,6 +85,7 @@ def break_limit(prices: Array[f8]) -> Array[f8]:
     return prices
 
 
+@nb.njit
 def post_process(prices: Array[f8], n: int, limited: bool = False):
     prices = np.trim_zeros(prices, 'f')
     assert len(prices) >= n
