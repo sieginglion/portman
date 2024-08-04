@@ -13,11 +13,11 @@ from .shared import (
     FMP_KEY,
     FROM_YAHOO,
     MARKET_TO_TIMEZONE,
-    fill_and_trim,
     gen_dates,
     get_sorted_values,
     get_suffix,
     get_today_dividend,
+    post_process,
 )
 
 
@@ -45,7 +45,7 @@ async def get_unadjusted(
         if e['date'] in date_to_price:
             date_to_price[e['date']] = e['close']
     date_to_price[max(date_to_price)] = quote[0]['price']
-    return fill_and_trim(get_sorted_values(date_to_price), n)
+    return post_process(get_sorted_values(date_to_price), n, market == 't')
 
 
 async def get_dividends(
@@ -104,7 +104,7 @@ async def get_rates(sess: AsyncClient, n: int):
     for e in res.json()['historical']:
         if e['date'] in date_to_rate:
             date_to_rate[e['date']] = e['close']
-    return fill_and_trim(get_sorted_values(date_to_rate), n)
+    return post_process(get_sorted_values(date_to_rate), n)
 
 
 async def get_prices(

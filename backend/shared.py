@@ -70,11 +70,28 @@ def get_sorted_values(D: dict[str, float]):
     return np.array([e[1] for e in sorted(D.items(), key=lambda x: x[0])])
 
 
-@nb.njit
-def fill_and_trim(arr: Array[f8], n: int):
-    for i in range(1, len(arr)):
-        if not arr[i]:
-            arr[i] = arr[i - 1]
-    arr = arr[-n:]
-    assert arr[0] and np.all(np.abs(np.log(arr[1:] / arr[:-1])) < np.log(2))
-    return arr
+# @nb.njit
+def break_limit(prices: Array[f8]) -> Array[f8]:
+    L = np.abs((prices[1:] - prices[:-1]) / prices[:-1]) > 0.095
+    s = 0
+    for i, l in enumerate(L):
+        if not s and l:
+            s = i + 1
+        elif s and not l:
+            prices[s : i + 1] = prices[i + 1]
+            s = 0
+    if s:
+        prices[s:] = prices[-1]
+    return prices
+
+
+def post_process(prices: Array[f8], n: int, limited: bool = False):
+    prices = np.trim_zeros(prices, 'f')
+    assert len(prices) >= n
+    for i in range(1, len(prices)):
+        if not prices[i]:
+            prices[i] = prices[i - 1]
+    assert np.all(np.abs(np.log(prices[1:] / prices[:-1])) < np.log(2))
+    if limited:
+        prices = break_limit(prices)
+    return prices[-n:]

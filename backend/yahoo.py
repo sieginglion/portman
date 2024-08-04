@@ -6,11 +6,11 @@ from httpx import AsyncClient
 
 from .shared import (
     MARKET_TO_TIMEZONE,
-    fill_and_trim,
     gen_dates,
     get_sorted_values,
     get_suffix,
     get_today_dividend,
+    post_process,
 )
 
 
@@ -33,7 +33,7 @@ async def get_unadjusted(
         if len(l := l.split(',')) > 5:
             if l[0] in date_to_price:
                 date_to_price[l[0]] = float(l[4])
-    return fill_and_trim(get_sorted_values(date_to_price), n)
+    return post_process(get_sorted_values(date_to_price), n, market == 't')
 
 
 async def get_dividends(
