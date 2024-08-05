@@ -72,7 +72,7 @@ def get_sorted_values(D: dict[str, float]):
 
 @nb.njit
 def break_limit(prices: Array[f8]):
-    L = np.abs((prices[1:] - prices[:-1]) / prices[:-1]) > 0.09
+    L = np.abs((prices[1:] - prices[:-1]) / prices[:-1]) > 0.095
     s = 0
     for i, l in enumerate(L):
         if not s and l:
