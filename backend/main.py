@@ -10,8 +10,8 @@ from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
-from . import stock
-from .position import Position, calc_k
+from . import crypto, stock
+from .position import Position, calc_ema, calc_k
 
 app = fastapi.FastAPI()
 logging.basicConfig(level=logging.INFO)
@@ -28,8 +28,6 @@ def calc_weights(R: Array[f8], t: float = 0) -> Array[f8]:
     R_ = R - t
     U, D = R_ * (R_ > 0), np.abs(R_ * (R_ < 0))
     S = np.mean(U, 1) ** 0.25 / np.mean(D, 1)
-    # TODO:
-    S[3:5] /= 2
     W = S / np.sum(S)
     u = np.log(np.exp(np.sum(R, 1)) @ W) / R.shape[1]
     if abs(u) < 1e-4 or abs(t - u) < 1e-6:
@@ -65,3 +63,22 @@ async def get_charts(market: Literal['c', 't', 'u'], symbol: str):
 async def get_prices(symbol: str, n: int):
     market = 't' if symbol[0].isnumeric() else 'u'
     return (await stock.get_prices(market, symbol, n, False)).tolist()
+
+
+@app.post('/premium')
+async def get_premium(
+    positions: list[tuple[Literal['c', 't', 'u'], str]], weights: list[float]
+):
+    w = 91
+    n = calc_k(w)
+    P = np.array(
+        await asyncio.gather(
+            *[
+                (crypto.get_prices(p[1], n) if p[0] == 'c' else stock.get_prices(*p, n))
+                for p in positions
+            ]
+        )
+    )
+    R = weights @ (P / P[:, [0]])
+    B = calc_ema(R, 2 / (w + 1), calc_k(w))
+    return (R[-1] / B)[0]

@@ -9,8 +9,8 @@ from numpy.typing import NDArray as Array
 from . import crypto, stock
 
 
-def calc_k(w: int):
-    return math.ceil(math.log(0.05) / math.log(1 - 2 / (w + 1)))
+def calc_k(w: int, e: float = 0.05):
+    return math.ceil(math.log(e) / math.log(1 - 2 / (w + 1)))
 
 
 @nb.njit
