@@ -41,7 +41,7 @@ async def get_weights(positions: list[tuple[Literal['c', 't', 'u'], str]]):
     P = np.array(
         [
             p.prices
-            for p in await asyncio.gather(*[Position(m, s, 365) for m, s in positions])
+            for p in await asyncio.gather(*[Position(m, s, 183) for m, s in positions])
         ]
     )
     return calc_weights(np.log(P[:, 1:] / P[:, :-1])).tolist()
@@ -65,12 +65,13 @@ async def get_prices(symbol: str, n: int):
     return (await stock.get_prices(market, symbol, n, False)).tolist()
 
 
-@app.post('/premium')
-async def get_premium(
+@app.post('/leverage')
+async def get_leverage(
     positions: list[tuple[Literal['c', 't', 'u'], str]], weights: list[float]
 ):
+    scale = 182
     w = 91
-    n = calc_k(w)
+    n = scale + calc_k(w) - 1
     P = np.array(
         await asyncio.gather(
             *[
@@ -81,4 +82,8 @@ async def get_premium(
     )
     R = weights @ (P / P[:, [0]])
     B = calc_ema(R, 2 / (w + 1), calc_k(w))
-    return (R[-1] / B)[0]
+    R = R[-scale:]
+    for i in range(100, 130):
+        l = i / 100
+        if sum(B * l > R) / scale >= 0.85:
+            return B[-1] / R[-1] * l
