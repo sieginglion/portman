@@ -33,7 +33,10 @@ async def get_unadjusted(
         if len(l := l.split(',')) > 5:
             if l[0] in date_to_price:
                 date_to_price[l[0]] = float(l[4])
-    return post_process(get_sorted_values(date_to_price), n, market == 't')
+    try:
+        return post_process(get_sorted_values(date_to_price), n, market == 't')
+    except AssertionError:
+        raise AssertionError(symbol)
 
 
 async def get_dividends(

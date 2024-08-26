@@ -53,4 +53,7 @@ async def get_prices(symbol: str, n: int):
             for e in res.json():
                 if (date := to_date(e[0], tz)) in date_to_price:
                     date_to_price[date] = float(e[4])
-    return post_process(get_sorted_values(date_to_price), n)
+    try:
+        return post_process(get_sorted_values(date_to_price), n)
+    except AssertionError:
+        raise AssertionError(symbol)
