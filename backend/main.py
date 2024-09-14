@@ -24,27 +24,28 @@ async def get_content(url: str):
         return fastapi.Response(r.content, r.status_code, r.headers)
 
 
-def calc_weights(R: Array[f8], t: float = 0) -> Array[f8]:
+def calc_weights(R: Array[f8], slots: list[float], t: float = 0) -> Array[f8]:
     R_ = R - t
     U, D = R_ * (R_ > 0), np.abs(R_ * (R_ < 0))
-    S = np.mean(U, 1) ** 0.25 / np.mean(D, 1)
+    S = np.mean(U, 1) ** 0.25 / np.mean(D, 1) * slots
     W = S / np.sum(S)
     u = np.log(np.exp(np.sum(R, 1)) @ W) / R.shape[1]
     if abs(u) < 1e-4 or abs(t - u) < 1e-6:
         return W
-    return calc_weights(R, u)
+    return calc_weights(R, slots, u)
 
 
 @app.post('/weights')
-# @cached(43200)
-async def get_weights(positions: list[tuple[Literal['c', 't', 'u'], str]]):
+async def get_weights(
+    positions: list[tuple[Literal['c', 't', 'u'], str]], slots: list[float]
+):
     P = np.array(
         [
             p.prices
             for p in await asyncio.gather(*[Position(m, s, 365) for m, s in positions])
         ]
     )
-    return calc_weights(np.log(P[:, 1:] / P[:, :-1])).tolist()
+    return calc_weights(np.log(P[:, 1:] / P[:, :-1]), slots).tolist()
 
 
 @app.get('/charts')
