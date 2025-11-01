@@ -1,4 +1,5 @@
 import arrow
+from general_cache import cached
 from httpx import AsyncClient
 
 from .shared import (
@@ -24,6 +25,7 @@ async def get_id(sess: AsyncClient, symbol: str):
             return e['id']
 
 
+@cached(60)
 async def get_prices(symbol: str, n: int):
     tz = MARKET_TO_TIMEZONE['c']
     now = arrow.now(tz)

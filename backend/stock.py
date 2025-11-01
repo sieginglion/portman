@@ -4,6 +4,7 @@ from typing import Literal
 import arrow
 import numba as nb
 import numpy as np
+from general_cache import cached
 from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
@@ -110,6 +111,7 @@ async def get_rates(sess: AsyncClient, n: int):
     return post_process(get_sorted_values(date_to_rate), n)
 
 
+@cached(60)
 async def get_prices(
     market: Literal['t', 'u'], symbol: str, n: int, to_usd: bool = True
 ):
