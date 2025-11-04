@@ -111,7 +111,7 @@ async def get_rates(sess: AsyncClient, n: int):
     return post_process(get_sorted_values(date_to_rate), n)
 
 
-@cached(60)
+@cached(120)
 async def get_prices(
     market: Literal['t', 'u'], symbol: str, n: int, to_usd: bool = True
 ):
