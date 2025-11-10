@@ -27,7 +27,8 @@ async def get_content(url: str):
 def calc_weights(R: Array[f8], slots: list[float], t: float = 0) -> Array[f8]:
     R_ = R - t
     U, D = np.maximum(R_, 0), np.maximum(-R_, 0)
-    S = np.exp(np.mean(R_, 1) * 182) / np.sqrt(np.mean(D ** 2, 1)) * slots
+    # S = np.exp(np.mean(R_, 1) * 182) / np.sqrt(np.mean(D ** 2, 1)) * slots
+    S = np.exp(np.mean(R_, 1) * 182) / np.mean(D, 1) * slots
     W = S / np.sum(S)
     u = np.log(np.exp(np.sum(R, 1)) @ W) / R.shape[1]
     if abs(u) < 1e-4 or abs(t - u) < 1e-6:
