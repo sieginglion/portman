@@ -63,10 +63,10 @@ async def get_charts(market: Literal['c', 't', 'u'], symbol: str):
 
 @app.get('/prices')
 async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int):
-    return (await
+    return (await (
         crypto.get_prices(symbol, n) if market == 'c' else
         stock.get_prices(market, symbol, n, False)
-    ).tolist()
+    )).tolist()
 
 
 @app.post('/leverage')
