@@ -69,7 +69,7 @@ async def get_prices(symbol: str, n: int):
         market = 't'
     else:
         market = 'u'
-return (await stock.get_prices(market, symbol, n, False)).tolist()
+    return (await crypto.get_prices(symbol, n) if market == 'c' else stock.get_prices(market, symbol, n, False)).tolist()
 
 
 @app.post('/leverage')
