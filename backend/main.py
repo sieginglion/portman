@@ -63,8 +63,13 @@ async def get_charts(market: Literal['c', 't', 'u'], symbol: str):
 
 @app.get('/prices')
 async def get_prices(symbol: str, n: int):
-    market = 't' if symbol[0].isnumeric() else 'u'
-    return (await stock.get_prices(market, symbol, n, False)).tolist()
+    if symbol.endswith('.c'):
+        market, symbol = 'c', symbol[:-2]
+    elif symbol[0].isdigit():
+        market = 't'
+    else:
+        market = 'u'
+return (await stock.get_prices(market, symbol, n, False)).tolist()
 
 
 @app.post('/leverage')
