@@ -21,7 +21,6 @@ FMP_KEY = os.environ['FMP_KEY']
 FROM_COINGECKO = set(os.environ['FROM_COINGECKO'].split(','))
 FROM_YAHOO = set(os.environ['FROM_YAHOO'].split(','))
 MARKET_TO_TIMEZONE = {'c': 'UTC', 't': 'Asia/Taipei', 'u': 'America/New_York'}
-ON_TPEX = set(os.environ['ON_TPEX'].split(','))
 
 html = r.get('https://isin.twse.com.tw/isin/C_public.jsp?strMode=2').text
 df = pd.read_html(html)[0]
