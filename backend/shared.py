@@ -7,6 +7,7 @@ import arrow
 import dotenv
 import numba as nb
 import numpy as np
+import pandas as pd
 import requests as r
 from arrow.arrow import Arrow
 from general_cache import cached
@@ -22,6 +23,13 @@ FROM_YAHOO = set(os.environ['FROM_YAHOO'].split(','))
 MARKET_TO_TIMEZONE = {'c': 'UTC', 't': 'Asia/Taipei', 'u': 'America/New_York'}
 ON_TPEX = set(os.environ['ON_TPEX'].split(','))
 
+html = r.get('https://isin.twse.com.tw/isin/C_public.jsp?strMode=2').text
+df = pd.read_html(html)[0]
+ON_TWSE = {
+    row.iloc[0].split("\u3000")[0]
+    for _, row in df.iterrows()
+    if row.iloc[5] == "ESVUFR"
+}
 
 def to_date(time: Arrow | int | str, timezone: str = ''):
     if not isinstance(time, Arrow):
@@ -36,7 +44,7 @@ def gen_dates(start: Arrow, end: Arrow):
 
 
 def get_suffix(market: Literal['c', 't', 'u'], symbol: str):
-    return '.TW' + ('O' if symbol in ON_TPEX else '') if market == 't' else ''
+    return ('.TW' if symbol in ON_TWSE else '.TWO') if market == 't' else ''
 
 
 @cached(43200)
