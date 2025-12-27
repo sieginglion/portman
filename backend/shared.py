@@ -8,7 +8,6 @@ import dotenv
 import numba as nb
 import numpy as np
 import pandas as pd
-import requests as r
 from arrow.arrow import Arrow
 from general_cache import cached
 from httpx import AsyncClient

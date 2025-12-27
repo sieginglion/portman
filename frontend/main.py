@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
-import requests as r
 import streamlit as st
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
