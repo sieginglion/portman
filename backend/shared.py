@@ -13,6 +13,7 @@ from general_cache import cached
 from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
+import httpx as h
 
 dotenv.load_dotenv()
 
@@ -21,7 +22,7 @@ FROM_COINGECKO = set(os.environ['FROM_COINGECKO'].split(','))
 FROM_YAHOO = set(os.environ['FROM_YAHOO'].split(','))
 MARKET_TO_TIMEZONE = {'c': 'UTC', 't': 'Asia/Taipei', 'u': 'America/New_York'}
 
-html = r.get('https://isin.twse.com.tw/isin/C_public.jsp?strMode=2').text
+html = h.get('https://isin.twse.com.tw/isin/C_public.jsp?strMode=2').text
 df = pd.read_html(html)[0]
 ON_TWSE = {
     row.iloc[0].split("\u3000")[0]
@@ -47,7 +48,7 @@ def get_suffix(market: Literal['c', 't', 'u'], symbol: str):
 
 @cached(43200)
 def get_text(url: str):
-    return r.get(url).text
+    return h.get(url).text
 
 
 async def get_today_dividend(sess: AsyncClient, market: Literal['t', 'u'], symbol: str):

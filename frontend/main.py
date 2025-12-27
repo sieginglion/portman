@@ -7,6 +7,7 @@ import streamlit as st
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 from plotly import graph_objects as go
+import httpx as h
 
 BACKEND_HOST = os.getenv('BACKEND_HOST', 'localhost')
 
@@ -22,7 +23,7 @@ class Chart:
 
 
 def get_charts(market: Literal['c', 't', 'u'], symbol: str):
-    res = r.get(f'http://{BACKEND_HOST}:8080/charts?market={market}&symbol={symbol}')
+    res = h.get(f'http://{BACKEND_HOST}:8080/charts?market={market}&symbol={symbol}')
     short, long = res.json()
     return Chart(*short), Chart(*long)
 
