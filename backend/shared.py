@@ -24,23 +24,20 @@ FROM_YAHOO = set(os.environ['FROM_YAHOO'].split(','))
 MARKET_TO_TIMEZONE = {'c': 'UTC', 't': 'Asia/Taipei', 'u': 'America/New_York'}
 
 CACHE = "on_twse.pkl"
+URL = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2"
 
-if os.path.exists(CACHE):
-    ON_TWSE = pickle.load(open(CACHE, "rb"))
+if os.path.isfile(CACHE):
+    with open(CACHE, "rb") as f:
+        on_twse = pickle.load(f)
 else:
-    html = h.get(
-        "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2",
-        verify=False,
-    ).text
-    df = pd.read_html(html)[0]
-
-    ON_TWSE = {
-        row.iloc[0].split("\u3000")[0]
-        for _, row in df.iterrows()
-        if row.iloc[5] == "ESVUFR"
+    df = pd.read_html(h.get(URL, verify=False).text)[0]
+    on_twse = {
+        r.iloc[0].split("\u3000", 1)[0]
+        for _, r in df.iterrows()
+        if r.iloc[5] == "ESVUFR"
     }
-
-    pickle.dump(ON_TWSE, open(CACHE, "wb"))
+    with open(CACHE, "wb") as f:
+        pickle.dump(on_twse, f)
 
 
 def to_date(time: Arrow | int | str, timezone: str = ''):
