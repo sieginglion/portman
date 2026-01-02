@@ -25,7 +25,7 @@ async def get_id(sess: AsyncClient, symbol: str):
             return e['id']
 
 
-@cached(120)
+@cached(240)
 async def get_prices(symbol: str, n: int):
     tz = MARKET_TO_TIMEZONE['c']
     now = arrow.now(tz)
