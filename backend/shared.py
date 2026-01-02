@@ -23,21 +23,21 @@ FROM_COINGECKO = set(os.environ['FROM_COINGECKO'].split(','))
 FROM_YAHOO = set(os.environ['FROM_YAHOO'].split(','))
 MARKET_TO_TIMEZONE = {'c': 'UTC', 't': 'Asia/Taipei', 'u': 'America/New_York'}
 
-CACHE = "on_twse.pkl"
+CACHE = "ON_TWSE.pkl"
 URL = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2"
 
 if os.path.isfile(CACHE):
     with open(CACHE, "rb") as f:
-        on_twse = pickle.load(f)
+        ON_TWSE = pickle.load(f)
 else:
     df = pd.read_html(h.get(URL, verify=False).text)[0]
-    on_twse = {
+    ON_TWSE = {
         r.iloc[0].split("\u3000", 1)[0]
         for _, r in df.iterrows()
         if r.iloc[5] == "ESVUFR"
     }
     with open(CACHE, "wb") as f:
-        pickle.dump(on_twse, f)
+        pickle.dump(ON_TWSE, f)
 
 
 def to_date(time: Arrow | int | str, timezone: str = ''):
