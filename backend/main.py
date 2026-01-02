@@ -72,8 +72,11 @@ async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int):
     ).tolist()
 
 
-@app.post("/z-score")
-async def get_signal(position: tuple[Literal["c", "t", "u"], str]) -> float:
+@app.get("/z-score")
+async def get_signal(
+    market: Literal["c", "t", "u"],
+    symbol: str,
+) -> float:
     ema_window = 91
     z_window = 364
 
@@ -83,11 +86,10 @@ async def get_signal(position: tuple[Literal["c", "t", "u"], str]) -> float:
     # Ensures len(ema) == z_window
     n = z_window + k - 1
 
-    # get_prices already returns a NumPy array
-    if position[0] == "c":
-        P = await crypto.get_prices(position[1], n)
+    if market == "c":
+        P = await crypto.get_prices(symbol, n)
     else:
-        P = await stock.get_prices(*position, n)
+        P = await stock.get_prices(market, symbol, n)
 
     # EMA length is exactly z_window
     ema = calc_ema(P, alpha, k)
@@ -96,7 +98,6 @@ async def get_signal(position: tuple[Literal["c", "t", "u"], str]) -> float:
     P = P[-z_window:]
 
     d = np.log(P / ema)
-
     std = d.std()
 
     z = (d[-1] - d.mean()) / std
