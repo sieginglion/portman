@@ -95,4 +95,4 @@ async def get_leverage(
     x = dev[-1] / dev.std()
 
     lev = (1.0 + max_x) / 2.0 + (1.0 - max_x) / 4.0 * x
-    return float(np.clip(lev, 1.0, max_x))
+    return float(lev)
