@@ -16,6 +16,7 @@ def calc_k(w: int, e: float = 0.05):
 @nb.njit
 def calc_ema(arr: Array[f8], a: float, k: int):
     W = a * (1 - a) ** np.arange(k - 1, -1, -1)
+    W /= W.sum()
     ema = np.empty(len(arr) - k + 1)
     for i in range(len(arr) - k + 1):
         ema[i] = np.sum(arr[i : i + k] * W)

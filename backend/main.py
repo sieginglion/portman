@@ -72,33 +72,27 @@ async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int):
     ).tolist()
 
 
-@app.get("/z-score")
-async def get_signal(
-    market: Literal["c", "t", "u"],
-    symbol: str,
+@app.get("/leverage")
+async def get_leverage(
+    market: Literal["c", "t", "u"], symbol: str, max_x: float
 ) -> float:
-    ema_window = 91
-    z_window = 364
+    EMA_W = 91
+    Z_W = 364
 
-    alpha = 2 / (ema_window + 1)
-    k = calc_k(ema_window)
+    alpha = 2.0 / (EMA_W + 1)
+    k = calc_k(EMA_W)
+    n = Z_W + k - 1
 
-    # Ensures len(ema) == z_window
-    n = z_window + k - 1
+    prices = await (
+        crypto.get_prices(symbol, n)
+        if market == "c"
+        else stock.get_prices(market, symbol, n)
+    )
 
-    if market == "c":
-        P = await crypto.get_prices(symbol, n)
-    else:
-        P = await stock.get_prices(market, symbol, n)
+    ema = calc_ema(prices, alpha, k)
 
-    # EMA length is exactly z_window
-    ema = calc_ema(P, alpha, k)
+    dev = np.log(prices[-Z_W:] / ema)
+    x = dev[-1] / dev.std()
 
-    # Align prices to EMA
-    P = P[-z_window:]
-
-    d = np.log(P / ema)
-    std = d.std()
-
-    z = (d[-1] - d.mean()) / std
-    return float(z)
+    lev = (1.0 + max_x) / 2.0 + (1.0 - max_x) / 4.0 * x
+    return float(np.clip(lev, 1.0, max_x))
