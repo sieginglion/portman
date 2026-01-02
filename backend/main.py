@@ -63,29 +63,36 @@ async def get_charts(market: Literal['c', 't', 'u'], symbol: str):
 
 @app.get('/prices')
 async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int):
-    return (await (
-        crypto.get_prices(symbol, n) if market == 'c' else
-        stock.get_prices(market, symbol, n, False)
-    )).tolist()
-
-
-@app.post('/leverage')
-async def get_leverage(
-    positions: list[tuple[Literal['c', 't', 'u'], str]], weights: list[float]
-):
-    scale = 91
-    w = 91
-    n = scale + calc_k(w) - 1
-    P = np.array(
-        await asyncio.gather(
-            *[
-                (crypto.get_prices(p[1], n) if p[0] == 'c' else stock.get_prices(*p, n))
-                for p in positions
-            ]
+    return (
+        await (
+            crypto.get_prices(symbol, n)
+            if market == 'c'
+            else stock.get_prices(market, symbol, n, False)
         )
+    ).tolist()
+
+
+@app.get("/leverage")
+async def get_leverage(
+    market: Literal["c", "t", "u"], symbol: str, max_x: float
+) -> float:
+    EMA_W = 91
+    Z_W = 364
+
+    alpha = 2.0 / (EMA_W + 1)
+    k = calc_k(EMA_W)
+    n = Z_W + k - 1
+
+    prices = await (
+        crypto.get_prices(symbol, n)
+        if market == "c"
+        else stock.get_prices(market, symbol, n)
     )
-    R = weights @ (P / P[:, [0]])
-    B = calc_ema(R, 2 / (w + 1), calc_k(w))
-    R = R[-scale:]
-    L = B / R
-    return L[-1] / np.median(L)
+
+    ema = calc_ema(prices, alpha, k)
+
+    dev = np.log(prices[-Z_W:] / ema)
+    x = dev[-1] / dev.std()
+
+    lev = (1.0 + max_x) / 2.0 + (1.0 - max_x) / 4.0 * x
+    return float(lev)
