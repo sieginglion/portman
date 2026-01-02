@@ -63,29 +63,41 @@ async def get_charts(market: Literal['c', 't', 'u'], symbol: str):
 
 @app.get('/prices')
 async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int):
-    return (await (
-        crypto.get_prices(symbol, n) if market == 'c' else
-        stock.get_prices(market, symbol, n, False)
-    )).tolist()
-
-
-@app.post('/leverage')
-async def get_leverage(
-    positions: list[tuple[Literal['c', 't', 'u'], str]], weights: list[float]
-):
-    scale = 91
-    w = 91
-    n = scale + calc_k(w) - 1
-    P = np.array(
-        await asyncio.gather(
-            *[
-                (crypto.get_prices(p[1], n) if p[0] == 'c' else stock.get_prices(*p, n))
-                for p in positions
-            ]
+    return (
+        await (
+            crypto.get_prices(symbol, n)
+            if market == 'c'
+            else stock.get_prices(market, symbol, n, False)
         )
-    )
-    R = weights @ (P / P[:, [0]])
-    B = calc_ema(R, 2 / (w + 1), calc_k(w))
-    R = R[-scale:]
-    L = B / R
-    return L[-1] / np.median(L)
+    ).tolist()
+
+
+@app.post("/z-score")
+async def get_signal(position: tuple[Literal["c", "t", "u"], str]) -> float:
+    ema_window = 91
+    z_window = 364
+
+    alpha = 2 / (ema_window + 1)
+    k = calc_k(ema_window)
+
+    # Ensures len(ema) == z_window
+    n = z_window + k - 1
+
+    # get_prices already returns a NumPy array
+    if position[0] == "c":
+        P = await crypto.get_prices(position[1], n)
+    else:
+        P = await stock.get_prices(*position, n)
+
+    # EMA length is exactly z_window
+    ema = calc_ema(P, alpha, k)
+
+    # Align prices to EMA
+    P = P[-z_window:]
+
+    d = np.log(P / ema)
+
+    std = d.std()
+
+    z = (d[-1] - d.mean()) / std
+    return float(z)

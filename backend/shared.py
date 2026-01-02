@@ -1,10 +1,12 @@
 import json
 import os
+import pickle
 import re
 from typing import Literal
 
 import arrow
 import dotenv
+import httpx as h
 import numba as nb
 import numpy as np
 import pandas as pd
@@ -13,7 +15,6 @@ from general_cache import cached
 from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
-import httpx as h
 
 dotenv.load_dotenv()
 
@@ -22,13 +23,25 @@ FROM_COINGECKO = set(os.environ['FROM_COINGECKO'].split(','))
 FROM_YAHOO = set(os.environ['FROM_YAHOO'].split(','))
 MARKET_TO_TIMEZONE = {'c': 'UTC', 't': 'Asia/Taipei', 'u': 'America/New_York'}
 
-html = h.get('https://isin.twse.com.tw/isin/C_public.jsp?strMode=2').text
-df = pd.read_html(html)[0]
-ON_TWSE = {
-    row.iloc[0].split("\u3000")[0]
-    for _, row in df.iterrows()
-    if row.iloc[5] == "ESVUFR"
-}
+CACHE = "on_twse.pkl"
+
+if os.path.exists(CACHE):
+    ON_TWSE = pickle.load(open(CACHE, "rb"))
+else:
+    html = h.get(
+        "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2",
+        verify=False,
+    ).text
+    df = pd.read_html(html)[0]
+
+    ON_TWSE = {
+        row.iloc[0].split("\u3000")[0]
+        for _, row in df.iterrows()
+        if row.iloc[5] == "ESVUFR"
+    }
+
+    pickle.dump(ON_TWSE, open(CACHE, "wb"))
+
 
 def to_date(time: Arrow | int | str, timezone: str = ''):
     if not isinstance(time, Arrow):
@@ -48,7 +61,7 @@ def get_suffix(market: Literal['c', 't', 'u'], symbol: str):
 
 @cached(43200)
 def get_text(url: str):
-    return h.get(url).text
+    return h.get(url, verify=False).text
 
 
 async def get_today_dividend(sess: AsyncClient, market: Literal['t', 'u'], symbol: str):
