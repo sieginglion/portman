@@ -94,5 +94,8 @@ async def get_leverage(
     dev = np.log(prices[-Z_W:] / ema)
     x = dev[-1] / dev.std()
 
-    lev = (1.0 + max_x) / 2.0 + (1.0 - max_x) / 4.0 * x
+    X0 = 1.768825
+    mid = 0.5 * (1.0 + max_x)  # (1 + max_x)/2
+    scale = 0.5 * (max_x - 1.0) / X0  # (max_x - 1)/(2*X0)
+    lev = mid + scale * x
     return float(lev)
