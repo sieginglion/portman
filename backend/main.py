@@ -74,7 +74,7 @@ async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int):
 
 @app.get("/leverage")
 async def get_leverage(
-    market: Literal["c", "t", "u"], symbol: str, max_x: float
+    market: Literal["c", "t", "u"], symbol: str, max_l: float
 ) -> float:
     EMA_W = 91
     Z_W = 364
@@ -95,7 +95,7 @@ async def get_leverage(
     x = dev[-1] / dev.std()
 
     a = 1.768825
-    offset = (1.0 + max_x) / 2.0
-    scale = (1.0 - max_x) / (2.0 * a)
+    offset = (1.0 + max_l) / 2.0
+    scale = (1.0 - max_l) / (2.0 * a)
     lev = offset + scale * x
     return float(lev)
