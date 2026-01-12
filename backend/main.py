@@ -24,36 +24,40 @@ async def get_content(url: str):
         return fastapi.Response(r.content, r.status_code, r.headers)
 
 
-def calc_scores(R: Array[f8], W: Array[f8], t: float = 0):
-    R_ = R - t
-    A = R_.mean(1)
-    B = np.sqrt((np.maximum(-R_, 0.0) ** 2).mean(1))
+def calc_weights(M: Array[f8], D: Array[f8], S: Array[f8], t: float = 0) -> Array[f8]:
+    A, D_ = M - t, D - t
+    B = np.sqrt((np.maximum(-D_, 0) ** 2).mean(1))
 
     def wstd(X):
-        return np.sqrt((X - (X @ W)) ** 2 @ W)
+        return np.sqrt(((X - (X @ S)) ** 2) @ S)
 
     k = round(wstd(np.log(B)) / wstd(A))
-    S = (np.exp(A * k) / B) * W
-    S /= S.sum()
-    u = np.log(np.exp(R.sum(1)) @ S) / R.shape[1]
+    W = (np.exp(A * k) / B) * S
+    W /= W.sum()
+    u = np.log(np.exp(M * D.shape[1]) @ W) / D.shape[1]
     if abs(u) < 1e-4 or abs(t - u) < 1e-6:
-        return S
-    return calc_scores(R, W, u)
+        return W
+    return calc_weights(M, D, S, u)
 
 
 @app.post('/weights')
 async def get_weights(
     positions: list[tuple[Literal['c', 't', 'u'], str]], slots: list[float]
 ):
-    P = np.array(
-        [
-            p.prices
-            for p in await asyncio.gather(*[Position(m, s, 365) for m, s in positions])
-        ]
-    )
-    return calc_scores(
-        np.log(P[:, 1:] / P[:, :-1]), np.array(slots) / sum(slots)
-    ).tolist()
+    n, w = 364, 91
+    k = calc_k(w)
+    P = [
+        p.prices
+        for p in await asyncio.gather(
+            *[Position(m, s, n + k - 1) for m, s in positions]
+        )
+    ]
+    E = np.array([calc_ema(p, 2 / (w + 1), k) for p in P])
+    M = np.log(E[:, -1] / E[:, 0]) / n
+    P = np.array([p[-(n + 1) :] for p in P])
+    D = np.log(P[:, 1:] / P[:, :-1])
+    S = np.array(slots) / sum(slots)
+    return calc_weights(M, D, S).tolist()
 
 
 @app.get('/charts')
@@ -79,9 +83,9 @@ async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int):
     ).tolist()
 
 
-@app.get("/leverage")
+@app.get('/leverage')
 async def get_leverage(
-    max_l: float, market: Literal["c", "t", "u"], symbol: str
+    max_l: float, market: Literal['c', 't', 'u'], symbol: str
 ) -> float:
     EMA_W = 91
     Z_W = 364
@@ -92,7 +96,7 @@ async def get_leverage(
 
     prices = await (
         crypto.get_prices(symbol, n)
-        if market == "c"
+        if market == 'c'
         else stock.get_prices(market, symbol, n)
     )
 
