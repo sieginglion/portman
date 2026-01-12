@@ -43,7 +43,7 @@ def calc_scores(R: Array[f8], W: Array[f8], t: float = 0):
 
 @app.post('/weights')
 async def get_weights(
-    positions: list[tuple[Literal['c', 't', 'u'], str]], W: list[float]
+    positions: list[tuple[Literal['c', 't', 'u'], str]], slots: list[float]
 ):
     P = np.array(
         [
@@ -51,7 +51,9 @@ async def get_weights(
             for p in await asyncio.gather(*[Position(m, s, 365) for m, s in positions])
         ]
     )
-    return calc_scores(np.log(P[:, 1:] / P[:, :-1]), np.array(W) / sum(W)).tolist()
+    return calc_scores(
+        np.log(P[:, 1:] / P[:, :-1]), np.array(slots) / sum(slots)
+    ).tolist()
 
 
 @app.get('/charts')
