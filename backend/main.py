@@ -24,40 +24,37 @@ async def get_content(url: str):
         return fastapi.Response(r.content, r.status_code, r.headers)
 
 
-def calc_weights(M: Array[f8], D: Array[f8], S: Array[f8], t: float = 0) -> Array[f8]:
-    A, D_ = M - t, D - t
-    B = np.sqrt((np.maximum(-D_, 0) ** 2).mean(1))
+# def calc_weights(M: Array[f8], D: Array[f8], S: Array[f8], t: float = 0) -> Array[f8]:
+#     A, D_ = M - t, D - t
+#     B = np.sqrt((np.maximum(-D_, 0) ** 2).mean(1))
 
-    def wstd(X):
-        return np.sqrt(((X - (X @ S)) ** 2) @ S)
+#     def wstd(X):
+#         return np.sqrt(((X - (X @ S)) ** 2) @ S)
 
-    k = round(wstd(np.log(B)) / wstd(A))
-    W = (np.exp(A * k) / B) * S
-    W /= W.sum()
-    u = np.log(np.exp(M * D.shape[1]) @ W) / D.shape[1]
-    if abs(u) < 1e-4 or abs(t - u) < 1e-6:
-        return W
-    return calc_weights(M, D, S, u)
+#     k = round(wstd(np.log(B)) / wstd(A))
+#     W = (np.exp(A * k) / B) * S
+#     W /= W.sum()
+#     u = np.log(np.exp(M * D.shape[1]) @ W) / D.shape[1]
+#     if abs(u) < 1e-4 or abs(t - u) < 1e-6:
+#         return W
+#     return calc_weights(M, D, S, u)
 
 
-@app.post('/weights')
-async def get_weights(
-    positions: list[tuple[Literal['c', 't', 'u'], str]], slots: list[float]
-):
-    n, w = 364, 91
+@app.post('/scores')
+async def calc_scores(positions: list[tuple[Literal['c', 't', 'u'], str]]):
+    w = 364
     k = calc_k(w)
-    P = [
+    Prices = [
         p.prices
         for p in await asyncio.gather(
-            *[Position(m, s, n + k - 1) for m, s in positions]
+            *[Position(m, s, w + k - 1) for m, s in positions]
         )
     ]
-    E = np.array([calc_ema(p, 2 / (w + 1), k) for p in P])
-    M = np.log(E[:, -1] / E[:, 0]) / n
-    P = np.array([p[-(n + 1) :] for p in P])
-    D = np.log(P[:, 1:] / P[:, :-1])
-    S = np.array(slots) / sum(slots)
-    return calc_weights(M, D, S).tolist()
+    P = np.array([prices[-w:] for prices in Prices])
+    E = np.array([calc_ema(prices, 2 / (w + 1), k) for prices in Prices])
+    D = np.log(P / E).std(1)
+    S = (E[:, -1] / E[:, 0]) / D
+    return S.tolist()
 
 
 @app.get('/charts')
