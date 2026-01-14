@@ -4,6 +4,7 @@ from typing import Literal
 import arrow
 import numba as nb
 import numpy as np
+import pandas as pd
 from general_cache import cached
 from httpx import AsyncClient
 from numpy import float64 as f8
@@ -11,6 +12,7 @@ from numpy.typing import NDArray as Array
 
 from . import yahoo
 from .shared import (
+    FINMIND_KEY,
     FMP_KEY,
     FROM_YAHOO,
     MARKET_TO_TIMEZONE,
@@ -121,3 +123,85 @@ async def get_prices(
             tasks.append(get_rates(sess, n))
         results = await asyncio.gather(*tasks)
     return results[0] / results[1] if to_usd else results[0]
+
+
+async def calc_rps_from_fmp(symbol: str):
+    url = 'https://financialmodelingprep.com/stable/income-statement'
+    params = {
+        'apikey': FMP_KEY,
+        'limit': 8,
+        'period': 'quarter',
+        'symbol': symbol,
+    }
+    async with AsyncClient() as client:
+        d = (await client.get(url, params=params)).json()
+    df = pd.DataFrame(d).sort_values('fillingDate')
+    df['r'] = (df['revenue'] / df['weightedAverageShsOutDil']).rolling(4).sum()
+    return df.iloc[3:].rename(columns={'fillingDate': 'd'})[['d', 'r']]
+
+
+async def calc_rps_from_finmind(symbol: str):
+    url = 'https://api.finmindtrade.com/api/v4/data'
+    params = {
+        'data_id': symbol,
+        'dataset': 'TaiwanStockFinancialStatements',
+        'start_date': arrow.now('Asia/Taipei')
+        .shift(days=-(8 * 91 + 30))
+        .format('YYYY-MM-DD'),
+    }
+    headers = {'Authorization': f'Bearer {FINMIND_KEY}'}
+    async with AsyncClient() as client:
+        d, r = await asyncio.gather(
+            client.get(url, params=params, headers=headers), get_rates(client, 546)
+        )
+    df = (
+        pd.DataFrame(d.json()['data'])
+        .pivot(index='date', columns='type', values='value')
+        .sort_index()
+        .reset_index()
+    )
+
+    avg_fx = avg_by_end_dates(r, df['date'])
+
+    df['Revenue'] /= avg_fx.values
+    df['r'] = (
+        (df['Revenue'] * df['EPS'] / df['EquityAttributableToOwnersOfParent'])
+        .rolling(4)
+        .sum()
+    )
+
+    return df.iloc[3:].rename(columns={'date': 'd'})[['d', 'r']]
+
+
+def avg_by_end_dates(r, ends):
+    today = arrow.now('Asia/Taipei')
+    start = today.shift(days=-len(r) + 1)
+    dates = list(arrow.Arrow.range('day', start, today))
+
+    s = pd.Series(r, index=dates).sort_index().astype(float)
+    ends = pd.to_datetime(ends).sort_values()
+    starts = ends.shift(1, fill_value=s.index.min())
+
+    out = [s.loc[start:end].mean() for start, end in zip(starts, ends)]
+
+    return pd.Series(out, index=ends)
+
+
+async def calc_bands(symbol: str):
+    prices = await get_prices()
+    dates = pd.date_range(incomes[0].d, prices.index[-1]).date
+    s = (
+        pd.Series({income.d: getattr(income, metric) for income in incomes}, dates)
+        .ffill()
+        .tail(len(prices))
+    )
+    s[s <= 0] = None
+    multiples = prices / s
+    min_m, max_m = multiples.quantile(0.02), multiples.quantile(0.98)
+    bands = pd.DataFrame(index=s.index)
+    if not min_m < max_m:
+        return bands
+    for p in range(0, 120, 20):
+        m = min_m + (max_m - min_m) * (p / 100)
+        bands[m] = s * m
+    return bands

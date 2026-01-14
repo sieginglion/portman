@@ -83,30 +83,55 @@ async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int):
     ).tolist()
 
 
-@app.get('/leverage')
+# @app.get('/leverage')
+# async def get_leverage(
+#     max_l: float, market: Literal['c', 't', 'u'], symbol: str
+# ) -> float:
+#     EMA_W = 91
+#     Z_W = 364
+
+#     alpha = 2.0 / (EMA_W + 1)
+#     k = calc_k(EMA_W)
+#     n = Z_W + k - 1
+
+#     prices = await (
+#         crypto.get_prices(symbol, n)
+#         if market == 'c'
+#         else stock.get_prices(market, symbol, n)
+#     )
+
+#     ema = calc_ema(prices, alpha, k)
+
+#     dev = np.log(prices[-Z_W:] / ema)
+#     x = dev[-1] / dev.std()
+
+#     a = 1.768825
+#     offset = (1.0 + max_l) / 2.0
+#     scale = (1.0 - max_l) / (2.0 * a)
+#     lev = offset + scale * x
+#     return float(lev)
+
+
+@app.post('/leverage')
 async def get_leverage(
-    max_l: float, market: Literal['c', 't', 'u'], symbol: str
-) -> float:
-    EMA_W = 91
-    Z_W = 364
-
-    alpha = 2.0 / (EMA_W + 1)
-    k = calc_k(EMA_W)
-    n = Z_W + k - 1
-
-    prices = await (
-        crypto.get_prices(symbol, n)
-        if market == 'c'
-        else stock.get_prices(market, symbol, n)
-    )
-
-    ema = calc_ema(prices, alpha, k)
-
-    dev = np.log(prices[-Z_W:] / ema)
-    x = dev[-1] / dev.std()
-
+    positions: list[tuple[Literal['c', 't', 'u'], str]],
+    weights: list[float],
+    max_l: float,
+):
+    n, w = 364, 91
+    k = calc_k(w)
+    P = [
+        p.prices
+        for p in await asyncio.gather(
+            *[Position(m, s, n + k - 1) for m, s in positions]
+        )
+    ]
+    P = np.array(weights) @ P / P[:, [0]]
+    E = calc_ema(P, 2 / (w + 1), k)
+    D = np.log(P[-n:] / E)
+    z = D[-1] / D.std()
     a = 1.768825
     offset = (1.0 + max_l) / 2.0
     scale = (1.0 - max_l) / (2.0 * a)
-    lev = offset + scale * x
+    lev = offset + scale * z
     return float(lev)
