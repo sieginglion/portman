@@ -41,8 +41,7 @@ async def get_content(url: str):
 
 
 @app.post('/scores')
-async def calc_scores(positions: list[tuple[Literal['c', 't', 'u'], str]]):
-    w = 364
+async def calc_scores(positions: list[tuple[Literal['c', 't', 'u'], str]], w: int):
     k = calc_k(w)
     Prices = [
         p.prices
