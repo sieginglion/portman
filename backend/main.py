@@ -41,18 +41,16 @@ async def get_content(url: str):
 
 
 @app.post('/scores')
-async def calc_scores(positions: list[tuple[Literal['c', 't', 'u'], str]], w: int):
+async def calc_scores(w: int, positions: list[tuple[Literal['c', 't', 'u'], str]]):
     k = calc_k(w)
     Prices = [
         p.prices
-        for p in await asyncio.gather(
-            *[Position(m, s, w + k - 1) for m, s in positions]
-        )
+        for p in await asyncio.gather(*[Position(m, s, w + k) for m, s in positions])
     ]
     P = np.array([prices[-w:] for prices in Prices])
     E = np.array([calc_ema(prices, 2 / (w + 1), k) for prices in Prices])
-    D = np.log(P / E).std(1)
-    S = (E[:, -1] / E[:, 0]) / D
+    assert E.shape[1] == w + 1
+    S = (E[:, -1] / E[:, 0]) / np.log(P / E[:, 1:]).std(1)
     return S.tolist()
 
 
