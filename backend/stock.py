@@ -103,6 +103,7 @@ async def get_rates(sess: AsyncClient, n: int):
     res = await sess.get(
         'https://financialmodelingprep.com/api/v3/historical-price-full/USDTWD',
         params={
+            'apikey': FMP_KEY,
             'from': min(date_to_rate),
             'serietype': 'line',
         },
@@ -135,9 +136,21 @@ async def calc_rps_from_fmp(symbol: str):
     }
     async with AsyncClient() as client:
         d = (await client.get(url, params=params)).json()
-    df = pd.DataFrame(d).sort_values('fillingDate')
-    df['r'] = (df['revenue'] / df['weightedAverageShsOutDil']).rolling(4).sum()
-    return df.iloc[3:].rename(columns={'fillingDate': 'd'})[['d', 'r']]
+    if len(d) != 8:
+        raise AssertionError
+    df = pd.DataFrame(d).set_index('date').sort_index()
+    df['rps'] = (df['revenue'] / df['weightedAverageShsOutDil']).rolling(4).sum()
+    return df['rps'].iloc[3:]
+
+
+def avg_by_period_ends(values, ends):
+    today = pd.Timestamp.now(tz='Asia/Taipei').normalize().tz_localize(None)
+    series = pd.Series(
+        values, index=pd.date_range(end=today, periods=len(values), freq='D')
+    )
+    ends = pd.to_datetime(ends)
+    starts = ends[:-1] + pd.Timedelta(days=1)
+    return pd.Series({e: series.loc[s:e].mean() for s, e in zip(starts, ends[1:])})
 
 
 async def calc_rps_from_finmind(symbol: str):
@@ -146,62 +159,49 @@ async def calc_rps_from_finmind(symbol: str):
         'data_id': symbol,
         'dataset': 'TaiwanStockFinancialStatements',
         'start_date': arrow.now('Asia/Taipei')
-        .shift(days=-(8 * 91 + 30))
+        .shift(days=-10 * 91)
         .format('YYYY-MM-DD'),
     }
     headers = {'Authorization': f'Bearer {FINMIND_KEY}'}
     async with AsyncClient() as client:
-        d, r = await asyncio.gather(
-            client.get(url, params=params, headers=headers), get_rates(client, 546)
+        resp, fx = await asyncio.gather(
+            client.get(url, params=params, headers=headers), get_rates(client, 10 * 91)
         )
     df = (
-        pd.DataFrame(d.json()['data'])
+        pd.DataFrame(resp.json()['data'])
         .pivot(index='date', columns='type', values='value')
         .sort_index()
-        .reset_index()
+        .iloc[-9:]
     )
-
-    avg_fx = avg_by_end_dates(r, df['date'])
-
-    df['Revenue'] /= avg_fx.values
-    df['r'] = (
+    if len(df) != 9:
+        raise AssertionError
+    fx = avg_by_period_ends(fx, df.index)
+    df = df.iloc[1:]
+    df['Revenue'] /= fx.values
+    df['rps'] = (
         (df['Revenue'] * df['EPS'] / df['EquityAttributableToOwnersOfParent'])
         .rolling(4)
         .sum()
     )
-
-    return df.iloc[3:].rename(columns={'date': 'd'})[['d', 'r']]
-
-
-def avg_by_end_dates(r, ends):
-    today = arrow.now('Asia/Taipei')
-    start = today.shift(days=-len(r) + 1)
-    dates = list(arrow.Arrow.range('day', start, today))
-
-    s = pd.Series(r, index=dates).sort_index().astype(float)
-    ends = pd.to_datetime(ends).sort_values()
-    starts = ends.shift(1, fill_value=s.index.min())
-
-    out = [s.loc[start:end].mean() for start, end in zip(starts, ends)]
-
-    return pd.Series(out, index=ends)
+    return df['rps'].iloc[3:]
 
 
-async def calc_bands(symbol: str):
-    prices = await get_prices()
-    dates = pd.date_range(incomes[0].d, prices.index[-1]).date
-    s = (
-        pd.Series({income.d: getattr(income, metric) for income in incomes}, dates)
-        .ffill()
-        .tail(len(prices))
-    )
-    s[s <= 0] = None
-    multiples = prices / s
-    min_m, max_m = multiples.quantile(0.02), multiples.quantile(0.98)
-    bands = pd.DataFrame(index=s.index)
-    if not min_m < max_m:
-        return bands
-    for p in range(0, 120, 20):
-        m = min_m + (max_m - min_m) * (p / 100)
-        bands[m] = s * m
-    return bands
+# async def calc_bands(market: Literal['t', 'u'], symbol: str):
+#     prices = await get_prices(market, symbol, 364)
+#     rps = await calc_rps_from_finmind(symbol)
+#     dates = pd.date_range(incomes[0].d, prices.index[-1]).date
+#     s = (
+#         pd.Series({income.d: getattr(income, metric) for income in incomes}, dates)
+#         .ffill()
+#         .tail(len(prices))
+#     )
+#     s[s <= 0] = None
+#     multiples = prices / s
+#     min_m, max_m = multiples.quantile(0.02), multiples.quantile(0.98)
+#     bands = pd.DataFrame(index=s.index)
+#     if not min_m < max_m:
+#         return bands
+#     for p in range(0, 120, 20):
+#         m = min_m + (max_m - min_m) * (p / 100)
+#         bands[m] = s * m
+#     return bands
