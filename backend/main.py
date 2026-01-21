@@ -47,7 +47,7 @@ def calc_scores(R: Array[f8], slots: Array[f8], t: float = 0) -> Array[f8]:
     D = np.maximum(-R_, 0)
     S = np.exp(R_.mean(1) * (R_.shape[1] // 2)) / np.sqrt((D**2).mean(1))
     W = S * slots
-    W /= W.sum(1)
+    W /= W.sum()
     u = np.log(np.exp(np.sum(R, 1)) @ W) / R.shape[1]
     if abs(u) < 1e-4 or abs(t - u) < 1e-6:
         return S
