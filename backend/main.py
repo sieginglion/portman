@@ -42,20 +42,17 @@ async def get_content(url: str):
 # TODO: numpy array typing with shape
 
 
-def calc_scores(R: Array[f8], slots: Array[f8], t: float = 0) -> Array[f8]:
+def calc_weights(R: Array[f8], slots: Array[f8], t: float = 0) -> Array[f8]:
     R_ = R - t
     D = np.maximum(-R_, 0)
-    S = np.exp(R_.mean(1) * (R_.shape[1] // 2)) / np.sqrt((D**2).mean(1))
-    W = S * slots
+    W = np.exp(R_.mean(1) * (R_.shape[1] // 2)) / np.sqrt((D**2).mean(1)) * slots
     W /= W.sum()
     u = np.log(np.exp(np.sum(R, 1)) @ W) / R.shape[1]
-    if abs(u) < 1e-4 or abs(t - u) < 1e-6:
-        return S
-    return calc_scores(R, slots, u)
+    return W if abs(u) < 1e-4 or abs(t - u) < 1e-6 else calc_weights(R, slots, u)
 
 
-@app.post('/scores')
-async def get_scores(
+@app.post('/weights')
+async def get_weights(
     w: int, positions: list[tuple[Literal['c', 't', 'u'], str]], slots: list[float]
 ):
     P = np.array(
@@ -66,9 +63,7 @@ async def get_scores(
             )
         ]
     )
-    return calc_scores(
-        np.log(P[:, 1:] / P[:, :-1]), np.array(slots) / sum(slots)
-    ).tolist()
+    return calc_weights(np.log(P[:, 1:] / P[:, :-1]), np.array(slots)).tolist()
 
 
 @app.get('/charts')
