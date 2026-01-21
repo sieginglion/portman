@@ -39,19 +39,36 @@ async def get_content(url: str):
 #         return W
 #     return calc_weights(M, D, S, u)
 
+# TODO: numpy array typing with shape
+
+
+def calc_scores(R: Array[f8], slots: Array[f8], t: float = 0) -> Array[f8]:
+    R_ = R - t
+    D = np.maximum(-R_, 0)
+    S = np.exp(R_.mean(1) * (R_.shape[1] // 2)) / np.sqrt((D**2).mean(1))
+    W = S * slots
+    W /= W.sum(1)
+    u = np.log(np.exp(np.sum(R, 1)) @ W) / R.shape[1]
+    if abs(u) < 1e-4 or abs(t - u) < 1e-6:
+        return S
+    return calc_scores(R, slots, u)
+
 
 @app.post('/scores')
-async def calc_scores(w: int, positions: list[tuple[Literal['c', 't', 'u'], str]]):
-    k = calc_k(w)
-    Prices = [
-        p.prices
-        for p in await asyncio.gather(*[Position(m, s, w + k) for m, s in positions])
-    ]
-    P = np.array([prices[-w:] for prices in Prices])
-    E = np.array([calc_ema(prices, 2 / (w + 1), k) for prices in Prices])
-    assert E.shape[1] == w + 1
-    S = (E[:, -1] / E[:, 0]) / np.log(P / E[:, 1:]).std(1)
-    return S.tolist()
+async def get_scores(
+    w: int, positions: list[tuple[Literal['c', 't', 'u'], str]], slots: list[float]
+):
+    P = np.array(
+        [
+            p.prices
+            for p in await asyncio.gather(
+                *[Position(m, s, w + 1) for m, s in positions]
+            )
+        ]
+    )
+    return calc_scores(
+        np.log(P[:, 1:] / P[:, :-1]), np.array(slots) / sum(slots)
+    ).tolist()
 
 
 @app.get('/charts')
