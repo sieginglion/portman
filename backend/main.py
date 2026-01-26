@@ -39,31 +39,26 @@ async def get_content(url: str):
 #         return W
 #     return calc_weights(M, D, S, u)
 
+
 # TODO: numpy array typing with shape
-
-
-def calc_weights(R: Array[f8], slots: Array[f8], t: float = 0) -> Array[f8]:
-    R_ = R - t
-    D = np.maximum(-R_, 0)
-    W = np.exp(R_.mean(1) * (R_.shape[1] // 2)) / np.sqrt((D**2).mean(1)) * slots
-    W /= W.sum()
-    u = np.log(np.exp(np.sum(R, 1)) @ W) / R.shape[1]
-    return W if abs(u) < 1e-4 or abs(t - u) < 1e-6 else calc_weights(R, slots, u)
-
-
 @app.post('/weights')
 async def get_weights(
     w: int, positions: list[tuple[Literal['c', 't', 'u'], str]], slots: list[float]
 ):
+    v = 91
+    k = calc_k(v)
     P = np.array(
         [
             p.prices
             for p in await asyncio.gather(
-                *[Position(m, s, w + 1) for m, s in positions]
+                *[Position(m, s, w + k) for m, s in positions]
             )
         ]
     )
-    return calc_weights(np.log(P[:, 1:] / P[:, :-1]), np.array(slots)).tolist()
+    E = np.array([calc_ema(p, 2 / (v + 1), k) for p in P])
+    D = np.log(P[:, 1:] / P[:, :-1])
+    W = slots * (E[:, -1] / E[:, 0]) / np.sqrt((np.maximum(-D, 0) ** 2).mean(1))
+    return (W / W.sum()).tolist()
 
 
 @app.get('/charts')
