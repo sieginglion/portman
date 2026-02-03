@@ -24,41 +24,30 @@ async def get_content(url: str):
         return fastapi.Response(r.content, r.status_code, r.headers)
 
 
-# def calc_weights(M: Array[f8], D: Array[f8], S: Array[f8], t: float = 0) -> Array[f8]:
-#     A, D_ = M - t, D - t
-#     B = np.sqrt((np.maximum(-D_, 0) ** 2).mean(1))
-
-#     def wstd(X):
-#         return np.sqrt(((X - (X @ S)) ** 2) @ S)
-
-#     k = round(wstd(np.log(B)) / wstd(A))
-#     W = (np.exp(A * k) / B) * S
-#     W /= W.sum()
-#     u = np.log(np.exp(M * D.shape[1]) @ W) / D.shape[1]
-#     if abs(u) < 1e-4 or abs(t - u) < 1e-6:
-#         return W
-#     return calc_weights(M, D, S, u)
+def calc_weights(P: Array[f8], R: Array[f8], t: float = 0):
+    R_ = R - t
+    W = (
+        P
+        * (np.maximum(R_, 0) ** 2).mean(1) ** 0.25
+        / (np.maximum(-R_, 0) ** 2).mean(1) ** 0.5
+    )
+    W /= W.sum()
+    u = np.log(np.exp(R.sum(1)) @ W) / R.shape[1]
+    return W if abs(u) < 3e-5 or abs(u - t) < 3e-6 else calc_weights(P, R, u)
 
 
 # TODO: numpy array typing with shape
 @app.post('/weights')
 async def get_weights(
-    w: int, positions: list[tuple[Literal['c', 't', 'u'], str]], slots: list[float]
+    positions: list[tuple[Literal['c', 't', 'u'], str]], prior: list[float]
 ):
-    v = 91
-    k = calc_k(v)
     P = np.array(
         [
             p.prices
-            for p in await asyncio.gather(
-                *[Position(m, s, w + k) for m, s in positions]
-            )
+            for p in await asyncio.gather(*[Position(m, s, 365) for m, s in positions])
         ]
     )
-    E = np.array([calc_ema(p, 2 / (v + 1), k) for p in P])
-    D = np.log(P[:, 1:] / P[:, :-1])
-    W = slots * (E[:, -1] / E[:, 0]) / np.sqrt((np.maximum(-D, 0) ** 2).mean(1))
-    return (W / W.sum()).tolist()
+    return calc_weights(np.array(prior), np.log(P[:, 1:] / P[:, :-1])).tolist()
 
 
 @app.get('/charts')
