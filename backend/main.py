@@ -33,7 +33,7 @@ def calc_weights(P: Array[f8], R: Array[f8], t: float = 0):
     )
     W /= W.sum()
     u = np.log(np.exp(R.sum(1)) @ W) / R.shape[1]
-    return W if abs(u) < 3e-5 or abs(u - t) < 3e-6 else calc_weights(P, R, u)
+    return W if abs(u) < 3e-5 or abs(u - t) < 3e-7 else calc_weights(P, R, u)
 
 
 # TODO: numpy array typing with shape
