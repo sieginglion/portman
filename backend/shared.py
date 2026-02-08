@@ -5,13 +5,11 @@ import re
 from typing import Literal
 
 import arrow
-import crypto
 import dotenv
 import httpx as h
 import numba as nb
 import numpy as np
 import pandas as pd
-import stock
 from arrow.arrow import Arrow
 from general_cache import cached
 from httpx import AsyncClient
@@ -120,6 +118,8 @@ def post_process(prices: Array[f8], n: int, limited: bool = False):
 
 @cached(120)
 async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int, to_usd: bool):
+    from . import crypto, stock
+
     return await (
         crypto.get_prices(symbol, n)
         if market == 'c'
