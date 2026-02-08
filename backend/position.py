@@ -6,7 +6,7 @@ import numpy as np
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
-from . import crypto, stock
+from . import shared
 
 
 def calc_k(w: int, e: float = 0.05):
@@ -67,11 +67,7 @@ class Position:
         self.n = n
 
     async def init(self):
-        self.prices = await (
-            crypto.get_prices(self.symbol, self.n)
-            if self.market == 'c'
-            else stock.get_prices(self.market, self.symbol, self.n)  # type: ignore
-        )
+        self.prices = await shared.get_prices(self.market, self.symbol, self.n, True)
         return self
 
     def __await__(self):

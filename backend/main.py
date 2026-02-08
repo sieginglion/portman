@@ -10,7 +10,7 @@ from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
-from . import crypto, stock
+from . import crypto, shared, stock
 from .position import Position, calc_ema, calc_k
 
 app = fastapi.FastAPI()
@@ -42,10 +42,7 @@ async def get_weights(
     positions: list[tuple[Literal['c', 't', 'u'], str]], prior: list[float]
 ):
     P = np.array(
-        [
-            p.prices
-            for p in await asyncio.gather(*[Position(m, s, 365) for m, s in positions])
-        ]
+        await asyncio.gather(*[shared.get_prices(m, s, 365) for m, s in positions])
     )
     return calc_weights(np.array(prior), np.log(P[:, 1:] / P[:, :-1])).tolist()
 
