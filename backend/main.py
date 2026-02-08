@@ -9,7 +9,7 @@ from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
-from . import crypto, shared, stock, valuation
+from . import shared, valuation
 
 app = fastapi.FastAPI()
 logging.basicConfig(level=logging.INFO)
@@ -54,4 +54,4 @@ async def get_px_score(market: Literal['t', 'u'], symbol: str):
 
 @app.get('/prices')
 async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int):
-    return await shared.get_prices(market, symbol, n, False).tolist()
+    return (await shared.get_prices(market, symbol, n, False)).tolist()
