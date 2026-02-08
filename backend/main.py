@@ -54,10 +54,4 @@ async def get_px_score(market: Literal['t', 'u'], symbol: str):
 
 @app.get('/prices')
 async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int):
-    return (
-        await (
-            crypto.get_prices(symbol, n)
-            if market == 'c'
-            else stock.get_prices(market, symbol, n, False)
-        )
-    ).tolist()
+    return await shared.get_prices(market, symbol, n, False).tolist()
