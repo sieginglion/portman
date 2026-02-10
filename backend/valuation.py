@@ -9,30 +9,42 @@ from . import shared, stock
 from .shared import FMP_KEY, MARKET_TO_TIMEZONE
 
 
-async def fetch_xps(symbol: str) -> pd.DataFrame:
-    url = 'https://financialmodelingprep.com/stable/income-statement'
+async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFrame:
     params = {
         'apikey': FMP_KEY,
-        'limit': 9,
+        'limit': q + 5,
         'period': 'quarter',
-        'symbol': symbol,
     }
+    if market == 't':
+        url = f'https://financialmodelingprep.com/api/v3/income-statement/{ shared.add_suffix(symbol) }'
+        date_col = 'date'
+        date_offset = 1
+        eps_col = 'epsdiluted'
+    else:
+        url = 'https://financialmodelingprep.com/stable/income-statement'
+        params['symbol'] = symbol
+        date_col = 'filingDate'
+        date_offset = 0
+        eps_col = 'epsDiluted'
     async with AsyncClient() as client:
         data = (await client.get(url, params=params)).json()
-    if len(data) != 9:
-        raise ValueError
-    df = pd.DataFrame(data).set_index('filingDate').sort_index()
-    df['eps'] = df['epsDiluted'].rolling(4).sum()
-    df['rps'] = (df['revenue'] / df['weightedAverageShsOutDil']).rolling(4).sum()
-    return df[['eps', 'rps']].iloc[3:]
+    df = pd.DataFrame(data).sort_values(date_col)
+    return pd.DataFrame(
+        {
+            'eps': df[eps_col].rolling(4).sum().to_numpy(),
+            'rps': (df['revenue'] / df['weightedAverageShsOutDil'])
+            .rolling(4)
+            .sum()
+            .to_numpy(),
+        },
+        pd.to_datetime(df[date_col]) + pd.Timedelta(days=date_offset),
+    ).iloc[3:]
 
 
-async def calc_px_score(market: Literal['t', 'u'], symbol: str) -> float:
+async def calc_px_score(market: Literal['t', 'u'], symbol: str, q: int) -> float:
     prices, xps = await asyncio.gather(
-        stock.get_prices(market, symbol, 364, False),
-        fetch_xps(symbol + shared.get_suffix(market, symbol)),
+        stock.get_prices(market, symbol, 91 * q, False), fetch_xps(market, symbol, q)
     )
-    xps.index = pd.to_datetime(xps.index)
     xps = xps.reindex(
         pd.date_range(
             xps.index[0],

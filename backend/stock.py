@@ -13,9 +13,9 @@ from .shared import (
     FMP_KEY,
     FROM_YAHOO,
     MARKET_TO_TIMEZONE,
+    add_suffix,
     gen_dates,
     get_sorted_values,
-    get_suffix,
     get_today_dividend,
     post_process,
 )
@@ -30,14 +30,14 @@ async def get_unadjusted(
         lambda x: x.json(),
         await asyncio.gather(
             sess.get(
-                f'https://financialmodelingprep.com/api/v3/historical-price-full/{ symbol }{ get_suffix(market, symbol) }',
+                f'https://financialmodelingprep.com/api/v3/historical-price-full/{ add_suffix(symbol) }',
                 params={
                     'from': min(date_to_price),
                     'serietype': 'line',
                 },
             ),
             sess.get(
-                f'https://financialmodelingprep.com/api/v3/quote-short/{ symbol }{ get_suffix(market, symbol) }'
+                f'https://financialmodelingprep.com/api/v3/quote-short/{ add_suffix(symbol) }'
             ),
         ),
     )
@@ -58,7 +58,7 @@ async def get_dividends(
     date_to_dividend = dict.fromkeys(gen_dates(now.shift(days=-n), now), 0.0)
     res, today = await asyncio.gather(
         sess.get(
-            f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{ symbol }{ get_suffix(market, symbol) }'
+            f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{ add_suffix(symbol) }'
         ),
         get_today_dividend(sess, market, symbol),
     )

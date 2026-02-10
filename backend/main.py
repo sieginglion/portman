@@ -48,8 +48,8 @@ async def get_weights(
 
 
 @app.get('/px-score')
-async def get_px_score(market: Literal['t', 'u'], symbol: str):
-    return await valuation.calc_px_score(market, symbol)
+async def get_px_score(market: Literal['t', 'u'], symbol: str, q: int):
+    return await valuation.calc_px_score(market, symbol, q)
 
 
 @app.get('/prices')

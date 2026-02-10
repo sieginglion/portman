@@ -53,8 +53,10 @@ def gen_dates(start: Arrow, end: Arrow):
     return map(to_date, Arrow.range('day', start, end))
 
 
-def get_suffix(market: Literal['c', 't', 'u'], symbol: str):
-    return ('.TW' if symbol in ON_TWSE else '.TWO') if market == 't' else ''
+def add_suffix(symbol: str):
+    if not symbol[0].isdecimal():
+        return symbol
+    return symbol + ('.TW' if symbol in ON_TWSE else '.TWO')
 
 
 @cached(43200)

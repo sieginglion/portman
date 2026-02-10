@@ -6,9 +6,9 @@ from httpx import AsyncClient
 
 from .shared import (
     MARKET_TO_TIMEZONE,
+    add_suffix,
     gen_dates,
     get_sorted_values,
-    get_suffix,
     get_today_dividend,
     post_process,
 )
@@ -21,7 +21,7 @@ async def get_unadjusted(
     now = arrow.now(tz)
     date_to_price = dict.fromkeys(gen_dates(now.shift(days=-(n + 13)), now), 0.0)
     res = await sess.get(
-        f'https://query1.finance.yahoo.com/v7/finance/download/{symbol}{ get_suffix(market, symbol) }',
+        f'https://query1.finance.yahoo.com/v7/finance/download/{ add_suffix(symbol) }',
         params={
             'events': 'history',
             'period1': int(arrow.get(min(date_to_price), tzinfo=tz).timestamp()),
@@ -47,7 +47,7 @@ async def get_dividends(
     date_to_dividend = dict.fromkeys(gen_dates(now.shift(days=-n), now), 0.0)
     res, today = await asyncio.gather(
         sess.get(
-            f'https://query1.finance.yahoo.com/v7/finance/download/{symbol}{ get_suffix(market, symbol) }',
+            f'https://query1.finance.yahoo.com/v7/finance/download/{ add_suffix(symbol) }',
             params={
                 'events': 'div',
                 'period1': int(arrow.get(min(date_to_dividend), tzinfo=tz).timestamp()),
