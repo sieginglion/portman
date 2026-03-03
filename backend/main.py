@@ -10,6 +10,7 @@ from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
 from . import shared, valuation
+from .position import calc_ema, calc_k
 
 app = fastapi.FastAPI()
 logging.basicConfig(level=logging.INFO)
@@ -55,3 +56,10 @@ async def get_px_score(market: Literal['t', 'u'], symbol: str, q: int):
 @app.get('/prices')
 async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int):
     return (await shared.get_prices(market, symbol, n, False)).tolist()
+
+
+@app.get('/ema-min')
+async def get_ema_min(market: Literal['c', 't', 'u'], symbol: str, n: int):
+    k = calc_k(n)
+    prices = await shared.get_prices(market, symbol, n + k - 1, True)
+    return float(calc_ema(prices, 2 / (n + 1), k).min())
