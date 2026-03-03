@@ -54,8 +54,15 @@ async def get_px_score(market: Literal['t', 'u'], symbol: str, q: int):
 
 
 @app.get('/prices')
-async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int):
-    return (await shared.get_prices(market, symbol, n, False)).tolist()
+async def get_prices(
+    market: Literal['c', 't', 'u'], symbol: str, n: int, ema7: bool = False
+):
+    w = 7
+    k = calc_k(w, 0.01)
+    prices = await shared.get_prices(market, symbol, n + k - 1 if ema7 else n, False)
+    if not ema7:
+        return prices.tolist()
+    return calc_ema(prices, 2 / (w + 1), k).tolist()
 
 
 @app.get('/ema-min')
