@@ -71,3 +71,14 @@ async def get_ema_min(market: Literal['c', 't', 'u'], symbol: str, n: int):
     k = calc_k(w, 0.01)
     prices = await shared.get_prices(market, symbol, n + k - 1, True)
     return float(calc_ema(prices, 2 / (w + 1), k).min())
+
+
+@app.get('/BTCXAU')
+async def get_btcxau():
+    btc, paxg = await asyncio.gather(
+        shared.get_prices('c', 'BTC', 1456, False),
+        shared.get_prices('c', 'PAXG', 1456, False),
+    )
+    ratio = btc / paxg
+    lo, hi = ratio.min(), ratio.max()
+    return float((ratio[-1] - lo) / (hi - lo))
