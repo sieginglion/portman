@@ -60,6 +60,7 @@ async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int):
 
 @app.get('/ema-min')
 async def get_ema_min(market: Literal['c', 't', 'u'], symbol: str, n: int):
-    k = calc_k(n)
+    w = 7
+    k = calc_k(w)
     prices = await shared.get_prices(market, symbol, n + k - 1, True)
-    return float(calc_ema(prices, 2 / (n + 1), k).min())
+    return float(calc_ema(prices, 2 / (w + 1), k).min())
