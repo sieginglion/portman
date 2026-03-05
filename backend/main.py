@@ -27,8 +27,8 @@ def calc_weights(P: Array[f8], R: Array[f8], t: float = 0):
     R_ = R - t
     W = (
         P
-        * (np.maximum(R_, 0) ** 2).mean(1) ** 0.25
-        / (np.maximum(-R_, 0) ** 2).mean(1) ** 0.5
+        * (np.maximum(R_, 0) ** 1).mean(1) ** 0.5
+        / (np.maximum(-R_, 0) ** 1).mean(1) ** 1
     )
     W /= W.sum()
     u = np.log(np.exp(R.sum(1)) @ W) / R.shape[1]
