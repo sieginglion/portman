@@ -82,3 +82,18 @@ async def get_btcxau():
     ratio = btc / paxg
     lo, hi = ratio.min(), ratio.max()
     return float((ratio[-1] - lo) / (hi - lo))
+
+
+@app.get('/shares')
+async def get_shares(symbol: str):
+    async with AsyncClient() as sess:
+        res = await sess.get(
+            'https://financialmodelingprep.com/stable/income-statement',
+            params={
+                'apikey': shared.FMP_KEY,
+                'limit': 1,
+                'period': 'quarter',
+                'symbol': symbol,
+            },
+        )
+    return res.json()['weightedAverageShsOutDil']
