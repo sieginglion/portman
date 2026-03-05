@@ -96,4 +96,4 @@ async def get_shares(symbol: str):
                 'symbol': symbol,
             },
         )
-    return res.json()['weightedAverageShsOutDil']
+    return res.json()[0]['weightedAverageShsOutDil']
