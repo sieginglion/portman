@@ -3,6 +3,7 @@ import logging
 from typing import Literal
 from urllib.parse import unquote
 
+import arrow
 import fastapi
 import numpy as np
 from httpx import AsyncClient
@@ -70,7 +71,11 @@ async def get_low(market: Literal['c', 't', 'u'], symbol: str, n: int):
     w = 7
     k = calc_k(w, 0.01)
     prices = await shared.get_prices(market, symbol, n + k - 1, True)
-    return float(calc_ema(prices, 2 / (w + 1), k).min())
+    ema = calc_ema(prices, 2 / (w + 1), k)
+    i = ema.argmin()
+    now = arrow.now(shared.MARKET_TO_TIMEZONE[market])
+    dates = list(shared.gen_dates(now.shift(days=-(len(ema) - 1)), now))
+    return dates[i], ema[i]
 
 
 @app.get('/BTCXAU')
