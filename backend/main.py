@@ -3,9 +3,9 @@ import logging
 from typing import Literal
 from urllib.parse import unquote
 
-import arrow
 import fastapi
 import numpy as np
+import pandas as pd
 from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
@@ -73,9 +73,12 @@ async def get_low(market: Literal['c', 't', 'u'], symbol: str, n: int):
     prices = await shared.get_prices(market, symbol, n + k - 1, True)
     ema = calc_ema(prices, 2 / (w + 1), k)
     i = ema.argmin()
-    now = arrow.now(shared.MARKET_TO_TIMEZONE[market])
-    dates = list(shared.gen_dates(now.shift(days=-(len(ema) - 1)), now))
-    return dates[i], ema[i]
+    dates = pd.date_range(
+        end=pd.Timestamp.now(tz=shared.MARKET_TO_TIMEZONE[market]),
+        periods=len(ema),
+        freq='D',
+    )
+    return dates[i].strftime('%Y-%m-%d'), ema[i]
 
 
 @app.get('/BTCXAU')
