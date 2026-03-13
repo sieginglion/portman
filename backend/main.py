@@ -65,7 +65,8 @@ async def get_low(market: Literal['c', 't', 'u'], symbol: str, n: int):
     ema = await shared.get_prices(market, symbol, n, True, True)
     i = ema.argmin()
     dates = pd.date_range(
-        end=pd.Timestamp.now(tz=shared.MARKET_TO_TIMEZONE[market]), periods=len(ema)
+        end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).normalize(),
+        periods=len(ema),
     )
     return dates[i].strftime('%Y-%m-%d'), ema[i]
 
