@@ -40,28 +40,29 @@ async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFr
     return xps
 
 
-async def calc_px_score(
+async def calc_scores(
     market: Literal['t', 'u'], symbol: str, end_date: str, q: int
-) -> tuple[float | None, float]:
+) -> tuple[float, float | None]:
     prices, xps = await asyncio.gather(
         shared.get_prices(market, symbol, 91 * (q + 2), False),
         fetch_xps(market, symbol, q),
     )
     end = pd.Timestamp(end_date)
     start = end - pd.Timedelta(days=91 * q - 1)
-    price_index = pd.date_range(end=end, periods=len(prices))
-    df = pd.DataFrame({'price': prices}, price_index).join(xps).ffill().loc[start:end]
+    index = pd.date_range(end=end, periods=len(prices))
+    df = pd.DataFrame({'price': prices}, index).join(xps).ffill().loc[start:end]
     if pd.isna(df['rps'].iloc[0]):
         raise ValueError
 
-    def calc_score(series: pd.Series) -> float:
-        log_m = np.log(series)
-        lo, hi = log_m.quantile(0.011), log_m.quantile(0.989)
-        return (log_m.iloc[-1] - lo) / (hi - lo)
+    def norm(m: pd.Series) -> float:
+        l = np.log(m)
+        lo, hi = l.quantile([0.011, 0.989])
+        return (l.iloc[-1] - lo) / (hi - lo)
 
-    pe_score = calc_score(df['price'] / df['eps']) if (df['eps'] > 0).all() else None
-    ps_score = calc_score(df['price'] / df['rps'])
-    return pe_score, ps_score
+    return (
+        norm(df['price'] / df['rps']),
+        norm(df['price'] / df['eps']) if (df['eps'] > 0).all() else None,
+    )
 
 
 # def avg_by_period_ends(values, ends):
