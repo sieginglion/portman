@@ -49,10 +49,13 @@ async def calc_scores(
         shared.get_prices(market, symbol, 91 * (q + EXTRA_Q), False, True),
         fetch_xps(market, symbol, q),
     )
-    end = pd.Timestamp(end_date)
-    start = end - pd.Timedelta(days=91 * q - 1)
-    index = pd.date_range(end=end, periods=len(prices))
-    df = pd.DataFrame({'price': prices}, index).join(xps).ffill().loc[start:end]
+    index = pd.date_range(
+        end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date(),
+        periods=len(prices),
+    )
+    e = pd.Timestamp(end_date)
+    s = e - pd.Timedelta(days=91 * q - 1)
+    df = pd.DataFrame({'price': prices}, index).join(xps).ffill().loc[s:e]
     if pd.isna(df['rps'].iloc[0]):
         raise ValueError
 
