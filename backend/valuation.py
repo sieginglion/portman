@@ -5,8 +5,8 @@ import numpy as np
 import pandas as pd
 from httpx import AsyncClient
 
-from . import shared, stock
-from .shared import FMP_KEY, MARKET_TO_TIMEZONE
+from . import shared
+from .shared import FMP_KEY, add_suffix
 
 
 async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFrame:
@@ -16,51 +16,52 @@ async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFr
         'period': 'quarter',
     }
     if market == 't':
-        url = f'https://financialmodelingprep.com/api/v3/income-statement/{ shared.add_suffix(symbol) }'
-        date_col = 'date'
-        date_offset = 1
+        url = f'https://financialmodelingprep.com/api/v3/income-statement/{ add_suffix(symbol) }'
         eps_col = 'epsdiluted'
     else:
         url = 'https://financialmodelingprep.com/stable/income-statement'
         params['symbol'] = symbol
-        date_col = 'filingDate'
-        date_offset = 0
         eps_col = 'epsDiluted'
     async with AsyncClient() as client:
         data = (await client.get(url, params=params)).json()
-    df = pd.DataFrame(data).sort_values(date_col)
-    return pd.DataFrame(
+    df = pd.DataFrame(data)
+    df = df.sort_values('date')
+    df['date'] = pd.to_datetime(df['date']) + pd.Timedelta(days=1)
+    xps = pd.DataFrame(
         {
-            'eps': df[eps_col].rolling(4).sum().to_numpy(),
             'rps': (df['revenue'] / df['weightedAverageShsOutDil'])
             .rolling(4)
             .sum()
             .to_numpy(),
+            'eps': df[eps_col].rolling(4).sum().to_numpy(),
         },
-        pd.to_datetime(df[date_col]) + pd.Timedelta(days=date_offset),
+        df['date'],
     ).iloc[3:]
+    return xps
 
 
-async def calc_px_score(market: Literal['t', 'u'], symbol: str, q: int) -> float:
+async def calc_px_score(
+    market: Literal['t', 'u'], symbol: str, end_date: str, q: int
+) -> tuple[float | None, float]:
     prices, xps = await asyncio.gather(
-        stock.get_prices(market, symbol, 91 * q, False), fetch_xps(market, symbol, q)
+        shared.get_prices(market, symbol, 91 * (q + 2), False),
+        fetch_xps(market, symbol, q),
     )
-    xps = xps.reindex(
-        pd.date_range(
-            xps.index[0],
-            pd.Timestamp.now(MARKET_TO_TIMEZONE[market]).normalize().tz_localize(None),
-        ),
-        method='ffill',
-    ).tail(len(prices))
-    if not (xps['eps'] > 0).all():
+    end = pd.Timestamp(end_date)
+    start = end - pd.Timedelta(days=91 * q - 1)
+    price_index = pd.date_range(end=end, periods=len(prices))
+    df = pd.DataFrame({'price': prices}, price_index).join(xps).ffill().loc[start:end]
+    if pd.isna(df['rps'].iloc[0]):
         raise ValueError
 
-    def calc_score(s: pd.Series) -> float:
-        l = np.log(s)
-        u, d = l.mean(), l.std()
-        return (l.iloc[-1] - (u - 2 * d)) / (4 * d)
+    def calc_score(series: pd.Series) -> float:
+        log_m = np.log(series)
+        lo, hi = log_m.quantile(0.011), log_m.quantile(0.989)
+        return (log_m.iloc[-1] - lo) / (hi - lo)
 
-    return (calc_score(prices / xps['eps']) + calc_score(prices / xps['rps'])) / 2
+    pe_score = calc_score(df['price'] / df['eps']) if (df['eps'] > 0).all() else None
+    ps_score = calc_score(df['price'] / df['rps'])
+    return pe_score, ps_score
 
 
 # def avg_by_period_ends(values, ends):
