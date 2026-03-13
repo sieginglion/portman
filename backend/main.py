@@ -49,9 +49,9 @@ async def get_weights(
     return calc_weights(np.array(prior), np.log(P[:, 1:] / P[:, :-1])).tolist()
 
 
-@app.get('/px-score')
-async def get_px_score(market: Literal['t', 'u'], symbol: str, end_date: str, q: int):
-    return await valuation.calc_px_score(market, symbol, end_date, q)
+@app.get('/scores')
+async def get_scores(market: Literal['t', 'u'], symbol: str, end_date: str, q: int):
+    return await valuation.calc_scores(market, symbol, end_date, q)
 
 
 @app.get('/prices')
