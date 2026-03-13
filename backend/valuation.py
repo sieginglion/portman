@@ -56,7 +56,7 @@ async def calc_scores(
 
     def norm(m: pd.Series) -> float:
         l = np.log(m)
-        lo, hi = l.quantile([0.011, 0.989])
+        lo, hi = l.quantile([0.023, 0.977])
         return (l.iloc[-1] - lo) / (hi - lo)
 
     return (
