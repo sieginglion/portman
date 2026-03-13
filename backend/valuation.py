@@ -8,11 +8,13 @@ from httpx import AsyncClient
 from . import shared
 from .shared import FMP_KEY, add_suffix
 
+EXTRA_Q = 1
+
 
 async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFrame:
     params = {
         'apikey': FMP_KEY,
-        'limit': q + 5,
+        'limit': q + EXTRA_Q + 3,
         'period': 'quarter',
     }
     if market == 't':
@@ -44,7 +46,7 @@ async def calc_scores(
     market: Literal['t', 'u'], symbol: str, end_date: str, q: int
 ) -> tuple[float, float | None]:
     prices, xps = await asyncio.gather(
-        shared.get_prices(market, symbol, 91 * (q + 2), False, True),
+        shared.get_prices(market, symbol, 91 * (q + EXTRA_Q), False, True),
         fetch_xps(market, symbol, q),
     )
     end = pd.Timestamp(end_date)
@@ -54,8 +56,8 @@ async def calc_scores(
     if pd.isna(df['rps'].iloc[0]):
         raise ValueError
 
-    def norm(m: pd.Series) -> float:
-        l = np.log(m)
+    def norm(s: pd.Series) -> float:
+        l = np.log(s)
         lo, hi = l.quantile([0.023, 0.977])
         return (l.iloc[-1] - lo) / (hi - lo)
 
