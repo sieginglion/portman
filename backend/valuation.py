@@ -59,14 +59,12 @@ async def calc_scores(
     if pd.isna(df['rps'].iloc[0]):
         raise ValueError
 
-    def norm(s: pd.Series) -> float:
-        l = np.log(s)
-        lo, hi = l.quantile([0.023, 0.977])
-        return (l.iloc[-1] - lo) / (hi - lo)
+    def percentile_rank(s: pd.Series) -> float:
+        return (s < s.iloc[-1]).mean()
 
     return (
-        norm(df['price'] / df['rps']),
-        norm(df['price'] / df['eps']) if (df['eps'] > 0).all() else None,
+        percentile_rank(df['price'] / df['rps']),
+        percentile_rank(df['price'] / df['eps']) if (df['eps'] > 0).all() else None,
     )
 
 
