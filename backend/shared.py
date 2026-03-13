@@ -119,11 +119,22 @@ def post_process(prices: Array[f8], n: int, limited: bool = False):
 
 
 @cached(120)
-async def get_prices(market: Literal['c', 't', 'u'], symbol: str, n: int, to_usd: bool):
+async def get_prices(
+    market: Literal['c', 't', 'u'],
+    symbol: str,
+    n: int,
+    to_usd: bool,
+    ema7: bool = False,
+):
     from . import crypto, stock
+    from .position import calc_ema, calc_k
 
-    return await (
-        crypto.get_prices(symbol, n)
+    w = 7
+    k = calc_k(w, 0.01)
+    n_ = n + k - 1 if ema7 else n
+    prices = await (
+        crypto.get_prices(symbol, n_)
         if market == 'c'
-        else stock.get_prices(market, symbol, n, to_usd)
+        else stock.get_prices(market, symbol, n_, to_usd)
     )
+    return calc_ema(prices, 2 / (w + 1), k) if ema7 else prices

@@ -11,7 +11,6 @@ from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
 from . import shared, valuation
-from .position import calc_ema, calc_k
 
 app = fastapi.FastAPI()
 logging.basicConfig(level=logging.INFO)
@@ -58,20 +57,12 @@ async def get_scores(market: Literal['t', 'u'], symbol: str, end_date: str, q: i
 async def get_prices(
     market: Literal['c', 't', 'u'], symbol: str, n: int, ema7: bool = False
 ):
-    w = 7
-    k = calc_k(w, 0.01)
-    prices = await shared.get_prices(market, symbol, n + k - 1 if ema7 else n, False)
-    if not ema7:
-        return prices.tolist()
-    return calc_ema(prices, 2 / (w + 1), k).tolist()
+    return (await shared.get_prices(market, symbol, n, False, ema7)).tolist()
 
 
 @app.get('/low')
 async def get_low(market: Literal['c', 't', 'u'], symbol: str, n: int):
-    w = 7
-    k = calc_k(w, 0.01)
-    prices = await shared.get_prices(market, symbol, n + k - 1, True)
-    ema = calc_ema(prices, 2 / (w + 1), k)
+    ema = await shared.get_prices(market, symbol, n, True, True)
     i = ema.argmin()
     dates = pd.date_range(
         end=pd.Timestamp.now(tz=shared.MARKET_TO_TIMEZONE[market]),
