@@ -60,10 +60,12 @@ async def get_prices(
     return (await shared.get_prices(market, symbol, n, False, ema7)).tolist()
 
 
-@app.get('/low')
-async def get_low(market: Literal['c', 't', 'u'], symbol: str, n: int):
+@app.get('/extremum')
+async def get_extremum(
+    market: Literal['c', 't', 'u'], symbol: str, n: int, max: bool = False
+):
     ema = await shared.get_prices(market, symbol, n, True, True)
-    i = ema.argmin()
+    i = ema.argmax() if max else ema.argmin()
     dates = pd.date_range(
         end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date(),
         periods=len(ema),
