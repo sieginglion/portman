@@ -118,7 +118,7 @@ def post_process(prices: Array[f8], n: int, limited: bool = False):
     return prices[-n:]
 
 
-@cached(120)
+@cached(240)
 async def get_prices(
     market: Literal['c', 't', 'u'],
     symbol: str,
