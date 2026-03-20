@@ -727,6 +727,18 @@ files = [
 ]
 
 [[package]]
+name = "diskcache"
+version = "5.6.3"
+description = "Disk Cache -- Disk and file backed persistent cache."
+optional = false
+python-versions = ">=3"
+groups = ["main"]
+files = [
+    {file = "diskcache-5.6.3-py3-none-any.whl", hash = "sha256:5e31b2d5fbad117cc363ebaf6b689474db18a1f6438bc82358b024abd4c2ca19"},
+    {file = "diskcache-5.6.3.tar.gz", hash = "sha256:2c3a3fa2743d8535d832ec61c2054a1641f41775aa7c556758a109941e33e4fc"},
+]
+
+[[package]]
 name = "executing"
 version = "2.2.1"
 description = "Get the currently executing AST node of a frame, and other information"
@@ -862,18 +874,6 @@ groups = ["dev"]
 files = [
     {file = "fqdn-1.5.1-py3-none-any.whl", hash = "sha256:3a179af3761e4df6eb2e026ff9e1a3033d3587bf980a0b1b2e1e5d08d7358014"},
     {file = "fqdn-1.5.1.tar.gz", hash = "sha256:105ed3677e767fb5ca086a0c1f4bb66ebc3c100be518f0e0d755d9eae164d89f"},
-]
-
-[[package]]
-name = "general-cache"
-version = "0.1.1"
-description = ""
-optional = false
-python-versions = ">=3.10,<4.0"
-groups = ["main"]
-files = [
-    {file = "general_cache-0.1.1-py3-none-any.whl", hash = "sha256:241f58443dbad738526ae5379e4fe02fb4e97b890eee0bc0e586b05b4bff1c6f"},
-    {file = "general_cache-0.1.1.tar.gz", hash = "sha256:117aa3cc59ab34107072ddc60029a8ad5ac48090678e64d34588b3c4f6e90e2c"},
 ]
 
 [[package]]
@@ -3829,4 +3829,4 @@ test = ["pytest", "websockets"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "350149368604031d4fd13846d5a8ed1484e51ce2935bddbaf064f97eeb560d03"
+content-hash = "5e134c31fa7b681c3163ec319fa962ee5af20ec0091c1f13ef877ff98b032fd3"

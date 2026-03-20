@@ -2,6 +2,9 @@ import json
 import os
 import pickle
 import re
+from functools import wraps
+from inspect import iscoroutinefunction
+from pathlib import Path
 from typing import Literal
 
 import arrow
@@ -11,7 +14,7 @@ import numba as nb
 import numpy as np
 import pandas as pd
 from arrow.arrow import Arrow
-from general_cache import cached
+from diskcache import Cache
 from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
@@ -26,6 +29,8 @@ MARKET_TO_TIMEZONE = {'c': 'UTC', 't': 'Asia/Taipei', 'u': 'America/New_York'}
 
 CACHE = "ON_TWSE.pkl"
 URL = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2"
+
+cache = Cache(Path().resolve() / '.cache')
 
 if os.path.isfile(CACHE):
     with open(CACHE, "rb") as f:
@@ -57,6 +62,35 @@ def add_suffix(symbol: str):
     if not symbol[0].isdecimal():
         return symbol
     return symbol + ('.TW' if symbol in ON_TWSE else '.TWO')
+
+
+def cached(ttl):
+    def decorator(f):
+        if iscoroutinefunction(f):
+
+            @wraps(f)
+            async def async_wrapper(*args, **kwargs):
+                k = (f.__module__, f.__qualname__, args, tuple(sorted(kwargs.items())))
+                if k in cache:
+                    return cache[k]
+                v = await f(*args, **kwargs)
+                cache.set(k, v, ttl)
+                return v
+
+            return async_wrapper
+
+        @wraps(f)
+        def sync_wrapper(*args, **kwargs):
+            k = (f.__module__, f.__qualname__, args, tuple(sorted(kwargs.items())))
+            if k in cache:
+                return cache[k]
+            v = f(*args, **kwargs)
+            cache.set(k, v, ttl)
+            return v
+
+        return sync_wrapper
+
+    return decorator
 
 
 @cached(43200)
