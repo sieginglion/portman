@@ -55,8 +55,12 @@ async def calc_scores(
     )
     e = pd.Timestamp(end_date)
     s = e - pd.Timedelta(days=91 * q - 1)
-    df = pd.DataFrame({'price': prices}, index).join(xps).ffill().loc[s:e]
-    if pd.isna(df['rps'].iloc[0]):
+    df = pd.DataFrame({'price': prices}, index).join(xps, how='outer').ffill().loc[s:e]
+    if (
+        (len(df) != 91 * q)
+        or (pd.isna(df['price'].iloc[0]))
+        or pd.isna(df['rps'].iloc[0])
+    ):
         raise ValueError
 
     def percentile_rank(s: pd.Series) -> float:
