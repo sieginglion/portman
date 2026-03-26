@@ -49,8 +49,10 @@ async def get_weights(
 
 
 @app.get('/scores')
-async def get_scores(market: Literal['t', 'u'], symbol: str, end_date: str, q: int):
-    return await valuation.calc_scores(market, symbol, end_date, q)
+async def get_scores(
+    market: Literal['t', 'u'], symbol: str, end_date: str, q: int, ema7: bool = False
+):
+    return await valuation.calc_scores(market, symbol, end_date, q, ema7)
 
 
 @app.get('/prices')
