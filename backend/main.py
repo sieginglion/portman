@@ -25,12 +25,14 @@ async def get_content(url: str):
 
 def calc_weights(P: Array[f8], R: Array[f8], t: float = 0):
     R_ = R - t
-    W = (
-        P
-        * (np.maximum(R_, 0) ** 1).mean(1) ** 0.5
-        / (np.maximum(-R_, 0) ** 1).mean(1) ** 1
-    )
+    # W = (
+    #     P
+    #     * (np.maximum(R_, 0) ** 1).mean(1) ** 0.5
+    #     / (np.maximum(-R_, 0) ** 1).mean(1) ** 1
+    # )
+    W = P * np.maximum(R_, 0).mean(1) / np.maximum(-R_, 0).mean(1)
     W /= W.sum()
+    return W
     u = np.log(np.exp(R.sum(1)) @ W) / R.shape[1]
     return W if abs(u) < 3e-5 or abs(u - t) < 3e-7 else calc_weights(P, R, u)
 
