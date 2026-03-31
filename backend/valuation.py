@@ -27,7 +27,7 @@ async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFr
     async with AsyncClient() as client:
         data = (await client.get(url, params=params)).json()
     df = pd.DataFrame(data)
-    df = df.sort_values('date')
+    df = df.sort_values('date').reset_index(drop=True)
     df['date'] = pd.to_datetime(df['date']) + pd.Timedelta(days=1)
     xps = pd.DataFrame(
         {
