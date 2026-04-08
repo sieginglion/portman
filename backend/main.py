@@ -52,8 +52,14 @@ async def get_weights(
 
 @app.get('/scores')
 async def get_scores(
-    market: Literal['t', 'u'], symbol: str, end_date: str, q: int, ema7: bool = False
+    market: Literal['t', 'u'],
+    symbol: str,
+    q: int,
+    end_date: str | None = None,
+    ema7: bool = False,
 ):
+    if end_date is None:
+        end_date = str(pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date())
     return await valuation.calc_scores(market, symbol, end_date, q, ema7)
 
 
