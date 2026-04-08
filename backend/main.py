@@ -55,10 +55,10 @@ async def get_scores(
     market: Literal['t', 'u'],
     symbol: str,
     q: int,
-    end_date: str | None = None,
+    end_date: str = '',
     ema7: bool = False,
 ):
-    if end_date is None:
+    if not end_date:
         end_date = str(pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date())
     return await valuation.calc_scores(market, symbol, end_date, q, ema7)
 
