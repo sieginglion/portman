@@ -63,6 +63,13 @@ async def get_scores(
     return await valuation.calc_scores(market, symbol, end_date, q, ema7)
 
 
+@app.get('/growth')
+async def get_growth(market: Literal['t', 'u'], symbol: str):
+    df = await valuation.fetch_income_statements(market, symbol, 8)
+    r = df['revenue'].rolling(4).sum()
+    return r.iloc[-1] / r.iloc[-5] - 1
+
+
 @app.get('/prices')
 async def get_prices(
     market: Literal['c', 't', 'u'], symbol: str, n: int, ema7: bool = False

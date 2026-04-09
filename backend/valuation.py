@@ -11,24 +11,32 @@ from .shared import FMP_KEY, add_suffix
 EXTRA_Q = 1
 
 
-async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFrame:
+async def fetch_income_statements(
+    market: Literal['t', 'u'], symbol: str, limit: int
+) -> pd.DataFrame:
     params = {
         'apikey': FMP_KEY,
-        'limit': q + EXTRA_Q + 3,
+        'limit': limit,
         'period': 'quarter',
     }
     if market == 't':
         url = f'https://financialmodelingprep.com/api/v3/income-statement/{ add_suffix(symbol) }'
-        eps_col = 'epsdiluted'
     else:
         url = 'https://financialmodelingprep.com/stable/income-statement'
         params['symbol'] = symbol
-        eps_col = 'epsDiluted'
     async with AsyncClient() as client:
         data = (await client.get(url, params=params)).json()
+    if len(data) != limit:
+        raise ValueError
     df = pd.DataFrame(data)
     df = df.sort_values('date').reset_index(drop=True)
     df['date'] = pd.to_datetime(df['date']) + pd.Timedelta(days=1)
+    return df
+
+
+async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFrame:
+    df = await fetch_income_statements(market, symbol, q + EXTRA_Q + 3)
+    eps_col = 'epsdiluted' if market == 't' else 'epsDiluted'
     xps = pd.DataFrame(
         {
             'rps': (df['revenue'] / df['weightedAverageShsOutDil'])
