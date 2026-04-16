@@ -1,16 +1,16 @@
 import asyncio
 from typing import Literal
 
-import numpy as np
 import pandas as pd
 from httpx import AsyncClient
 
 from . import shared
-from .shared import FMP_KEY, add_suffix
+from .shared import FMP_KEY, add_suffix, cached
 
 EXTRA_Q = 1
 
 
+@cached(240)
 async def fetch_income_statements(
     market: Literal['t', 'u'], symbol: str, limit: int
 ) -> pd.DataFrame:
