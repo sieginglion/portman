@@ -11,9 +11,8 @@ EXTRA_Q = 1
 
 
 @cached(240)
-async def fetch_income_statements(
-    market: Literal['t', 'u'], symbol: str, limit: int
-) -> pd.DataFrame:
+async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFrame:
+    limit = q + EXTRA_Q + 3
     params = {
         'apikey': FMP_KEY,
         'limit': limit,
@@ -21,23 +20,17 @@ async def fetch_income_statements(
     }
     if market == 't':
         url = f'https://financialmodelingprep.com/api/v3/income-statement/{ add_suffix(symbol) }'
+        eps_col = 'epsdiluted'
     else:
         url = 'https://financialmodelingprep.com/stable/income-statement'
         params['symbol'] = symbol
+        eps_col = 'epsDiluted'
     async with AsyncClient() as client:
         data = (await client.get(url, params=params)).json()
     if len(data) != limit:
         raise ValueError
-    df = pd.DataFrame(data)
-    df = df.sort_values('date').reset_index(drop=True)
-    df['date'] = pd.to_datetime(df['date']) + pd.Timedelta(days=1)
-    return df
-
-
-async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFrame:
-    df = await fetch_income_statements(market, symbol, q + EXTRA_Q + 3)
-    eps_col = 'epsdiluted' if market == 't' else 'epsDiluted'
-    xps = pd.DataFrame(
+    df = pd.DataFrame(data).sort_values('date').reset_index(drop=True)
+    return pd.DataFrame(
         {
             'rps': (df['revenue'] / df['weightedAverageShsOutDil'])
             .rolling(4)
@@ -45,9 +38,8 @@ async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFr
             .to_numpy(),
             'eps': df[eps_col].rolling(4).sum().to_numpy(),
         },
-        df['date'],
+        pd.to_datetime(df['date']) + pd.Timedelta(days=1),
     ).iloc[3:]
-    return xps
 
 
 async def calc_scores(
