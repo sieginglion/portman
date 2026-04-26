@@ -12,7 +12,7 @@ EXTRA_Q = 1
 
 @cached(240)
 async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFrame:
-    limit = q + EXTRA_Q + 3
+    limit = q + 3
     params = {
         'apikey': FMP_KEY,
         'limit': limit,
@@ -47,7 +47,7 @@ async def calc_scores(
 ) -> tuple[float, float | None]:
     prices, xps = await asyncio.gather(
         shared.get_prices(market, symbol, 91 * (q + EXTRA_Q), False, ema7),
-        fetch_xps(market, symbol, q),
+        fetch_xps(market, symbol, q + EXTRA_Q),
     )
     index = pd.date_range(
         end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date(),
@@ -70,6 +70,34 @@ async def calc_scores(
         percentile_rank(df['price'] / df['rps']),
         percentile_rank(df['price'] / df['eps']) if (df['eps'] > 0).all() else None,
     )
+
+
+async def calc_pegs(market: Literal['t', 'u'], symbol: str, q: int) -> pd.Series:
+    prices, xps = await asyncio.gather(
+        shared.get_prices(market, symbol, 91 * q, False),
+        fetch_xps(market, symbol, q + EXTRA_Q + 4),
+    )
+    xps['eps_growth'] = xps['eps'].pct_change(4)
+    index = pd.date_range(
+        end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date(),
+        periods=len(prices),
+    )
+    df = (
+        pd.DataFrame({'price': prices}, index)
+        .join(xps, how='outer')
+        .ffill()
+        .tail(91 * q)
+    )
+    # if (
+    #     (len(df) != 91 * q)
+    #     or (pd.isna(df['price'].iloc[0]))
+    #     or pd.isna(df['eps'].iloc[0])
+    #     or pd.isna(df['eps_growth'].iloc[0])
+    # ):
+    #     raise ValueError
+
+    # df = df[(df['eps'] > 0) & (df['eps_growth'] > 0)]
+    return df['price'] / df['eps'] / (df['eps_growth'] * 100)
 
 
 # def avg_by_period_ends(values, ends):
