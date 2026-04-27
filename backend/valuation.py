@@ -46,7 +46,7 @@ async def calc_scores(
     market: Literal['t', 'u'], symbol: str, end_date: str, q: int, ema7: bool
 ) -> tuple[float, float | None]:
     prices, xps = await asyncio.gather(
-        shared.get_prices(market, symbol, 91 * (q + EXTRA_Q), False, ema7),
+        shared.get_prices(market, symbol, 91 * q, False, ema7),
         fetch_xps(market, symbol, q + EXTRA_Q),
     )
     index = pd.date_range(

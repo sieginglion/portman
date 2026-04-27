@@ -94,8 +94,8 @@ def cached(ttl):
 
 
 @cached(43200)
-def get_text(url: str):
-    return h.get(url, verify=False).text
+def get_text(url: str, params: dict | None = None):
+    return h.get(url, params=params, verify=False).text
 
 
 async def get_today_dividend(sess: AsyncClient, market: Literal['t', 'u'], symbol: str):
@@ -107,14 +107,15 @@ async def get_today_dividend(sess: AsyncClient, market: Literal['t', 'u'], symbo
             if to_date(Arrow(y + 1911, m, d)) == today and e[1] == symbol:
                 return float(e[7])
     else:
-        res = await sess.get(
+        text = get_text(
             'https://financialmodelingprep.com/api/v3/stock_dividend_calendar',
-            params={
+            {
+                'apikey': FMP_KEY,
                 'from': today,
                 'to': today,
             },
         )
-        for e in res.json():
+        for e in json.loads(text):
             if e['date'] == today and e['symbol'] == symbol:
                 return e['dividend']
     return 0.0

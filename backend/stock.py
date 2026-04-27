@@ -26,25 +26,34 @@ async def get_unadjusted(
 ):
     now = arrow.now(MARKET_TO_TIMEZONE[market])
     date_to_price = dict.fromkeys(gen_dates(now.shift(days=-(n + 13)), now), 0.0)
-    historical, quote = map(
-        lambda x: x.json(),
-        await asyncio.gather(
-            sess.get(
-                f'https://financialmodelingprep.com/api/v3/historical-price-full/{ add_suffix(symbol) }',
-                params={
-                    'from': min(date_to_price),
-                    'serietype': 'line',
-                },
-            ),
-            sess.get(
-                f'https://financialmodelingprep.com/api/v3/quote-short/{ add_suffix(symbol) }'
-            ),
-        ),
-    )
+    # historical, quote = map(
+    #     lambda x: x.json(),
+    #     await asyncio.gather(
+    #         sess.get(
+    #             f'https://financialmodelingprep.com/api/v3/historical-price-full/{ add_suffix(symbol) }',
+    #             params={
+    #                 'from': min(date_to_price),
+    #                 'serietype': 'line',
+    #             },
+    #         ),
+    #         sess.get(
+    #             f'https://financialmodelingprep.com/api/v3/quote-short/{ add_suffix(symbol) }'
+    #         ),
+    #     ),
+    # )
+    historical = (
+        await sess.get(
+            f'https://financialmodelingprep.com/api/v3/historical-price-full/{ add_suffix(symbol) }',
+            params={
+                'from': min(date_to_price),
+                'serietype': 'line',
+            },
+        )
+    ).json()
     for e in historical['historical']:
         if e['date'] in date_to_price:
             date_to_price[e['date']] = e['close']
-    date_to_price[max(date_to_price)] = quote[0]['price']
+    # date_to_price[max(date_to_price)] = quote[0]['price']
     try:
         return post_process(get_sorted_values(date_to_price), n, market == 't')
     except AssertionError:
