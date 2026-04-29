@@ -1,4 +1,6 @@
 import asyncio
+import json
+from pathlib import Path
 from typing import Literal
 
 import pandas as pd
@@ -8,6 +10,7 @@ from . import shared
 from .shared import FMP_KEY, add_suffix, cached
 
 EXTRA_Q = 1
+PATCH_DIR = Path('patch')
 
 
 @cached(240)
@@ -27,6 +30,15 @@ async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFr
         eps_col = 'epsDiluted'
     async with AsyncClient() as client:
         data = (await client.get(url, params=params)).json()
+    path = PATCH_DIR / f'{symbol}.json'
+    if path.exists():
+        with path.open() as f:
+            patch = json.load(f)
+        data = sorted(
+            {r['date']: r for r in data + patch}.values(),
+            key=lambda r: r['date'],
+            reverse=True,
+        )[:limit]
     if len(data) != limit:
         raise ValueError
     df = pd.DataFrame(data).sort_values('date').reset_index(drop=True)
