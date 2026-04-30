@@ -54,25 +54,49 @@ async def get_weights(
 
 @app.get('/scores')
 async def get_scores(
-    market: Literal['t', 'u'],
+    market: Literal['c', 't', 'u'],
     symbol: str,
     q: int,
     end_date: str = '',
     ema7: bool = False,
 ):
+    if market == 'c' and symbol == 'BTC':
+        return await calc_btc_score(q), None
     if not end_date:
         end_date = str(pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date())
     return await valuation.calc_scores(market, symbol, end_date, q, ema7)
 
 
 @app.get('/growths')
-async def get_growths(market: Literal['t', 'u'], symbol: str):
+async def get_growths(market: Literal['c', 't', 'u'], symbol: str):
+    if market == 'c' and symbol == 'BTC':
+        return await calc_btc_growth(), None
     xps = await valuation.fetch_xps(market, symbol, 5)
     r, e = xps['rps'], xps['eps']
     return (
         r.iloc[-1] / r.iloc[-5] - 1,
         e.iloc[-1] / e.iloc[-5] - 1 if (e > 0).all() else None,
     )
+
+
+async def get_btc_prices_and_4y_ema(n: int):
+    from .position import calc_ema, calc_k
+
+    k = calc_k(1456)
+    prices = await shared.get_prices('c', 'BTC', n + k - 1, False)
+    ema = calc_ema(prices, 2 / (1456 + 1), k)
+    return prices[-n:], ema
+
+
+async def calc_btc_growth():
+    _, ema = await get_btc_prices_and_4y_ema(365)
+    return ema[-1] / ema[0] - 1
+
+
+async def calc_btc_score(q: int):
+    prices, ema = await get_btc_prices_and_4y_ema(91 * q)
+    ratio = prices / ema
+    return (ratio < ratio[-1]).mean()
 
 
 @app.get('/pegs')
