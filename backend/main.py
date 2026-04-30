@@ -84,8 +84,7 @@ async def get_btc_prices_and_4y_ema(n: int):
 
     k = calc_k(1456)
     prices = await shared.get_prices('c', 'BTC', n + k - 1, False)
-    ema = calc_ema(prices, 2 / (1456 + 1), k)
-    return prices[-n:], ema
+    return prices[-n:], calc_ema(prices, 2 / (1456 + 1), k)
 
 
 async def calc_btc_growth():
