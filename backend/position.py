@@ -61,7 +61,7 @@ class Best(NamedTuple):
 
 
 class Position:
-    def __init__(self, market: Literal['c', 't', 'u'], symbol: str, n: int):
+    def __init__(self, market: Literal['c', 'j', 't', 'u'], symbol: str, n: int):
         self.market = market
         self.symbol = symbol
         self.n = n

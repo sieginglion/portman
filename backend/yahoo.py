@@ -15,13 +15,13 @@ from .shared import (
 
 
 async def get_unadjusted(
-    sess: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int
+    sess: AsyncClient, market: Literal['j', 't', 'u'], symbol: str, n: int
 ):
     tz = MARKET_TO_TIMEZONE[market]
     now = arrow.now(tz)
     date_to_price = dict.fromkeys(gen_dates(now.shift(days=-(n + 13)), now), 0.0)
     res = await sess.get(
-        f'https://query1.finance.yahoo.com/v7/finance/download/{ add_suffix(symbol) }',
+        f'https://query1.finance.yahoo.com/v7/finance/download/{ add_suffix(market, symbol) }',
         params={
             'events': 'history',
             'period1': int(arrow.get(min(date_to_price), tzinfo=tz).timestamp()),
@@ -40,14 +40,14 @@ async def get_unadjusted(
 
 
 async def get_dividends(
-    sess: AsyncClient, market: Literal['t', 'u'], symbol: str, n: int
+    sess: AsyncClient, market: Literal['j', 't', 'u'], symbol: str, n: int
 ):
     tz = MARKET_TO_TIMEZONE[market]
     now = arrow.now(tz)
     date_to_dividend = dict.fromkeys(gen_dates(now.shift(days=-n), now), 0.0)
     res, today = await asyncio.gather(
         sess.get(
-            f'https://query1.finance.yahoo.com/v7/finance/download/{ add_suffix(symbol) }',
+            f'https://query1.finance.yahoo.com/v7/finance/download/{ add_suffix(market, symbol) }',
             params={
                 'events': 'div',
                 'period1': int(arrow.get(min(date_to_dividend), tzinfo=tz).timestamp()),
@@ -55,7 +55,7 @@ async def get_dividends(
                 + 86400,
             },
         ),
-        get_today_dividend(sess, market, symbol),
+        get_today_dividend(market, symbol),
     )
     for l in res.text.split('\n')[1:]:
         if len(l := l.split(',')) > 1:

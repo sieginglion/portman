@@ -15,7 +15,6 @@ import numpy as np
 import pandas as pd
 from arrow.arrow import Arrow
 from diskcache import Cache
-from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
@@ -25,7 +24,12 @@ FMP_KEY = os.environ['FMP_KEY']
 FINMIND_KEY = os.environ['FINMIND_KEY']
 FROM_COINGECKO = set(os.environ['FROM_COINGECKO'].split(','))
 FROM_YAHOO = set(os.environ['FROM_YAHOO'].split(','))
-MARKET_TO_TIMEZONE = {'c': 'UTC', 't': 'Asia/Taipei', 'u': 'America/New_York'}
+MARKET_TO_TIMEZONE = {
+    'c': 'UTC',
+    'j': 'Asia/Tokyo',
+    't': 'Asia/Taipei',
+    'u': 'America/New_York',
+}
 
 CACHE = "ON_TWSE.pkl"
 URL = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2"
@@ -58,10 +62,15 @@ def gen_dates(start: Arrow, end: Arrow):
     return map(to_date, Arrow.range('day', start, end))
 
 
-def add_suffix(symbol: str):
-    if not symbol[0].isdecimal():
-        return symbol
-    return symbol + ('.TW' if symbol in ON_TWSE else '.TWO')
+def add_suffix(market: Literal['j', 't', 'u'], symbol: str):
+    return (
+        symbol
+        + {
+            'j': '.T',
+            't': '.TW' if symbol in ON_TWSE else '.TWO',
+            'u': '',
+        }[market]
+    )
 
 
 def cached(ttl):
@@ -98,7 +107,7 @@ def get_text(url: str, params: dict | None = None):
     return h.get(url, params=params, verify=False).text
 
 
-async def get_today_dividend(sess: AsyncClient, market: Literal['t', 'u'], symbol: str):
+async def get_today_dividend(market: Literal['j', 't', 'u'], symbol: str):
     today = to_date(arrow.now(MARKET_TO_TIMEZONE[market]))
     if market == 't':
         text = get_text('https://www.twse.com.tw/rwd/zh/exRight/TWT48U?response=json')
@@ -115,8 +124,9 @@ async def get_today_dividend(sess: AsyncClient, market: Literal['t', 'u'], symbo
                 'to': today,
             },
         )
+        suffixed_symbol = add_suffix(market, symbol)
         for e in json.loads(text):
-            if e['date'] == today and e['symbol'] == symbol:
+            if e['date'] == today and e['symbol'] == suffixed_symbol:
                 return e['dividend']
     return 0.0
 
@@ -155,7 +165,7 @@ def post_process(prices: Array[f8], n: int, limited: bool = False):
 
 @cached(240)
 async def get_prices(
-    market: Literal['c', 't', 'u'],
+    market: Literal['c', 'j', 't', 'u'],
     symbol: str,
     n: int,
     to_usd: bool,

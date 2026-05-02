@@ -42,7 +42,7 @@ def calc_weights(P: Array[f8], R: Array[f8], t: float = 0):
 # TODO: numpy array typing with shape
 @app.post('/weights')
 async def get_weights(
-    positions: list[tuple[Literal['c', 't', 'u'], str]], prior: list[float]
+    positions: list[tuple[Literal['c', 'j', 't', 'u'], str]], prior: list[float]
 ):
     P = np.array(
         await asyncio.gather(
@@ -54,7 +54,7 @@ async def get_weights(
 
 @app.get('/scores')
 async def get_scores(
-    market: Literal['c', 't', 'u'],
+    market: Literal['c', 'j', 't', 'u'],
     symbol: str,
     q: int,
     end_date: str = '',
@@ -68,7 +68,7 @@ async def get_scores(
 
 
 @app.get('/growths')
-async def get_growths(market: Literal['c', 't', 'u'], symbol: str):
+async def get_growths(market: Literal['c', 'j', 't', 'u'], symbol: str):
     if market == 'c' and symbol == 'BTC':
         return await calc_btc_growth(), None
     xps = await valuation.fetch_xps(market, symbol, 5)
@@ -100,7 +100,7 @@ async def calc_btc_score(q: int):
 
 @app.get('/pegs')
 async def get_pegs(
-    market: Literal['t', 'u'],
+    market: Literal['j', 't', 'u'],
     symbol: str,
     q: int,
 ):
@@ -130,14 +130,14 @@ async def get_pegs(
 
 @app.get('/prices')
 async def get_prices(
-    market: Literal['c', 't', 'u'], symbol: str, n: int, ema7: bool = False
+    market: Literal['c', 'j', 't', 'u'], symbol: str, n: int, ema7: bool = False
 ):
     return (await shared.get_prices(market, symbol, n, False, ema7)).tolist()
 
 
 @app.get('/extremum')
 async def get_extremum(
-    market: Literal['c', 't', 'u'], symbol: str, n: int, max: bool = False
+    market: Literal['c', 'j', 't', 'u'], symbol: str, n: int, max: bool = False
 ):
     ema = await shared.get_prices(market, symbol, n, True, True)
     i = ema.argmax() if max else ema.argmin()

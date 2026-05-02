@@ -14,20 +14,22 @@ PATCH_DIR = Path('patch')
 
 
 @cached(240)
-async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFrame:
+async def fetch_xps(
+    market: Literal['j', 't', 'u'], symbol: str, q: int
+) -> pd.DataFrame:
     limit = q + 3
     params = {
         'apikey': FMP_KEY,
         'limit': limit,
         'period': 'quarter',
     }
-    if market == 't':
-        url = f'https://financialmodelingprep.com/api/v3/income-statement/{ add_suffix(symbol) }'
-        eps_col = 'epsdiluted'
-    else:
+    if market == 'u':
         url = 'https://financialmodelingprep.com/stable/income-statement'
         params['symbol'] = symbol
         eps_col = 'epsDiluted'
+    else:
+        url = f'https://financialmodelingprep.com/api/v3/income-statement/{ add_suffix(market, symbol) }'
+        eps_col = 'epsdiluted'
     async with AsyncClient() as client:
         data = (await client.get(url, params=params)).json()
     path = PATCH_DIR / f'{symbol}.json'
@@ -55,7 +57,7 @@ async def fetch_xps(market: Literal['t', 'u'], symbol: str, q: int) -> pd.DataFr
 
 
 async def calc_scores(
-    market: Literal['t', 'u'], symbol: str, end_date: str, q: int, ema7: bool
+    market: Literal['j', 't', 'u'], symbol: str, end_date: str, q: int, ema7: bool
 ) -> tuple[float, float | None]:
     prices, xps = await asyncio.gather(
         shared.get_prices(market, symbol, 91 * q, False, ema7),
@@ -84,7 +86,7 @@ async def calc_scores(
     )
 
 
-async def calc_pegs(market: Literal['t', 'u'], symbol: str, q: int) -> pd.Series:
+async def calc_pegs(market: Literal['j', 't', 'u'], symbol: str, q: int) -> pd.Series:
     prices, xps = await asyncio.gather(
         shared.get_prices(market, symbol, 91 * q, False),
         fetch_xps(market, symbol, q + EXTRA_Q + 4),
