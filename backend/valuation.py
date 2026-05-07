@@ -34,10 +34,10 @@ def date_str(date: pd.Timestamp) -> str:
     return date.strftime('%Y-%m-%d')
 
 
-def quarter_end_bounds(end: pd.Timestamp, days: int = 7) -> tuple[str, str]:
+def quarter_end_bounds(end: pd.Timestamp, months: int = 1) -> tuple[str, str]:
     return (
-        date_str(end - pd.DateOffset(days=days)),
-        date_str(end + pd.DateOffset(days=days)),
+        date_str(end - pd.DateOffset(months=months)),
+        date_str(end + pd.DateOffset(months=months)),
     )
 
 
@@ -123,8 +123,8 @@ def select_sec_q4_components(
         description=annual_description,
         min_start=min_start,
         max_start=max_start,
-        min_end=date_str(end - pd.DateOffset(days=7)),
-        max_end=date_str(end + pd.DateOffset(days=7)),
+        min_end=date_str(end - pd.DateOffset(months=1)),
+        max_end=date_str(end + pd.DateOffset(months=1)),
     )
     if annual is None:
         return None, None
@@ -132,8 +132,8 @@ def select_sec_q4_components(
     annual_start = pd.Timestamp(annual['start'])
     min_end = date_str(annual_start + pd.DateOffset(months=8))
     max_end = date_str(annual_start + pd.DateOffset(months=10))
-    min_start = date_str(annual_start - pd.DateOffset(days=7))
-    max_start = date_str(annual_start + pd.DateOffset(days=7))
+    min_start = date_str(annual_start - pd.DateOffset(months=1))
+    max_start = date_str(annual_start + pd.DateOffset(months=1))
     q1_to_q3 = select_sec_datum(
         df,
         description=f'{q1_to_q3_description_prefix}{annual["start"]}',
