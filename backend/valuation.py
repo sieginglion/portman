@@ -325,7 +325,10 @@ async def fetch_xps(
             )
             data[i] = row | share_fix | eps_fix
             cleaned_diff = share_count_log_diff(data[i], eps_col)
-            logger.info(
+            logger.log(
+                'ERROR'
+                if cleaned_diff > SHARE_COUNT_DIFF_THRESHOLD
+                else 'INFO',
                 'Income statement repaired from SEC data: {} FY{} {} diff={:.4f}',
                 data[i].get('symbol', symbol),
                 data[i].get('fiscalYear'),
