@@ -345,34 +345,30 @@ async def fetch_xps(
     ).iloc[3:]
 
 
-async def calc_scores(
-    market: Literal['j', 't', 'u'], symbol: str, end_date: str, q: int, ema7: bool
-) -> tuple[float, float | None]:
+async def calc_px(market: Literal['j', 't', 'u'], symbol: str, q: int) -> pd.DataFrame:
     prices, xps = await asyncio.gather(
-        shared.get_prices(market, symbol, 91 * q, False, ema7),
+        shared.get_prices(market, symbol, 91 * q, False),
         fetch_xps(market, symbol, q + EXTRA_Q),
     )
     index = pd.date_range(
         end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date(),
         periods=len(prices),
     )
-    e = pd.Timestamp(end_date)
-    s = e - pd.Timedelta(days=91 * q - 1)
-    df = pd.DataFrame({'price': prices}, index).join(xps, how='outer').ffill().loc[s:e]
+    df = (
+        pd.DataFrame({'price': prices}, index)
+        .join(xps, how='outer')
+        .ffill()
+        .tail(len(index))
+    )
     if (
-        (len(df) != 91 * q)
+        (len(df) != len(index))
         or (pd.isna(df['price'].iloc[0]))
         or pd.isna(df['rps'].iloc[0])
     ):
         raise ValueError
-
-    def percentile_rank(s: pd.Series) -> float:
-        return (s < s.iloc[-1]).mean()
-
-    return (
-        percentile_rank(df['price'] / df['rps']),
-        percentile_rank(df['price'] / df['eps']) if (df['eps'] > 0).all() else None,
-    )
+    df['ps'] = df['price'] / df['rps']
+    df['pe'] = df['price'] / df['eps'].where(df['eps'] > 0)
+    return df[['ps', 'pe']]
 
 
 async def calc_pegs(market: Literal['j', 't', 'u'], symbol: str, q: int) -> pd.Series:

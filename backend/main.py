@@ -17,6 +17,18 @@ from . import shared, valuation
 app = fastapi.FastAPI()
 logging.basicConfig(level=logging.INFO)
 
+PERCENTILE_BANDS = np.linspace(0, 100, 9)
+PERCENTILE_BAND_COLORS = [
+    '#FF0000',
+    '#FFBF00',
+    '#80FF00',
+    '#00FF40',
+    '#00FFFF',
+    '#0040FF',
+    '#8000FF',
+    '#FF00BF',
+]
+
 
 @app.get('/content')
 async def get_content(url: str):
@@ -52,19 +64,39 @@ async def get_weights(
     return calc_weights(np.array(prior), np.log(P[:, 1:] / P[:, :-1])).tolist()
 
 
+def add_percentile_bands(ax, series: pd.Series):
+    values = series.dropna()
+    if values.empty:
+        return
+
+    levels = np.percentile(values, PERCENTILE_BANDS)
+    for lo, hi, color in zip(levels, levels[1:], PERCENTILE_BAND_COLORS):
+        ax.axhspan(lo, hi, color=color, alpha=0.4, zorder=0)
+
+    for level in levels:
+        ax.axhline(level, color='#111827', linewidth=0.8, alpha=0.35, zorder=1)
+
+
 @app.get('/scores')
 async def get_scores(
     market: Literal['c', 'j', 't', 'u'],
     symbol: str,
     q: int,
-    end_date: str = '',
-    ema7: bool = False,
 ):
     if market == 'c' and symbol == 'BTC':
         return await calc_btc_score(q), None
-    if not end_date:
-        end_date = str(pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date())
-    return await valuation.calc_scores(market, symbol, end_date, q, ema7)
+
+    df = await valuation.calc_px(market, symbol, q)
+
+    def score(s: pd.Series) -> float:
+        return (s < s.iloc[-1]).mean()
+
+    def pe_score(s: pd.Series) -> float | None:
+        if pd.isna(s.iloc[-1]) or len(s_ := s.dropna()) < 91:
+            return None
+        return score(s_)
+
+    return score(df['ps']), pe_score(df['pe'])
 
 
 @app.get('/growths')
@@ -119,6 +151,51 @@ async def get_pegs(
     ax.set_ylabel('PEG')
     ax.grid(True, axis='y', color='#e5e7eb', linewidth=0.8)
     ax.spines[['top', 'right']].set_visible(False)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png')
+    plt.close(fig)
+    return fastapi.Response(buf.getvalue(), media_type='image/png')
+
+
+@app.get('/px')
+async def get_px(
+    market: Literal['j', 't', 'u'],
+    symbol: str,
+    q: int,
+):
+    os.environ.setdefault('MPLCONFIGDIR', '/tmp/matplotlib')
+    from matplotlib import pyplot as plt
+
+    px = await valuation.calc_px(market, symbol, q)
+    ps = px['ps']
+    pe = px['pe'].dropna()
+
+    fig, axes = plt.subplots(2, 1, figsize=(8, 6), dpi=160, sharex=True)
+    ps_ax, pe_ax = axes
+
+    add_percentile_bands(ps_ax, ps)
+    ps_ax.plot(ps.index, ps, color='#2563eb', linewidth=1.5, zorder=2)
+    ps_ax.scatter(
+        ps.index[-1:], ps.iloc[-1:], s=28, color='#2563eb', linewidths=0, zorder=3
+    )
+    ps_ax.set_title(f'{symbol} historical P/S, last {q} quarters')
+    ps_ax.set_ylabel('P/S')
+    ps_ax.spines[['top', 'right']].set_visible(False)
+
+    if not pe.empty:
+        add_percentile_bands(pe_ax, pe)
+        pe_ax.plot(pe.index, pe, color='#dc2626', linewidth=1.5, zorder=2)
+        pe_ax.scatter(
+            pe.index[-1:], pe.iloc[-1:], s=28, color='#dc2626', linewidths=0, zorder=3
+        )
+
+    pe_ax.set_title(f'{symbol} historical P/E, last {q} quarters')
+    pe_ax.set_ylabel('P/E')
+    pe_ax.spines[['top', 'right']].set_visible(False)
+
     fig.autofmt_xdate()
     fig.tight_layout()
 
