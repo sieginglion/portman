@@ -891,6 +891,8 @@ async def fetch_xps(
                 quarter_dates = quarter_dates[:-1]
 
         quarter_dates = quarter_dates[-limit:]
+        if len(quarter_dates) != limit:
+            raise ValueError
         for anchor_date in quarter_dates:
             quarter = aligned_quarters[anchor_date]
             field_source_context = {}
@@ -922,10 +924,11 @@ async def fetch_xps(
             resolved_quarters[anchor_date] = resolved_quarter
     else:
         resolved_quarters = normalize_fmp_income_statement_rows(data, include_eps)
+        resolved_quarters = dict(sorted(resolved_quarters.items())[-limit:])
+        if len(resolved_quarters) != limit:
+            raise ValueError
 
     resolved_quarters = dict(sorted(resolved_quarters.items())[-limit:])
-    if len(resolved_quarters) != limit:
-        raise ValueError
 
     df = pd.DataFrame.from_dict(resolved_quarters, orient='index')
     out = {
