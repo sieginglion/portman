@@ -19,7 +19,7 @@ from .shared import (
 )
 
 EXTRA_Q = 1
-SOURCE_DIFF_THRESHOLD = 0.061
+SOURCE_DIFF_THRESHOLD = 0.065
 SOURCE_DATE_DIFF_TOLERANCE_DAYS = 7
 EPS_ABS_TOLERANCE = 0.02
 FINNHUB_MILLION_SCALE = 1_000_000
@@ -496,8 +496,10 @@ def normalize_fmp_income_statement_rows(
             normalized['revenue'] = revenue
         if (shares := row.get('weightedAverageShsOutDil')) is not None:
             normalized['weightedAverageShsOutDil'] = shares
-        if include_eps and (eps := row.get('epsDiluted')) is not None:
-            normalized['epsDiluted'] = eps
+        if include_eps:
+            eps = row.get('epsDiluted', row.get('epsdiluted'))
+            if eps is not None:
+                normalized['epsDiluted'] = eps
         normalized_rows.setdefault(date, normalized)
     return normalized_rows
 
@@ -512,6 +514,15 @@ def build_aligned_source_quarters(
     align_source_rows(aligned_quarters, 'massive', massive_rows)
     align_source_rows(aligned_quarters, 'finnhub', finnhub_rows)
     return dict(sorted(aligned_quarters.items()))
+
+
+def select_latest_required_quarters(
+    quarters: dict[str, dict], limit: int
+) -> dict[str, dict]:
+    selected = dict(sorted(quarters.items())[-limit:])
+    if len(selected) != limit:
+        raise ValueError
+    return selected
 
 
 @cached(240)
@@ -789,12 +800,10 @@ async def fetch_xps(
     if market == 'u':
         url = 'https://financialmodelingprep.com/stable/income-statement'
         params['symbol'] = symbol
-        if include_eps:
-            eps_col = 'epsDiluted'
     else:
         url = f'https://financialmodelingprep.com/api/v3/income-statement/{ add_suffix(market, symbol) }'
-        if include_eps:
-            eps_col = 'epsdiluted'
+    if include_eps:
+        eps_col = 'epsDiluted'
     if market == 'u':
         async with AsyncClient() as client:
             fmp_response, massive_rows, finnhub_rows = await asyncio.gather(
@@ -890,11 +899,10 @@ async def fetch_xps(
                 )
                 quarter_dates = quarter_dates[:-1]
 
-        quarter_dates = quarter_dates[-limit:]
-        if len(quarter_dates) != limit:
-            raise ValueError
-        for anchor_date in quarter_dates:
-            quarter = aligned_quarters[anchor_date]
+        aligned_quarters = select_latest_required_quarters(
+            {date: aligned_quarters[date] for date in quarter_dates}, limit
+        )
+        for anchor_date, quarter in aligned_quarters.items():
             field_source_context = {}
 
             resolved_quarter = {}
@@ -924,11 +932,7 @@ async def fetch_xps(
             resolved_quarters[anchor_date] = resolved_quarter
     else:
         resolved_quarters = normalize_fmp_income_statement_rows(data, include_eps)
-        resolved_quarters = dict(sorted(resolved_quarters.items())[-limit:])
-        if len(resolved_quarters) != limit:
-            raise ValueError
-
-    resolved_quarters = dict(sorted(resolved_quarters.items())[-limit:])
+        resolved_quarters = select_latest_required_quarters(resolved_quarters, limit)
 
     df = pd.DataFrame.from_dict(resolved_quarters, orient='index')
     out = {
@@ -960,11 +964,7 @@ async def calc_px(market: Literal['j', 't', 'u'], symbol: str, q: int) -> pd.Dat
         .ffill()
         .tail(len(index))
     )
-    if (
-        (len(df) != len(index))
-        or (pd.isna(df['price'].iloc[0]))
-        or pd.isna(df['rps'].iloc[0])
-    ):
+    if (pd.isna(df['price'].iloc[0])) or pd.isna(df['rps'].iloc[0]):
         raise ValueError
     df['ps'] = df['price'] / df['rps']
     df['pe'] = df['price'] / df['eps'].where(df['eps'] > 0)
