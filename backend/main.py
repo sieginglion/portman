@@ -15,7 +15,7 @@ from numpy.typing import NDArray as Array
 from . import shared, valuation
 
 app = fastapi.FastAPI()
-logging.basicConfig(level=logging.INFO)
+# logging.basicConfig(level=logging.INFO)
 
 PERCENTILE_BANDS = np.linspace(0, 100, 9)
 PERCENTILE_BAND_COLORS = [
@@ -28,6 +28,7 @@ PERCENTILE_BAND_COLORS = [
     '#8000FF',
     '#FF00BF',
 ]
+MIN_PE_HISTORY_DAYS = 91 * 4
 
 
 @app.get('/content')
@@ -92,9 +93,12 @@ async def get_scores(
         return (s < s.iloc[-1]).mean()
 
     def pe_score(s: pd.Series) -> float | None:
-        if pd.isna(s.iloc[-1]) or len(s_ := s.dropna()) < 91:
+        if pd.isna(s.iloc[-1]):
             return None
-        return score(s_)
+        valid_tail_len = int(s.notna().iloc[::-1].cumprod().sum())
+        if valid_tail_len < MIN_PE_HISTORY_DAYS:
+            return None
+        return score(s.iloc[-valid_tail_len:])
 
     return score(df['ps']), pe_score(df['pe'])
 
@@ -102,31 +106,33 @@ async def get_scores(
 @app.get('/growths')
 async def get_growths(market: Literal['c', 'j', 't', 'u'], symbol: str):
     if market == 'c' and symbol == 'BTC':
-        return await calc_btc_growth(), None
-    xps = await valuation.fetch_xps(market, symbol, 5)
-    r, e = xps['rps'], xps['eps']
-    return (
-        r.iloc[-1] / r.iloc[-5] - 1,
-        e.iloc[-1] / e.iloc[-5] - 1 if (e > 0).all() else None,
-    )
+        return await calc_btc_growth()
+    xps = await valuation.fetch_xps(market, symbol, 5, include_eps=False)
+    r = xps['rps']
+    return r.iloc[-1] / r.iloc[-5] - 1
 
 
-async def get_btc_prices_and_4y_ema(n: int):
-    from .position import calc_ema, calc_k
-
-    k = calc_k(1456)
-    prices = await shared.get_prices('c', 'BTC', n + k - 1, False)
-    return prices[-n:], calc_ema(prices, 2 / (1456 + 1), k)
+async def get_btc_prices_and_4y_sma(n: int):
+    window = 1456
+    prices = await shared.get_prices('c', 'BTC', n + window - 1, False)
+    cumsum = np.cumsum(prices, dtype=np.float64)
+    cumsum = np.concatenate(([0.0], cumsum))
+    sma = (cumsum[window:] - cumsum[:-window]) / window
+    # from .position import calc_ema, calc_k
+    # k = calc_k(1456)
+    # prices = await shared.get_prices('c', 'BTC', n + k - 1, False)
+    # return prices[-n:], calc_ema(prices, 2 / (1456 + 1), k)
+    return prices[-n:], sma
 
 
 async def calc_btc_growth():
-    _, ema = await get_btc_prices_and_4y_ema(365)
-    return ema[-1] / ema[0] - 1
+    _, sma = await get_btc_prices_and_4y_sma(365)
+    return sma[-1] / sma[0] - 1
 
 
 async def calc_btc_score(q: int):
-    prices, ema = await get_btc_prices_and_4y_ema(91 * q)
-    ratio = prices / ema
+    prices, sma = await get_btc_prices_and_4y_sma(91 * q)
+    ratio = prices / sma
     return (ratio < ratio[-1]).mean()
 
 
