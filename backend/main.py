@@ -28,7 +28,6 @@ PERCENTILE_BAND_COLORS = [
     '#8000FF',
     '#FF00BF',
 ]
-MIN_PE_HISTORY_DAYS = 91 * 4
 
 
 @app.get('/content')
@@ -93,12 +92,9 @@ async def get_scores(
         return (s < s.iloc[-1]).mean()
 
     def pe_score(s: pd.Series) -> float | None:
-        if pd.isna(s.iloc[-1]):
+        if s.isna().any():
             return None
-        valid_tail_len = int(s.notna().iloc[::-1].cumprod().sum())
-        if valid_tail_len < MIN_PE_HISTORY_DAYS:
-            return None
-        return score(s.iloc[-valid_tail_len:])
+        return score(s)
 
     return score(df['ps']), pe_score(df['pe'])
 
@@ -136,6 +132,15 @@ async def calc_btc_score(q: int):
     return (ratio < ratio[-1]).mean()
 
 
+async def calc_btc_ps(q: int) -> pd.Series:
+    prices, sma = await get_btc_prices_and_4y_sma(91 * q)
+    index = pd.date_range(
+        end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE['c']).date(),
+        periods=len(prices),
+    )
+    return pd.Series(prices / sma, index=index)
+
+
 @app.get('/pegs')
 async def get_pegs(
     market: Literal['j', 't', 'u'],
@@ -168,12 +173,41 @@ async def get_pegs(
 
 @app.get('/px')
 async def get_px(
-    market: Literal['j', 't', 'u'],
+    market: Literal['c', 'j', 't', 'u'],
     symbol: str,
     q: int,
 ):
     os.environ.setdefault('MPLCONFIGDIR', '/tmp/matplotlib')
     from matplotlib import pyplot as plt
+
+    if market == 'c':
+        if symbol != 'BTC':
+            raise fastapi.HTTPException(422, 'Only BTC is supported for crypto /px')
+
+        ps = await calc_btc_ps(q)
+
+        fig, ax = plt.subplots(1, 1, figsize=(8, 4), dpi=160)
+        add_percentile_bands(ax, ps)
+        ax.plot(ps.index, ps, color='#f97316', linewidth=1.5, zorder=2)
+        ax.scatter(
+            ps.index[-1:],
+            ps.iloc[-1:],
+            s=28,
+            color='#f97316',
+            linewidths=0,
+            zorder=3,
+        )
+        ax.set_title(f'BTC historical P/S, last {q} quarters')
+        ax.set_ylabel('P/S')
+        ax.spines[['top', 'right']].set_visible(False)
+
+        fig.autofmt_xdate()
+        fig.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png')
+        plt.close(fig)
+        return fastapi.Response(buf.getvalue(), media_type='image/png')
 
     px = await valuation.calc_px(market, symbol, q)
     ps = px['ps']

@@ -413,12 +413,8 @@ def source_abs_diff(lhs: int | float, rhs: int | float) -> float:
     return abs(lhs - rhs)
 
 
-def is_valid_source_field_value(field: str, value: int | float | None) -> bool:
-    if value is None:
-        return False
-    if field in {'revenue', 'weightedAverageShsOutDil'}:
-        return value > 0
-    return True
+def has_source_field_value(value: int | float | None) -> bool:
+    return value is not None
 
 
 def next_period_info(
@@ -454,7 +450,7 @@ def select_closest_aligned_quarter_key(
     matches = []
     for quarter_key in quarter_keys:
         delta_days = abs((pd.Timestamp(quarter_key) - source_ts).days)
-        if delta_days > SOURCE_DATE_DIFF_TOLERANCE_DAYS:
+        if delta_days >= SOURCE_DATE_DIFF_TOLERANCE_DAYS:
             continue
         matches.append((delta_days, quarter_key))
 
@@ -484,24 +480,41 @@ def align_source_rows(
             quarter.setdefault(field, {})[source_name] = row[field]
 
 
+def sanitize_source_field_value(
+    field: str, value: int | float | None
+) -> int | float | None:
+    if value is None:
+        return None
+    if field in {'revenue', 'weightedAverageShsOutDil'} and value <= 0:
+        return None
+    return value
+
+
 def normalize_fmp_income_statement_rows(
-    rows: list[dict], include_eps: bool = True
+    rows: list[dict], include_eps: bool, eps_field: str
 ) -> dict[str, dict]:
     normalized_rows = {}
     for row in rows:
-        if (date := row.get('date')) is None:
-            continue
-        normalized = {}
-        if (revenue := row.get('revenue')) is not None:
-            normalized['revenue'] = revenue
-        if (shares := row.get('weightedAverageShsOutDil')) is not None:
-            normalized['weightedAverageShsOutDil'] = shares
+        date = row['date']
+        normalized = {
+            'revenue': sanitize_source_field_value('revenue', row.get('revenue')),
+            'weightedAverageShsOutDil': sanitize_source_field_value(
+                'weightedAverageShsOutDil',
+                row.get('weightedAverageShsOutDil'),
+            ),
+        }
         if include_eps:
-            eps = row.get('epsDiluted', row.get('epsdiluted'))
-            if eps is not None:
-                normalized['epsDiluted'] = eps
+            normalized['epsDiluted'] = sanitize_source_field_value(
+                'epsDiluted', row.get(eps_field)
+            )
         normalized_rows.setdefault(date, normalized)
     return normalized_rows
+
+
+def finnhub_million(value: int | float | None) -> int | float | None:
+    if value is None:
+        return None
+    return value * FINNHUB_MILLION_SCALE
 
 
 def build_aligned_source_quarters(
@@ -525,6 +538,35 @@ def select_latest_required_quarters(
     return selected
 
 
+async def fetch_fmp_income_statements(
+    market: Literal['j', 't', 'u'],
+    symbol: str,
+    limit: int,
+    require_eps: bool = True,
+) -> dict[str, dict]:
+    params = {
+        'apikey': FMP_KEY,
+        'limit': limit,
+        'period': 'quarter',
+    }
+    if market == 'u':
+        url = 'https://financialmodelingprep.com/stable/income-statement'
+        params['symbol'] = symbol
+        eps_field = 'epsDiluted'
+    else:
+        url = (
+            f'https://financialmodelingprep.com/api/v3/income-statement/'
+            f'{add_suffix(market, symbol)}'
+        )
+        eps_field = 'epsdiluted'
+    async with AsyncClient() as client:
+        response = await client.get(url, params=params)
+        response.raise_for_status()
+    return normalize_fmp_income_statement_rows(
+        response.json(), include_eps=require_eps, eps_field=eps_field
+    )
+
+
 @cached(240)
 async def fetch_massive_income_statements(
     symbol: str, limit: int, require_eps: bool = True
@@ -543,16 +585,21 @@ async def fetch_massive_income_statements(
         )
         response.raise_for_status()
     rows = {}
-    for row in response.json().get('results', []):
-        normalized = {}
-        if (revenue := row.get('revenue')) is not None:
-            normalized['revenue'] = revenue
-        if (eps := row.get('diluted_earnings_per_share')) is not None:
-            normalized['epsDiluted'] = eps
-        if (shares := row.get('diluted_shares_outstanding')) is not None:
-            normalized['weightedAverageShsOutDil'] = shares
+    for row in response.json()['results'] or []:
+        period_end = row['period_end']
+        normalized = {
+            'revenue': sanitize_source_field_value('revenue', row.get('revenue')),
+            'weightedAverageShsOutDil': sanitize_source_field_value(
+                'weightedAverageShsOutDil',
+                row.get('diluted_shares_outstanding'),
+            ),
+        }
+        if require_eps:
+            normalized['epsDiluted'] = sanitize_source_field_value(
+                'epsDiluted', row.get('diluted_earnings_per_share')
+            )
         rows.setdefault(
-            row['period_end'],
+            period_end,
             normalized,
         )
     return rows
@@ -569,41 +616,35 @@ async def fetch_finnhub_income_statements(
         'token': FINNHUB_API_KEY,
     }
     async with AsyncClient(timeout=30) as client:
-        try:
-            response = await client.get(
-                'https://finnhub.io/api/v1/stock/financials',
-                params=params,
-            )
-            response.raise_for_status()
-        except HTTPStatusError as exc:
-            if exc.response.status_code in {401, 402, 403, 404}:
-                logger.warning(
-                    'Finnhub income statements unavailable for {} status={}; skipping source',
-                    symbol,
-                    exc.response.status_code,
-                )
-                return {}
-            raise
+        response = await client.get(
+            'https://finnhub.io/api/v1/stock/financials',
+            params=params,
+        )
+        response.raise_for_status()
 
     rows = {}
     financials = sorted(
-        response.json().get('financials', []),
-        key=lambda row: row.get('period') or row.get('date') or '',
+        response.json()['financials'] or [],
+        key=lambda row: row['period'],
         reverse=True,
     )
     if limit is not None:
         financials = financials[:limit]
     for row in financials:
-        period_end = row.get('period') or row.get('date')
-        if not period_end:
-            continue
-        normalized = {}
-        if (revenue := row.get('revenue')) is not None:
-            normalized['revenue'] = revenue * FINNHUB_MILLION_SCALE
-        if (eps := row.get('dilutedEPS')) is not None:
-            normalized['epsDiluted'] = eps
-        if (shares := row.get('dilutedAverageSharesOutstanding')) is not None:
-            normalized['weightedAverageShsOutDil'] = shares * FINNHUB_MILLION_SCALE
+        period_end = row['period']
+        normalized = {
+            'revenue': sanitize_source_field_value(
+                'revenue', finnhub_million(row.get('revenue'))
+            ),
+            'weightedAverageShsOutDil': sanitize_source_field_value(
+                'weightedAverageShsOutDil',
+                finnhub_million(row.get('dilutedAverageSharesOutstanding')),
+            ),
+        }
+        if require_eps:
+            normalized['epsDiluted'] = sanitize_source_field_value(
+                'epsDiluted', row.get('dilutedEPS')
+            )
         rows.setdefault(period_end, normalized)
     return rows
 
@@ -624,7 +665,7 @@ def select_consensus_source_value(
     values = []
     for source_name in SOURCE_ORDER:
         value = source_values.get(source_name)
-        if not is_valid_source_field_value(field, value):
+        if not has_source_field_value(value):
             continue
         values.append((source_name, value))
 
@@ -670,7 +711,7 @@ def count_usable_source_values(
 ) -> int:
     count = 0
     for source_name in SOURCE_ORDER:
-        if is_valid_source_field_value(field, source_values.get(source_name)):
+        if has_source_field_value(source_values.get(source_name)):
             count += 1
     return count
 
@@ -792,30 +833,28 @@ async def fetch_xps(
     limit = q + 3
     source_limit = q + 4
     eps_col = None
-    params = {
-        'apikey': FMP_KEY,
-        'limit': source_limit if market == 'u' else limit,
-        'period': 'quarter',
-    }
-    if market == 'u':
-        url = 'https://financialmodelingprep.com/stable/income-statement'
-        params['symbol'] = symbol
-    else:
-        url = f'https://financialmodelingprep.com/api/v3/income-statement/{ add_suffix(market, symbol) }'
     if include_eps:
         eps_col = 'epsDiluted'
     if market == 'u':
-        async with AsyncClient() as client:
-            fmp_response, massive_rows, finnhub_rows = await asyncio.gather(
-                client.get(url, params=params),
-                fetch_massive_income_statements(
-                    symbol, source_limit, require_eps=include_eps
-                ),
-                fetch_finnhub_income_statements(
-                    symbol, source_limit, require_eps=include_eps
-                ),
-                return_exceptions=True,
+        fmp_rows, massive_rows, finnhub_rows = await asyncio.gather(
+            fetch_fmp_income_statements(
+                market, symbol, source_limit, require_eps=include_eps
+            ),
+            fetch_massive_income_statements(
+                symbol, source_limit, require_eps=include_eps
+            ),
+            fetch_finnhub_income_statements(
+                symbol, source_limit, require_eps=include_eps
+            ),
+            return_exceptions=True,
+        )
+        if isinstance(fmp_rows, Exception):
+            logger.warning(
+                'FMP income statements unavailable for {}: {}; skipping source',
+                symbol,
+                fmp_rows,
             )
+            fmp_rows = {}
         if isinstance(massive_rows, Exception):
             logger.warning(
                 'Massive income statements unavailable for {}: {}; skipping source',
@@ -830,30 +869,10 @@ async def fetch_xps(
                 finnhub_rows,
             )
             finnhub_rows = {}
-        if isinstance(fmp_response, Exception):
-            logger.warning(
-                'FMP income statements unavailable for {}: {}; skipping source',
-                symbol,
-                fmp_response,
-            )
-            data = []
-        else:
-            try:
-                fmp_response.raise_for_status()
-            except HTTPStatusError as exc:
-                logger.warning(
-                    'FMP income statements unavailable for {} status={}; skipping source',
-                    symbol,
-                    exc.response.status_code,
-                )
-                data = []
-            else:
-                data = fmp_response.json()
     else:
-        async with AsyncClient() as client:
-            response = await client.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
+        fmp_rows = await fetch_fmp_income_statements(
+            market, symbol, limit, require_eps=include_eps
+        )
     # path = PATCH_DIR / f'{symbol}.json'
     # if path.exists():
     #     with path.open() as f:
@@ -865,7 +884,6 @@ async def fetch_xps(
     #     )[:limit]
     resolved_quarters = {}
     if market == 'u':
-        fmp_rows = normalize_fmp_income_statement_rows(data, include_eps)
         aligned_quarters = build_aligned_source_quarters(
             fmp_rows, massive_rows, finnhub_rows
         )
@@ -931,8 +949,7 @@ async def fetch_xps(
 
             resolved_quarters[anchor_date] = resolved_quarter
     else:
-        resolved_quarters = normalize_fmp_income_statement_rows(data, include_eps)
-        resolved_quarters = select_latest_required_quarters(resolved_quarters, limit)
+        resolved_quarters = select_latest_required_quarters(fmp_rows, limit)
 
     df = pd.DataFrame.from_dict(resolved_quarters, orient='index')
     out = {
