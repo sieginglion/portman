@@ -1,21 +1,17 @@
 import asyncio
 import math
-from pathlib import Path
 from typing import Literal
 
 import pandas as pd
-from httpx import AsyncClient, HTTPStatusError
+from httpx import AsyncClient
 from loguru import logger
-from pydantic import BaseModel
 
 from . import shared
-from .llm import llm
 from .shared import (
     FINNHUB_API_KEY,
     FMP_KEY,
     MASSIVE_API_KEY,
     add_suffix,
-    cached,
 )
 
 EXTRA_Q = 1
@@ -23,371 +19,15 @@ SOURCE_DIFF_THRESHOLD = 0.065
 SOURCE_DATE_DIFF_TOLERANCE_DAYS = 7
 EPS_ABS_TOLERANCE = 0.02
 FINNHUB_MILLION_SCALE = 1_000_000
-PATCH_DIR = Path('patch')
 SOURCE_ORDER = ('fmp', 'massive', 'finnhub')
 SOURCE_LABELS = {
     'fmp': 'FMP',
     'massive': 'Massive',
     'finnhub': 'Finnhub',
 }
-PERIOD_ORDER = ('Q1', 'Q2', 'Q3', 'Q4')
-SEC_USER_AGENT = (
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
-)
-SEC_DEDUPE_COLS = ['filed', 'val', 'start', 'end']
-SEC_ALLOWED_FORMS = {'10-Q', '10-K', '10-Q/A', '10-K/A'}
-SEC_DILUTED_SHARES_URL = (
-    'https://data.sec.gov/api/xbrl/companyconcept/'
-    'CIK{}/us-gaap/WeightedAverageNumberOfDilutedSharesOutstanding.json'
-)
-SEC_EPS_URL = (
-    'https://data.sec.gov/api/xbrl/companyconcept/'
-    'CIK{}/us-gaap/EarningsPerShareDiluted.json'
-)
-
-
-class IncomeStatementSourceFields(BaseModel):
-    revenue: int | float | None = None
-    weightedAverageShsOutDil: int | float | None = None
-    epsDiluted: float | None = None
-
-
-class IncomeStatementVerificationRequest(BaseModel):
-    symbol: str
-    date: str
-    fiscalYear: str | None = None
-    period: str | None = None
-    cik: str | None = None
-    issue: str
-    fmp_statement: IncomeStatementSourceFields | None = None
-    massive_statement: IncomeStatementSourceFields | None = None
-    finnhub_statement: IncomeStatementSourceFields | None = None
-
-
-class VerifiedIncomeStatementFields(BaseModel):
-    revenue: int | float | None = None
-    weightedAverageShsOutDil: int | float | None = None
-    epsDiluted: float | None = None
-
-
-def review_fields(
-    row: dict | None, eps_col: str, fields: list[str] | set[str] | None = None
-) -> IncomeStatementSourceFields | None:
-    if row is None:
-        return None
-    fields = set(fields or ('revenue', 'weightedAverageShsOutDil', 'epsDiluted'))
-    return IncomeStatementSourceFields(
-        revenue=row.get('revenue') if 'revenue' in fields else None,
-        weightedAverageShsOutDil=(
-            row.get('weightedAverageShsOutDil')
-            if 'weightedAverageShsOutDil' in fields
-            else None
-        ),
-        epsDiluted=row.get(eps_col) if 'epsDiluted' in fields else None,
-    )
-
-
-def date_str(date: pd.Timestamp) -> str:
-    return date.strftime('%Y-%m-%d')
-
-
-def quarter_end_bounds(end: pd.Timestamp, months: int = 1) -> tuple[str, str]:
-    return (
-        date_str(end - pd.DateOffset(months=months)),
-        date_str(end + pd.DateOffset(months=months)),
-    )
-
-
-def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
-    df = pd.DataFrame(rows)
-    df = df[df['form'].isin(SEC_ALLOWED_FORMS)]
-    if df.empty:
-        logger.warning('SEC repair skipped; no supported forms found')
-        return pd.DataFrame()
-    df = df[SEC_DEDUPE_COLS]
-    df = df.sort_values('filed', kind='mergesort')
-    df = df.drop_duplicates(['start', 'end'], keep='last')
-    return df
-
-
-def select_sec_datum(
-    df: pd.DataFrame,
-    description: str,
-    *,
-    min_start: str,
-    max_start: str,
-    min_end: str,
-    max_end: str,
-    log_errors: bool = True,
-) -> pd.Series | None:
-    matches = df
-    matches = matches[matches['start'].gt(min_start)]
-    matches = matches[matches['start'].lt(max_start)]
-    matches = matches[matches['end'].gt(min_end)]
-    matches = matches[matches['end'].lt(max_end)]
-    if matches.empty:
-        if log_errors:
-            logger.error(
-                'SEC fact lookup returned no matches: {} start=({}, {}) end=({}, {})',
-                description,
-                min_start,
-                max_start,
-                min_end,
-                max_end,
-            )
-        return None
-    if len(matches) > 1:
-        if log_errors:
-            logger.error(
-                'SEC fact lookup returned multiple matches: {} start=({}, {}) end=({}, {}) matches={}',
-                description,
-                min_start,
-                max_start,
-                min_end,
-                max_end,
-                len(matches),
-            )
-        return None
-    return matches.iloc[-1]
-
-
-def select_sec_quarter_datum(
-    df: pd.DataFrame,
-    description: str,
-    end: pd.Timestamp,
-    *,
-    log_errors: bool = True,
-) -> pd.Series | None:
-    min_start = date_str(end - pd.DateOffset(months=4))
-    max_start = date_str(end - pd.DateOffset(months=2))
-    min_end, max_end = quarter_end_bounds(end)
-    return select_sec_datum(
-        df,
-        description=description,
-        min_start=min_start,
-        max_start=max_start,
-        min_end=min_end,
-        max_end=max_end,
-        log_errors=log_errors,
-    )
-
-
-def select_sec_q4_components(
-    df: pd.DataFrame,
-    *,
-    annual_description: str,
-    q1_to_q3_description_prefix: str,
-    end: pd.Timestamp,
-) -> tuple[pd.Series | None, pd.Series | None]:
-    min_start = date_str(end - pd.DateOffset(months=13))
-    max_start = date_str(end - pd.DateOffset(months=11))
-    annual = select_sec_datum(
-        df,
-        description=annual_description,
-        min_start=min_start,
-        max_start=max_start,
-        min_end=date_str(end - pd.DateOffset(months=1)),
-        max_end=date_str(end + pd.DateOffset(months=1)),
-    )
-    if annual is None:
-        return None, None
-
-    annual_start = pd.Timestamp(annual['start'])
-    min_end = date_str(annual_start + pd.DateOffset(months=8))
-    max_end = date_str(annual_start + pd.DateOffset(months=10))
-    min_start = date_str(annual_start - pd.DateOffset(months=1))
-    max_start = date_str(annual_start + pd.DateOffset(months=1))
-    q1_to_q3 = select_sec_datum(
-        df,
-        description=f'{q1_to_q3_description_prefix}{annual["start"]}',
-        min_start=min_start,
-        max_start=max_start,
-        min_end=min_end,
-        max_end=max_end,
-    )
-    return annual, q1_to_q3
-
-
-def lookup_sec_diluted_shares(row: dict, shares: pd.DataFrame) -> int | None:
-    end = pd.Timestamp(row['date'])
-    if row['period'] != 'Q4':
-        datum = select_sec_quarter_datum(
-            shares,
-            description=f'CIK{row["cik"]} {date_str(end)}',
-            end=end,
-        )
-        if datum is None:
-            return None
-        return datum['val']
-
-    datum = select_sec_quarter_datum(
-        shares,
-        description=f'CIK{row["cik"]} Q4 exact {date_str(end)}',
-        end=end,
-        log_errors=False,
-    )
-    if datum is not None:
-        return datum['val']
-
-    annual, q1_to_q3 = select_sec_q4_components(
-        shares,
-        annual_description=f'CIK{row["cik"]} annual {date_str(end)}',
-        q1_to_q3_description_prefix=f'CIK{row["cik"]} Q1-Q3 from ',
-        end=end,
-    )
-    if annual is None or q1_to_q3 is None:
-        return None
-    return round(annual['val'] * 4 - q1_to_q3['val'] * 3)
-
-
-def find_sec_diluted_shares(row: dict, shares: pd.DataFrame) -> int:
-    if (value := lookup_sec_diluted_shares(row, shares)) is None:
-        return row['weightedAverageShsOutDil']
-    return value
-
-
-def lookup_sec_diluted_eps(row: dict, eps: pd.DataFrame, eps_col: str) -> float | None:
-    end = pd.Timestamp(row['date'])
-    if row['period'] != 'Q4':
-        datum = select_sec_quarter_datum(
-            eps,
-            description=f'CIK{row["cik"]} EPS {date_str(end)}',
-            end=end,
-        )
-        if datum is None:
-            return None
-        return datum['val']
-
-    datum = select_sec_quarter_datum(
-        eps,
-        description=f'CIK{row["cik"]} EPS Q4 exact {date_str(end)}',
-        end=end,
-        log_errors=False,
-    )
-    if datum is not None:
-        return datum['val']
-
-    annual, q1_to_q3 = select_sec_q4_components(
-        eps,
-        annual_description=f'CIK{row["cik"]} EPS annual {date_str(end)}',
-        q1_to_q3_description_prefix=f'CIK{row["cik"]} EPS Q1-Q3 from ',
-        end=end,
-    )
-    if annual is None or q1_to_q3 is None:
-        return None
-    return annual['val'] - q1_to_q3['val']
-
-
-def find_sec_diluted_eps(row: dict, eps: pd.DataFrame, eps_col: str) -> float:
-    if (value := lookup_sec_diluted_eps(row, eps, eps_col)) is None:
-        return row[eps_col]
-    return value
-
-
-@cached(43200)
-async def _fetch_sec_diluted_shares_raw(cik: int | str) -> dict:
-    async with AsyncClient(headers={'User-Agent': SEC_USER_AGENT}) as client:
-        response = await client.get(
-            SEC_DILUTED_SHARES_URL.format(cik),
-        )
-        response.raise_for_status()
-        return response.json()
-
-
-async def fetch_sec_diluted_shares(cik: int | str) -> pd.DataFrame:
-    try:
-        data = await _fetch_sec_diluted_shares_raw(cik)
-    except HTTPStatusError as exc:
-        if exc.response.status_code == 404:
-            logger.error(
-                'SEC diluted-share concept not found (404); keeping FMP value for CIK {}',
-                cik,
-            )
-            return pd.DataFrame()
-        logger.error(
-            'SEC diluted-share fetch failed for CIK {} status={}; aborting',
-            cik,
-            exc.response.status_code,
-        )
-        raise
-    unit_rows = data['units']['shares']
-    if len(unit_rows) == 0:
-        logger.error(
-            'SEC diluted-share response had empty units["shares"] data; skipping CIK {}',
-            cik,
-        )
-        return pd.DataFrame()
-    return dedupe_sec_rows(unit_rows)
-
-
-@cached(43200)
-async def _fetch_sec_eps_raw(cik: int | str) -> dict:
-    async with AsyncClient(headers={'User-Agent': SEC_USER_AGENT}) as client:
-        response = await client.get(
-            SEC_EPS_URL.format(cik),
-        )
-        response.raise_for_status()
-        return response.json()
-
-
-async def fetch_sec_eps(cik: int | str) -> pd.DataFrame:
-    try:
-        data = await _fetch_sec_eps_raw(cik)
-    except HTTPStatusError as exc:
-        if exc.response.status_code == 404:
-            logger.error(
-                'SEC diluted EPS concept not found (404); keeping FMP value for CIK {}',
-                cik,
-            )
-            return pd.DataFrame()
-        logger.error(
-            'SEC diluted EPS fetch failed for CIK {} status={}; aborting',
-            cik,
-            exc.response.status_code,
-        )
-        raise
-    unit_rows = data['units']['USD/shares']
-    if len(unit_rows) == 0:
-        logger.error(
-            'SEC diluted EPS response had empty units["USD/shares"] data; skipping CIK {}',
-            cik,
-        )
-        return pd.DataFrame()
-    return dedupe_sec_rows(unit_rows)
-
-
-# TODO
-def share_count_log_diff(row: dict, eps_col: str) -> float:
-    eps = row[eps_col]
-    shs = row['weightedAverageShsOutDil']
-    net_income = row['netIncome']
-    if not all(map(math.isfinite, (net_income, eps, shs))):
-        return math.inf
-    if eps == 0 or shs == 0:
-        return math.inf
-    ratio = net_income / eps / shs
-    if ratio <= 0:
-        return math.inf
-    return abs(math.log(ratio))
-
-
-def maybe_float(value: object) -> float | None:
-    try:
-        value = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(value):
-        return None
-    return value
-
-
-def first_numeric(row: dict, *keys: str) -> float | None:
-    for key in keys:
-        value = maybe_float(row.get(key))
-        if value is not None:
-            return value
-    return None
+BASE_XPS_FIELDS = ('revenue', 'weightedAverageShsOutDil')
+EPS_XPS_FIELD = 'epsDiluted'
+ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
 
 
 def source_log_diff(lhs: int | float, rhs: int | float) -> float:
@@ -415,32 +55,6 @@ def source_abs_diff(lhs: int | float, rhs: int | float) -> float:
 
 def has_source_field_value(value: int | float | None) -> bool:
     return value is not None
-
-
-def next_period_info(
-    period: str, fiscal_year: str | int | None
-) -> tuple[str, str] | None:
-    if period not in PERIOD_ORDER or fiscal_year is None:
-        return None
-    fiscal_year_int = int(fiscal_year)
-    index = PERIOD_ORDER.index(period)
-    next_period = PERIOD_ORDER[(index + 1) % len(PERIOD_ORDER)]
-    if period == 'Q4':
-        fiscal_year_int += 1
-    return next_period, str(fiscal_year_int)
-
-
-def prev_period_info(
-    period: str, fiscal_year: str | int | None
-) -> tuple[str, str] | None:
-    if period not in PERIOD_ORDER or fiscal_year is None:
-        return None
-    fiscal_year_int = int(fiscal_year)
-    index = PERIOD_ORDER.index(period)
-    prev_period = PERIOD_ORDER[(index - 1) % len(PERIOD_ORDER)]
-    if period == 'Q1':
-        fiscal_year_int -= 1
-    return prev_period, str(fiscal_year_int)
 
 
 def select_closest_aligned_quarter_key(
@@ -474,7 +88,7 @@ def align_source_rows(
             quarter_key = source_date
             aligned_quarters[quarter_key] = {}
         quarter = aligned_quarters[quarter_key]
-        for field in ('revenue', 'weightedAverageShsOutDil', 'epsDiluted'):
+        for field in ALL_XPS_FIELDS:
             if field not in row:
                 continue
             quarter.setdefault(field, {})[source_name] = row[field]
@@ -490,31 +104,47 @@ def sanitize_source_field_value(
     return value
 
 
+def normalize_source_row(
+    row: dict,
+    field_map: dict[str, str],
+    include_eps: bool,
+    value_transform=lambda field, value: value,
+) -> dict[str, int | float | None]:
+    return {
+        field: sanitize_source_field_value(
+            field,
+            value_transform(field, row.get(source_field)),
+        )
+        for field, source_field in field_map.items()
+        if include_eps or field != EPS_XPS_FIELD
+    }
+
+
 def normalize_fmp_income_statement_rows(
     rows: list[dict], include_eps: bool, eps_field: str
 ) -> dict[str, dict]:
-    normalized_rows = {}
-    for row in rows:
-        date = row['date']
-        normalized = {
-            'revenue': sanitize_source_field_value('revenue', row.get('revenue')),
-            'weightedAverageShsOutDil': sanitize_source_field_value(
-                'weightedAverageShsOutDil',
-                row.get('weightedAverageShsOutDil'),
-            ),
-        }
-        if include_eps:
-            normalized['epsDiluted'] = sanitize_source_field_value(
-                'epsDiluted', row.get(eps_field)
-            )
-        normalized_rows.setdefault(date, normalized)
-    return normalized_rows
+    field_map = {
+        'revenue': 'revenue',
+        'weightedAverageShsOutDil': 'weightedAverageShsOutDil',
+        EPS_XPS_FIELD: eps_field,
+    }
+    return {
+        row['date']: normalize_source_row(row, field_map, include_eps) for row in rows
+    }
 
 
 def finnhub_million(value: int | float | None) -> int | float | None:
     if value is None:
         return None
     return value * FINNHUB_MILLION_SCALE
+
+
+def normalize_finnhub_field_value(
+    field: str, value: int | float | None
+) -> int | float | None:
+    if field in BASE_XPS_FIELDS:
+        return finnhub_million(value)
+    return value
 
 
 def build_aligned_source_quarters(
@@ -536,6 +166,10 @@ def select_latest_required_quarters(
     if len(selected) != limit:
         raise ValueError
     return selected
+
+
+def required_xps_fields(include_eps: bool) -> list[str]:
+    return [*BASE_XPS_FIELDS, *((EPS_XPS_FIELD,) if include_eps else ())]
 
 
 async def fetch_fmp_income_statements(
@@ -567,7 +201,6 @@ async def fetch_fmp_income_statements(
     )
 
 
-@cached(240)
 async def fetch_massive_income_statements(
     symbol: str, limit: int, require_eps: bool = True
 ) -> dict[str, dict]:
@@ -585,27 +218,17 @@ async def fetch_massive_income_statements(
         )
         response.raise_for_status()
     rows = {}
+    field_map = {
+        'revenue': 'revenue',
+        'weightedAverageShsOutDil': 'diluted_shares_outstanding',
+        EPS_XPS_FIELD: 'diluted_earnings_per_share',
+    }
     for row in response.json()['results'] or []:
         period_end = row['period_end']
-        normalized = {
-            'revenue': sanitize_source_field_value('revenue', row.get('revenue')),
-            'weightedAverageShsOutDil': sanitize_source_field_value(
-                'weightedAverageShsOutDil',
-                row.get('diluted_shares_outstanding'),
-            ),
-        }
-        if require_eps:
-            normalized['epsDiluted'] = sanitize_source_field_value(
-                'epsDiluted', row.get('diluted_earnings_per_share')
-            )
-        rows.setdefault(
-            period_end,
-            normalized,
-        )
+        rows[period_end] = normalize_source_row(row, field_map, require_eps)
     return rows
 
 
-@cached(240)
 async def fetch_finnhub_income_statements(
     symbol: str, limit: int | None = None, require_eps: bool = True
 ) -> dict[str, dict]:
@@ -623,6 +246,11 @@ async def fetch_finnhub_income_statements(
         response.raise_for_status()
 
     rows = {}
+    field_map = {
+        'revenue': 'revenue',
+        'weightedAverageShsOutDil': 'dilutedAverageSharesOutstanding',
+        EPS_XPS_FIELD: 'dilutedEPS',
+    }
     financials = sorted(
         response.json()['financials'] or [],
         key=lambda row: row['period'],
@@ -632,20 +260,12 @@ async def fetch_finnhub_income_statements(
         financials = financials[:limit]
     for row in financials:
         period_end = row['period']
-        normalized = {
-            'revenue': sanitize_source_field_value(
-                'revenue', finnhub_million(row.get('revenue'))
-            ),
-            'weightedAverageShsOutDil': sanitize_source_field_value(
-                'weightedAverageShsOutDil',
-                finnhub_million(row.get('dilutedAverageSharesOutstanding')),
-            ),
-        }
-        if require_eps:
-            normalized['epsDiluted'] = sanitize_source_field_value(
-                'epsDiluted', row.get('dilutedEPS')
-            )
-        rows.setdefault(period_end, normalized)
+        rows[period_end] = normalize_source_row(
+            row,
+            field_map,
+            require_eps,
+            value_transform=normalize_finnhub_field_value,
+        )
     return rows
 
 
@@ -668,9 +288,6 @@ def select_consensus_source_value(
         if not has_source_field_value(value):
             continue
         values.append((source_name, value))
-
-    if len(values) < 2:
-        return None, None
 
     passing_pairs = []
     for i, (lhs_name, lhs_value) in enumerate(values):
@@ -706,26 +323,11 @@ def select_consensus_source_value(
     return None, None
 
 
-def count_usable_source_values(
-    field: str, source_values: dict[str, int | float | None]
-) -> int:
-    count = 0
-    for source_name in SOURCE_ORDER:
-        if has_source_field_value(source_values.get(source_name)):
-            count += 1
-    return count
-
-
-def format_source_field_details(
-    field: str,
-    source_values: dict[str, int | float | None],
-    quarter_key: str,
-) -> str:
-    details = []
-    for source_name in SOURCE_ORDER:
-        value = source_values.get(source_name)
-        details.append(f'{SOURCE_LABELS[source_name]}[{quarter_key}]={value}')
-    return f'{field}: ' + ', '.join(details)
+def count_usable_source_values(source_values: dict[str, int | float | None]) -> int:
+    return sum(
+        has_source_field_value(source_values.get(source_name))
+        for source_name in SOURCE_ORDER
+    )
 
 
 def format_source_log_value(value: int | float | None) -> str:
@@ -753,204 +355,140 @@ def format_source_field_block(
     return '\n'.join(lines)
 
 
-@llm
-async def verify_income_statement_with_agent(
-    statement: IncomeStatementVerificationRequest,
-) -> VerifiedIncomeStatementFields:
-    """
-    Verify all fields for the exact symbol, fiscal year, and period. FMP,
-    Massive, and Finnhub may all be wrong. May use authoritative financial
-    news sources. Return corrected values only for fields that are incorrect.
-    """
-    ...
+async def fetch_us_income_statement_sources(
+    symbol: str, limit: int, include_eps: bool
+) -> tuple[dict[str, dict], dict[str, dict], dict[str, dict]]:
+    source_rows = await asyncio.gather(
+        fetch_fmp_income_statements('u', symbol, limit, require_eps=include_eps),
+        fetch_massive_income_statements(symbol, limit, require_eps=include_eps),
+        fetch_finnhub_income_statements(symbol, limit, require_eps=include_eps),
+        return_exceptions=True,
+    )
+    resolved_rows = []
+    for source_name, rows in zip(SOURCE_ORDER, source_rows, strict=True):
+        if isinstance(rows, Exception):
+            logger.warning(
+                '{} income statements unavailable for {}: {}; skipping source',
+                SOURCE_LABELS[source_name],
+                symbol,
+                rows,
+            )
+            rows = {}
+        resolved_rows.append(rows)
+    return tuple(resolved_rows)
 
 
-# TODO
-async def verify_income_statement_diluted_shares(
-    row: dict,
-) -> dict[str, int | float]:
-    data = await fetch_sec_diluted_shares(row['cik'])
-    if data.empty:
-        return {'weightedAverageShsOutDil': row['weightedAverageShsOutDil']}
-    return {'weightedAverageShsOutDil': find_sec_diluted_shares(row, data)}
+def drop_incomplete_latest_us_quarter(
+    symbol: str,
+    aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
+    required_fields: list[str],
+) -> dict[str, dict[str, dict[str, int | float | None]]]:
+    quarter_dates = list(aligned_quarters)
+    if not quarter_dates:
+        return aligned_quarters
 
+    latest_date = quarter_dates[-1]
+    latest_quarter = aligned_quarters[latest_date]
+    latest_field_source_context = {
+        field: latest_quarter.get(field, {}) for field in required_fields
+    }
+    latest_missing_usable_fields = [
+        field
+        for field, source_values in latest_field_source_context.items()
+        if count_usable_source_values(source_values) < 2
+    ]
 
-async def verify_income_statement_eps(
-    row: dict, eps_col: str
-) -> dict[str, int | float]:
-    data = await fetch_sec_eps(row['cik'])
-    if data.empty:
-        return {eps_col: row[eps_col]}
-    return {eps_col: find_sec_diluted_eps(row, data, eps_col)}
+    if not latest_missing_usable_fields:
+        return aligned_quarters
 
-
-async def maybe_patch_row_from_sec(
-    row: dict, eps_col: str, mismatch_fields: list[str]
-) -> tuple[dict, set[str]]:
-    if (
-        row.get('reportedCurrency') != 'USD'
-        or row.get('cik') is None
-        or row.get('period') is None
-    ):
-        return row, set()
-
-    patched = dict(row)
-    resolved_fields = set()
-    sec_tasks = []
-    if 'weightedAverageShsOutDil' in mismatch_fields:
-        sec_tasks.append(
-            ('weightedAverageShsOutDil', fetch_sec_diluted_shares(row['cik']))
+    mismatch_blocks = [
+        format_source_field_block(
+            field, latest_field_source_context[field], latest_date
         )
-    if 'epsDiluted' in mismatch_fields:
-        sec_tasks.append(('epsDiluted', fetch_sec_eps(row['cik'])))
-    if not sec_tasks:
-        return patched, resolved_fields
+        for field in required_fields
+        if field in latest_missing_usable_fields
+    ]
+    logger.warning(
+        'Dropping latest {} quarter {}: fewer than 2 usable sources\n{}',
+        symbol,
+        latest_date,
+        '\n'.join(mismatch_blocks),
+    )
+    return {date: aligned_quarters[date] for date in quarter_dates[:-1]}
 
-    sec_results = await asyncio.gather(*(task for _, task in sec_tasks))
-    for field, data in zip((field for field, _ in sec_tasks), sec_results):
-        if data.empty:
+
+def resolve_us_quarter_consensus(
+    symbol: str,
+    anchor_date: str,
+    quarter: dict[str, dict[str, int | float | None]],
+    required_fields: list[str],
+) -> dict[str, int | float | None]:
+    resolved_quarter = {}
+    for field in required_fields:
+        source_values = quarter.get(field, {})
+        accepted_value, consensus_sources = select_consensus_source_value(
+            field, source_values
+        )
+        if consensus_sources is not None:
+            resolved_quarter[field] = accepted_value
             continue
-        if field == 'weightedAverageShsOutDil':
-            value = lookup_sec_diluted_shares(patched, data)
-            if value is None:
-                continue
-            patched['weightedAverageShsOutDil'] = value
-            resolved_fields.add(field)
-        else:
-            value = lookup_sec_diluted_eps(patched, data, eps_col)
-            if value is None:
-                continue
-            patched[eps_col] = value
-            resolved_fields.add(field)
-
-    return patched, resolved_fields
-
-
-# @cached(240)
-async def fetch_xps(
-    market: Literal['j', 't', 'u'], symbol: str, q: int, include_eps: bool = True
-) -> pd.DataFrame:
-    limit = q + 3
-    source_limit = q + 4
-    eps_col = None
-    if include_eps:
-        eps_col = 'epsDiluted'
-    if market == 'u':
-        fmp_rows, massive_rows, finnhub_rows = await asyncio.gather(
-            fetch_fmp_income_statements(
-                market, symbol, source_limit, require_eps=include_eps
-            ),
-            fetch_massive_income_statements(
-                symbol, source_limit, require_eps=include_eps
-            ),
-            fetch_finnhub_income_statements(
-                symbol, source_limit, require_eps=include_eps
-            ),
-            return_exceptions=True,
+        logger.warning(
+            'Aborting {} quarter {}: no consensus\n{}',
+            symbol,
+            anchor_date,
+            format_source_field_block(field, source_values, anchor_date),
         )
-        if isinstance(fmp_rows, Exception):
-            logger.warning(
-                'FMP income statements unavailable for {}: {}; skipping source',
-                symbol,
-                fmp_rows,
-            )
-            fmp_rows = {}
-        if isinstance(massive_rows, Exception):
-            logger.warning(
-                'Massive income statements unavailable for {}: {}; skipping source',
-                symbol,
-                massive_rows,
-            )
-            massive_rows = {}
-        if isinstance(finnhub_rows, Exception):
-            logger.warning(
-                'Finnhub income statements unavailable for {}: {}; skipping source',
-                symbol,
-                finnhub_rows,
-            )
-            finnhub_rows = {}
-    else:
+        raise ValueError(f'no consensus for {symbol} {anchor_date} field={field}')
+    return resolved_quarter
+
+
+def resolve_us_income_statement_quarters(
+    symbol: str,
+    fmp_rows: dict[str, dict],
+    massive_rows: dict[str, dict],
+    finnhub_rows: dict[str, dict],
+    limit: int,
+    include_eps: bool,
+) -> dict[str, dict[str, int | float | None]]:
+    required_fields = required_xps_fields(include_eps)
+    aligned_quarters = build_aligned_source_quarters(
+        fmp_rows, massive_rows, finnhub_rows
+    )
+    aligned_quarters = drop_incomplete_latest_us_quarter(
+        symbol, aligned_quarters, required_fields
+    )
+    aligned_quarters = select_latest_required_quarters(aligned_quarters, limit)
+    return {
+        anchor_date: resolve_us_quarter_consensus(
+            symbol, anchor_date, quarter, required_fields
+        )
+        for anchor_date, quarter in aligned_quarters.items()
+    }
+
+
+async def fetch_resolved_income_statement_quarters(
+    market: Literal['j', 't', 'u'],
+    symbol: str,
+    limit: int,
+    include_eps: bool,
+) -> dict[str, dict[str, int | float | None]]:
+    if market != 'u':
         fmp_rows = await fetch_fmp_income_statements(
             market, symbol, limit, require_eps=include_eps
         )
-    # path = PATCH_DIR / f'{symbol}.json'
-    # if path.exists():
-    #     with path.open() as f:
-    #         patch = json.load(f)
-    #     data = sorted(
-    #         {r['date']: r for r in data + patch}.values(),
-    #         key=lambda r: r['date'],
-    #         reverse=True,
-    #     )[:limit]
-    resolved_quarters = {}
-    if market == 'u':
-        aligned_quarters = build_aligned_source_quarters(
-            fmp_rows, massive_rows, finnhub_rows
-        )
-        quarter_dates = list(aligned_quarters)
-        mismatch_fields = ['revenue', 'weightedAverageShsOutDil']
-        if include_eps:
-            mismatch_fields.append('epsDiluted')
-        if quarter_dates:
-            latest_date = quarter_dates[-1]
-            latest_quarter = aligned_quarters[latest_date]
-            latest_field_source_context = {}
-            latest_missing_usable_fields = []
-            for field in mismatch_fields:
-                source_values = latest_quarter.get(field, {})
-                latest_field_source_context[field] = source_values
-                if count_usable_source_values(field, source_values) < 2:
-                    latest_missing_usable_fields.append(field)
-            if latest_missing_usable_fields:
-                mismatch_blocks = [
-                    format_source_field_block(
-                        field, latest_field_source_context[field], latest_date
-                    )
-                    for field in mismatch_fields
-                    if field in latest_missing_usable_fields
-                ]
-                logger.warning(
-                    'Dropping latest {} quarter {}: fewer than 2 usable sources\n{}',
-                    symbol,
-                    latest_date,
-                    '\n'.join(mismatch_blocks),
-                )
-                quarter_dates = quarter_dates[:-1]
+        return select_latest_required_quarters(fmp_rows, limit)
 
-        aligned_quarters = select_latest_required_quarters(
-            {date: aligned_quarters[date] for date in quarter_dates}, limit
-        )
-        for anchor_date, quarter in aligned_quarters.items():
-            field_source_context = {}
+    source_rows = await fetch_us_income_statement_sources(
+        symbol, limit + 1, include_eps
+    )
+    return resolve_us_income_statement_quarters(
+        symbol, *source_rows, limit, include_eps
+    )
 
-            resolved_quarter = {}
-            for field in mismatch_fields:
-                source_values = field_source_context.get(field)
-                if source_values is None:
-                    source_values = quarter.get(field, {})
-                    field_source_context[field] = source_values
-                accepted_value, consensus_sources = select_consensus_source_value(
-                    field, source_values
-                )
-                if consensus_sources is not None:
-                    resolved_quarter[field] = accepted_value
-                    continue
-                logger.warning(
-                    'Aborting {} quarter {}: no consensus\n{}',
-                    symbol,
-                    anchor_date,
-                    format_source_field_block(
-                        field, field_source_context[field], anchor_date
-                    ),
-                )
-                raise ValueError(
-                    f'no consensus for {symbol} {anchor_date} field={field}'
-                )
 
-            resolved_quarters[anchor_date] = resolved_quarter
-    else:
-        resolved_quarters = select_latest_required_quarters(fmp_rows, limit)
-
+def build_xps_frame(
+    resolved_quarters: dict[str, dict[str, int | float | None]], include_eps: bool
+) -> pd.DataFrame:
     df = pd.DataFrame.from_dict(resolved_quarters, orient='index')
     out = {
         'rps': (df['revenue'] / df['weightedAverageShsOutDil'])
@@ -959,11 +497,21 @@ async def fetch_xps(
         .to_numpy()
     }
     if include_eps:
-        out['eps'] = df[eps_col].rolling(4).sum().to_numpy()
+        out['eps'] = df['epsDiluted'].rolling(4).sum().to_numpy()
     return pd.DataFrame(
         out,
         pd.to_datetime(df.index) + pd.Timedelta(days=1),
     ).iloc[3:]
+
+
+async def fetch_xps(
+    market: Literal['j', 't', 'u'], symbol: str, q: int, include_eps: bool = True
+) -> pd.DataFrame:
+    limit = q + 3
+    resolved_quarters = await fetch_resolved_income_statement_quarters(
+        market, symbol, limit, include_eps
+    )
+    return build_xps_frame(resolved_quarters, include_eps)
 
 
 async def calc_px(market: Literal['j', 't', 'u'], symbol: str, q: int) -> pd.DataFrame:
