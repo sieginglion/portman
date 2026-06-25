@@ -24,6 +24,7 @@ FMP_KEY = os.environ['FMP_KEY']
 FINMIND_KEY = os.environ['FINMIND_KEY']
 MASSIVE_API_KEY = os.environ['MASSIVE_API_KEY']
 FINNHUB_API_KEY = os.environ['FINNHUB_API_KEY']
+EODHD_API_KEY = os.environ['EODHD_API_KEY']
 FROM_COINGECKO = set(os.environ['FROM_COINGECKO'].split(','))
 FROM_YAHOO = set(os.environ['FROM_YAHOO'].split(','))
 MARKET_TO_TIMEZONE = {

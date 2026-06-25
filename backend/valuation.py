@@ -8,6 +8,8 @@ from loguru import logger
 
 from . import shared
 from .shared import (
+    EODHD_API_KEY,
+    FINMIND_KEY,
     FINNHUB_API_KEY,
     FMP_KEY,
     MASSIVE_API_KEY,
@@ -20,11 +22,12 @@ SOURCE_DIFF_THRESHOLD = 0.065
 SOURCE_DATE_DIFF_TOLERANCE_DAYS = 7
 EPS_ABS_TOLERANCE = 0.02
 FINNHUB_MILLION_SCALE = 1_000_000
-BASE_SOURCE_ORDER = ('fmp', 'massive', 'finnhub')
+BASE_SOURCE_ORDER = ('fmp', 'massive', 'eodhd', 'finnhub')
 SOURCE_ORDER = (*BASE_SOURCE_ORDER, 'sec')
 SOURCE_LABELS = {
     'fmp': 'FMP',
     'massive': 'Massive',
+    'eodhd': 'EODHD',
     'finnhub': 'Finnhub',
     'sec': 'SEC',
 }
@@ -38,6 +41,11 @@ SEC_USER_AGENT = (
 SEC_COMPANY_CONCEPT_URL = (
     'https://data.sec.gov/api/xbrl/companyconcept/CIK{}/us-gaap/{}.json'
 )
+FINMIND_API_URL = 'https://api.finmindtrade.com/api/v4/data'
+EODHD_FUNDAMENTALS_URL = 'https://eodhd.com/api/v1.1/fundamentals/{}'
+FINMIND_TAIWAN_QUARTER_BUFFER = 2
+FMP_TAIWAN_QUARTER_BUFFER = 1
+FINMIND_TAIWAN_SHARE_PAR_VALUE = 10
 SEC_DEDUPE_COLS = ['filed', 'val', 'start', 'end']
 SEC_ALLOWED_FORMS = {'10-Q', '10-K', '10-Q/A', '10-K/A'}
 SEC_FIELD_CONCEPTS = {
@@ -76,7 +84,7 @@ def source_abs_diff(lhs: int | float, rhs: int | float) -> float:
 
 
 def has_source_field_value(value: int | float | None) -> bool:
-    return value is not None
+    return value is not None and not pd.isna(value)
 
 
 def select_closest_aligned_quarter_key(
@@ -119,7 +127,7 @@ def align_source_rows(
 def sanitize_source_field_value(
     field: str, value: int | float | None
 ) -> int | float | None:
-    if value is None:
+    if value is None or pd.isna(value):
         return None
     if field in {'revenue', 'weightedAverageShsOutDil'} and value <= 0:
         return None
@@ -176,6 +184,18 @@ def finnhub_million(value: int | float | None) -> int | float | None:
     return value * FINNHUB_MILLION_SCALE
 
 
+def to_source_number(value: object) -> int | float | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip() == '':
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return int(number) if number.is_integer() else number
+
+
 def normalize_finnhub_field_value(
     field: str, value: int | float | None
 ) -> int | float | None:
@@ -184,14 +204,204 @@ def normalize_finnhub_field_value(
     return value
 
 
+def select_eodhd_balance_sheet_row(
+    income_date: str, balance_sheet: dict[str, dict]
+) -> dict | None:
+    row = balance_sheet.get(income_date)
+    if isinstance(row, dict):
+        return row
+
+    aligned_date = select_closest_aligned_quarter_key(
+        income_date, list(balance_sheet)
+    )
+    if aligned_date is None:
+        return None
+    row = balance_sheet.get(aligned_date)
+    return row if isinstance(row, dict) else None
+
+
+def finmind_taiwan_start_date(
+    limit: int, quarter_buffer: int = FINMIND_TAIWAN_QUARTER_BUFFER
+) -> str:
+    quarter_count = limit + quarter_buffer
+    start = pd.Timestamp.now(
+        tz=shared.MARKET_TO_TIMEZONE['t']
+    ).normalize() - pd.DateOffset(months=3 * quarter_count)
+    return date_str(start.tz_localize(None))
+
+
+def pivot_finmind_taiwan_rows(rows: list[dict]) -> pd.DataFrame:
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return pd.DataFrame()
+    df = df.dropna(subset=['date', 'type', 'value'])
+    if df.empty:
+        return pd.DataFrame()
+    df['value'] = pd.to_numeric(df['value'], errors='coerce')
+    df = df.dropna(subset=['value'])
+    return df.pivot_table(
+        index='date',
+        columns='type',
+        values='value',
+        aggfunc='last',
+    ).sort_index()
+
+
+def normalize_finmind_taiwan_income_statement_rows(
+    financial_statement_rows: list[dict],
+    balance_sheet_rows: list[dict],
+    *,
+    include_eps: bool,
+) -> dict[str, dict]:
+    financial_statement = pivot_finmind_taiwan_rows(financial_statement_rows)
+    balance_sheet = pivot_finmind_taiwan_rows(balance_sheet_rows)
+    if financial_statement.empty or balance_sheet.empty:
+        return {}
+
+    required_financial_statement_fields = ['Revenue']
+    if include_eps:
+        required_financial_statement_fields.append('EPS')
+    missing_financial_statement_fields = [
+        field for field in required_financial_statement_fields
+        if field not in financial_statement
+    ]
+    if missing_financial_statement_fields:
+        logger.warning(
+            'FinMind Taiwan financial statement data missing fields {}; skipping rows',
+            missing_financial_statement_fields,
+        )
+        return {}
+    if 'OrdinaryShare' not in balance_sheet:
+        logger.warning(
+            'FinMind Taiwan balance sheet data missing OrdinaryShare; skipping rows'
+        )
+        balance_sheet = pd.DataFrame(index=financial_statement.index)
+        balance_sheet['OrdinaryShare'] = None
+
+    df = financial_statement[required_financial_statement_fields].join(
+        balance_sheet[['OrdinaryShare']], how='outer'
+    )
+    df = df.dropna(subset=required_financial_statement_fields, how='all')
+
+    normalized_rows = {}
+    for date, row in df.iterrows():
+        normalized_row = {
+            'revenue': sanitize_source_field_value('revenue', row['Revenue']),
+            'weightedAverageShsOutDil': sanitize_source_field_value(
+                'weightedAverageShsOutDil',
+                row['OrdinaryShare'] / FINMIND_TAIWAN_SHARE_PAR_VALUE,
+            ),
+        }
+        if include_eps:
+            normalized_row[EPS_XPS_FIELD] = sanitize_source_field_value(
+                EPS_XPS_FIELD, row['EPS']
+            )
+        normalized_rows[date] = normalized_row
+    return normalized_rows
+
+
+def merge_preferred_xps_rows(
+    baseline_rows: dict[str, dict],
+    preferred_rows: dict[str, dict],
+) -> None:
+    for preferred_date, preferred_row in preferred_rows.items():
+        baseline_date = select_closest_aligned_quarter_key(
+            preferred_date, list(baseline_rows)
+        )
+        if baseline_date is None:
+            continue
+        baseline_row = baseline_rows[baseline_date]
+        for field in ALL_XPS_FIELDS:
+            value = preferred_row.get(field)
+            if has_source_field_value(value):
+                baseline_row[field] = value
+
+
+def row_has_required_xps_fields(row: dict, required_fields: list[str]) -> bool:
+    return all(has_source_field_value(row.get(field)) for field in required_fields)
+
+
+def drop_incomplete_latest_quarter(
+    rows: dict[str, dict], required_fields: list[str]
+) -> dict[str, dict]:
+    dates = sorted(rows)
+    if not dates:
+        return rows
+    latest_date = dates[-1]
+    if row_has_required_xps_fields(rows[latest_date], required_fields):
+        return rows
+    return {date: rows[date] for date in dates[:-1]}
+
+
+def select_latest_clean_required_quarters(
+    rows: dict[str, dict], limit: int, required_fields: list[str]
+) -> dict[str, dict]:
+    selected = select_latest_required_quarters(rows, limit)
+    dirty_dates = [
+        date
+        for date, row in selected.items()
+        if not row_has_required_xps_fields(row, required_fields)
+    ]
+    if dirty_dates:
+        raise ValueError(f'incomplete quarters: {dirty_dates}')
+    return selected
+
+
+@cached(43200)
+async def fetch_finmind_taiwan_rows(
+    dataset: str, symbol: str, start_date: str
+) -> list[dict]:
+    async with AsyncClient(timeout=60) as client:
+        response = await client.get(
+            FINMIND_API_URL,
+            params={
+                'dataset': dataset,
+                'data_id': symbol,
+                'start_date': start_date,
+                'token': FINMIND_KEY,
+            },
+        )
+    response.raise_for_status()
+    return response.json().get('data', [])
+
+
+async def fetch_finmind_taiwan_income_statements(
+    symbol: str,
+    limit: int,
+    require_eps: bool = True,
+) -> dict[str, dict]:
+    start_date = finmind_taiwan_start_date(limit)
+    required_fields = required_xps_fields(require_eps)
+    financial_statement_rows, balance_sheet_rows, rows = await asyncio.gather(
+        fetch_finmind_taiwan_rows('TaiwanStockFinancialStatements', symbol, start_date),
+        fetch_finmind_taiwan_rows('TaiwanStockBalanceSheet', symbol, start_date),
+        fetch_fmp_income_statements(
+            't',
+            symbol,
+            limit + FMP_TAIWAN_QUARTER_BUFFER,
+            require_eps=require_eps,
+        ),
+    )
+    finmind_rows = normalize_finmind_taiwan_income_statement_rows(
+        financial_statement_rows,
+        balance_sheet_rows,
+        include_eps=require_eps,
+    )
+    merge_preferred_xps_rows(rows, finmind_rows)
+    rows = drop_incomplete_latest_quarter(rows, required_fields)
+    return select_latest_clean_required_quarters(rows, limit, required_fields)
+
+
 def build_aligned_source_quarters(
     fmp_rows: dict[str, dict],
     massive_rows: dict[str, dict],
+    eodhd_rows: dict[str, dict],
     finnhub_rows: dict[str, dict],
 ) -> dict[str, dict[str, dict[str, int | float | None]]]:
     aligned_quarters = {}
     align_source_rows(aligned_quarters, 'fmp', fmp_rows)
     align_source_rows(aligned_quarters, 'massive', massive_rows)
+    align_source_rows(aligned_quarters, 'eodhd', eodhd_rows)
     align_source_rows(aligned_quarters, 'finnhub', finnhub_rows)
     return dict(sorted(aligned_quarters.items()))
 
@@ -594,6 +804,84 @@ async def fetch_finnhub_income_statements(
     )
 
 
+def diluted_eps_from_reported_income(
+    income_statement_row: dict, diluted_shares: int | float | None
+) -> float | None:
+    if not diluted_shares:
+        return None
+    net_income_applicable = to_source_number(
+        income_statement_row.get('netIncomeApplicableToCommonShares')
+    )
+    if net_income_applicable is not None:
+        earnings = net_income_applicable
+    else:
+        net_income = to_source_number(income_statement_row.get('netIncome'))
+        preferred_adjustments = to_source_number(
+            income_statement_row.get('preferredStockAndOtherAdjustments')
+        )
+        if preferred_adjustments is not None and net_income is not None:
+            earnings = net_income - preferred_adjustments
+        else:
+            earnings = net_income
+    if earnings is None:
+        return None
+    return round(earnings / diluted_shares, 6)
+
+
+@cached(43200)
+async def fetch_eodhd_fundamentals(symbol: str) -> dict:
+    params = {
+        'api_token': EODHD_API_KEY,
+        'fmt': 'json',
+        'filter': (
+            'Financials::Income_Statement::quarterly,'
+            'Financials::Balance_Sheet::quarterly'
+        ),
+    }
+    async with AsyncClient(timeout=30) as client:
+        response = await client.get(
+            EODHD_FUNDAMENTALS_URL.format(f'{symbol}.US'),
+            params=params,
+        )
+        response.raise_for_status()
+    return response.json()
+
+
+async def fetch_eodhd_income_statements(
+    symbol: str, limit: int | None = None, require_eps: bool = True
+) -> dict[str, dict]:
+    data = await fetch_eodhd_fundamentals(symbol)
+    income_statement = data.get('Financials::Income_Statement::quarterly', {})
+    balance_sheet = data.get('Financials::Balance_Sheet::quarterly', {})
+
+    rows = {}
+    for date, income_row in sorted(income_statement.items(), reverse=True):
+        if not isinstance(income_row, dict):
+            continue
+
+        balance_sheet_row = select_eodhd_balance_sheet_row(date, balance_sheet) or {}
+        diluted_shares = to_source_number(
+            balance_sheet_row.get('commonStockSharesOutstanding')
+        )
+        normalized_row = {
+            'revenue': sanitize_source_field_value(
+                'revenue', to_source_number(income_row.get('totalRevenue'))
+            ),
+            'weightedAverageShsOutDil': sanitize_source_field_value(
+                'weightedAverageShsOutDil', diluted_shares
+            ),
+        }
+        if require_eps:
+            normalized_row[EPS_XPS_FIELD] = sanitize_source_field_value(
+                EPS_XPS_FIELD,
+                diluted_eps_from_reported_income(income_row, diluted_shares),
+            )
+        rows[date] = normalized_row
+        if limit is not None and len(rows) >= limit:
+            break
+    return rows
+
+
 def field_has_consensus(field: str, lhs: int | float, rhs: int | float) -> bool:
     log_diff = source_log_diff(lhs, rhs)
     if field == 'epsDiluted':
@@ -659,14 +947,22 @@ def select_consensus_source_value(
         group for group in consensus_groups if len(group) == largest_group_size
     ]
 
+    sec_consensus_groups = [
+        group
+        for group in consensus_groups
+        if any(source_name == 'sec' for source_name, _ in group)
+    ]
     if len(consensus_groups) == 1:
         consensus_group = consensus_groups[0]
-        return (
-            sum(value for _, value in consensus_group) / len(consensus_group),
-            tuple(name for name, _ in consensus_group),
-        )
+    elif len(sec_consensus_groups) == 1:
+        consensus_group = sec_consensus_groups[0]
+    else:
+        return None, None
 
-    return None, None
+    return (
+        sum(value for _, value in consensus_group) / len(consensus_group),
+        tuple(name for name, _ in consensus_group),
+    )
 
 
 def count_usable_source_values(source_values: dict[str, int | float | None]) -> int:
@@ -703,10 +999,11 @@ def format_source_field_block(
 
 async def fetch_us_income_statement_sources(
     symbol: str, limit: int, include_eps: bool
-) -> tuple[dict[str, dict], dict[str, dict], dict[str, dict]]:
+) -> tuple[dict[str, dict], dict[str, dict], dict[str, dict], dict[str, dict]]:
     source_rows = await asyncio.gather(
         fetch_fmp_income_statements('u', symbol, limit, require_eps=include_eps),
         fetch_massive_income_statements(symbol, limit, require_eps=include_eps),
+        fetch_eodhd_income_statements(symbol, limit, require_eps=include_eps),
         fetch_finnhub_income_statements(symbol, limit, require_eps=include_eps),
         return_exceptions=True,
     )
@@ -961,13 +1258,14 @@ async def resolve_us_income_statement_quarters(
     symbol: str,
     fmp_rows: dict[str, dict],
     massive_rows: dict[str, dict],
+    eodhd_rows: dict[str, dict],
     finnhub_rows: dict[str, dict],
     limit: int,
     include_eps: bool,
 ) -> dict[str, dict[str, int | float | None]]:
     required_fields = required_xps_fields(include_eps)
     aligned_quarters = build_aligned_source_quarters(
-        fmp_rows, massive_rows, finnhub_rows
+        fmp_rows, massive_rows, eodhd_rows, finnhub_rows
     )
     sec_source = SecIncomeStatementSource(
         symbol, fmp_rows, massive_rows, aligned_quarters
@@ -1002,6 +1300,11 @@ async def fetch_resolved_income_statement_quarters(
     limit: int,
     include_eps: bool,
 ) -> dict[str, dict[str, int | float | None]]:
+    if market == 't':
+        return await fetch_finmind_taiwan_income_statements(
+            symbol, limit, require_eps=include_eps
+        )
+
     if market != 'u':
         fmp_rows = await fetch_fmp_income_statements(
             market, symbol, limit, require_eps=include_eps
