@@ -77,6 +77,18 @@ def add_percentile_bands(ax, series: pd.Series):
         ax.axhline(level, color='#111827', linewidth=0.8, alpha=0.35, zorder=1)
 
 
+def calc_downside_score(s: pd.Series) -> float:
+    if s.empty or s.isna().any() or (s <= 0).any():
+        raise ValueError
+
+    p50 = float(s.median())
+    p25 = float(s.quantile(0.25))
+    if p25 <= 0 or p25 >= p50:
+        return 0
+
+    return float(max(p50 - s.iloc[-1], 0) / (p50 - p25))
+
+
 @app.get('/scores')
 async def get_scores(
     market: Literal['c', 'j', 't', 'u'],
@@ -87,16 +99,10 @@ async def get_scores(
         return await calc_btc_score(q), None
 
     df = await valuation.calc_px(market, symbol, q)
-
-    def score(s: pd.Series) -> float:
-        return (s < s.iloc[-1]).mean()
-
-    def pe_score(s: pd.Series) -> float | None:
-        if s.isna().any():
-            return None
-        return score(s)
-
-    return score(df['ps']), pe_score(df['pe'])
+    pe = df['pe']
+    return calc_downside_score(df['ps']), (
+        None if not pe.notna().all() else calc_downside_score(pe)
+    )
 
 
 @app.get('/growths')
@@ -129,7 +135,7 @@ async def calc_btc_growth():
 async def calc_btc_score(q: int):
     prices, sma = await get_btc_prices_and_4y_sma(91 * q)
     ratio = prices / sma
-    return (ratio < ratio[-1]).mean()
+    return calc_downside_score(pd.Series(ratio))
 
 
 async def calc_btc_ps(q: int) -> pd.Series:

@@ -51,6 +51,7 @@ SEC_ALLOWED_FORMS = {'10-Q', '10-K', '10-Q/A', '10-K/A'}
 SEC_FIELD_CONCEPTS = {
     'revenue': (
         ('RevenueFromContractWithCustomerExcludingAssessedTax', 'USD'),
+        ('RevenueFromContractWithCustomerIncludingAssessedTax', 'USD'),
         ('Revenues', 'USD'),
     ),
     'weightedAverageShsOutDil': (
