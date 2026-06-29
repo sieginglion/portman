@@ -51,7 +51,6 @@ SEC_ALLOWED_FORMS = {'10-Q', '10-K', '10-Q/A', '10-K/A'}
 SEC_FIELD_CONCEPTS = {
     'revenue': (
         ('RevenueFromContractWithCustomerExcludingAssessedTax', 'USD'),
-        ('RevenueFromContractWithCustomerIncludingAssessedTax', 'USD'),
         ('Revenues', 'USD'),
     ),
     'weightedAverageShsOutDil': (
@@ -212,9 +211,7 @@ def select_eodhd_balance_sheet_row(
     if isinstance(row, dict):
         return row
 
-    aligned_date = select_closest_aligned_quarter_key(
-        income_date, list(balance_sheet)
-    )
+    aligned_date = select_closest_aligned_quarter_key(income_date, list(balance_sheet))
     if aligned_date is None:
         return None
     row = balance_sheet.get(aligned_date)
@@ -263,7 +260,8 @@ def normalize_finmind_taiwan_income_statement_rows(
     if include_eps:
         required_financial_statement_fields.append('EPS')
     missing_financial_statement_fields = [
-        field for field in required_financial_statement_fields
+        field
+        for field in required_financial_statement_fields
         if field not in financial_statement
     ]
     if missing_financial_statement_fields:
@@ -479,6 +477,18 @@ def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
     return df
 
 
+def format_sec_candidate_block(matches: pd.DataFrame) -> str:
+    lines = ['  SEC candidates:']
+    for _, row in matches.sort_values(['end', 'start', 'filed']).iterrows():
+        lines.append(
+            '    '
+            f'filed={row["filed"]} '
+            f'period={row["start"]}..{row["end"]} '
+            f'value={format_source_log_value(row["val"])}'
+        )
+    return '\n'.join(lines)
+
+
 def select_sec_datum(
     df: pd.DataFrame,
     description: str,
@@ -510,13 +520,14 @@ def select_sec_datum(
     if len(matches) > 1:
         if log_errors:
             logger.warning(
-                'SEC fact lookup returned multiple matches: {} start=({}, {}) end=({}, {}) matches={}',
+                'SEC fact lookup returned multiple matches: {} start=({}, {}) end=({}, {}) matches={}\n{}',
                 description,
                 min_start,
                 max_start,
                 min_end,
                 max_end,
                 len(matches),
+                format_sec_candidate_block(matches),
             )
         return None
     return matches.iloc[-1]
@@ -1087,67 +1098,46 @@ class SecIncomeStatementSource:
         self.metadata = build_sec_quarter_metadata(
             aligned_quarters, fmp_rows, massive_rows, self.cik
         )
-        self.loaded_fields: set[str] = set()
-        self.field_frames: dict[str, list[pd.DataFrame]] = {}
-
-    def has_loaded(self, field: str) -> bool:
-        return field in self.loaded_fields
-
-    async def load_field(self, field: str) -> None:
-        if self.has_loaded(field):
-            return
-        self.loaded_fields.add(field)
-        if self.cik is None:
-            logger.warning(
-                'SEC repair unavailable for {}: no FMP/Massive CIK',
-                self.symbol,
-            )
-            self.field_frames[field] = []
-            return
-        if not self.metadata:
-            logger.warning(
-                'SEC repair unavailable for {}: no FMP/Massive quarter metadata',
-                self.symbol,
-            )
-            self.field_frames[field] = []
-            return
-        try:
-            self.field_frames[field] = await fetch_sec_field_rows(self.cik, field)
-        except Exception as exc:
-            logger.warning(
-                'SEC repair unavailable for {} field={}: {}; continuing without SEC',
-                self.symbol,
-                field,
-                exc,
-            )
-            self.field_frames[field] = []
-
-    async def merge_field(
-        self,
-        aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
-        field: str,
-    ) -> None:
-        await self.load_field(field)
-        frames = self.field_frames.get(field, [])
-        if not frames:
-            return
-        for quarter_key, quarter in aligned_quarters.items():
-            metadata = self.metadata.get(quarter_key)
-            if metadata is None:
-                continue
-            value = lookup_sec_field_value(field, metadata, frames)
-            value = sanitize_source_field_value(field, value)
-            if value is None:
-                continue
-            quarter.setdefault(field, {})['sec'] = value
 
     async def merge_fields(
         self,
         aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
         fields: list[str],
     ) -> None:
+        if self.cik is None:
+            logger.warning(
+                'SEC repair unavailable for {}: no FMP/Massive CIK',
+                self.symbol,
+            )
+            return
+        if not self.metadata:
+            logger.warning(
+                'SEC repair unavailable for {}: no FMP/Massive quarter metadata',
+                self.symbol,
+            )
+            return
         for field in dict.fromkeys(fields):
-            await self.merge_field(aligned_quarters, field)
+            try:
+                frames = await fetch_sec_field_rows(self.cik, field)
+            except Exception as exc:
+                logger.warning(
+                    'SEC repair unavailable for {} field={}: {}; continuing without SEC',
+                    self.symbol,
+                    field,
+                    exc,
+                )
+                continue
+            if not frames:
+                continue
+            for quarter_key, quarter in aligned_quarters.items():
+                metadata = self.metadata.get(quarter_key)
+                if metadata is None:
+                    continue
+                value = lookup_sec_field_value(field, metadata, frames)
+                value = sanitize_source_field_value(field, value)
+                if value is None:
+                    continue
+                quarter.setdefault(field, {})['sec'] = value
 
 
 def latest_insufficient_us_fields(
@@ -1228,20 +1218,6 @@ def resolve_us_quarter_consensus(
     return resolved_quarter
 
 
-def find_us_consensus_failure(
-    aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
-    required_fields: list[str],
-) -> tuple[str, str] | None:
-    for anchor_date, quarter in aligned_quarters.items():
-        for field in required_fields:
-            _, consensus_sources = select_consensus_source_value(
-                field, quarter.get(field, {})
-            )
-            if consensus_sources is None:
-                return anchor_date, field
-    return None
-
-
 def resolve_all_us_quarter_consensus(
     symbol: str,
     aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
@@ -1271,28 +1247,12 @@ async def resolve_us_income_statement_quarters(
     sec_source = SecIncomeStatementSource(
         symbol, fmp_rows, massive_rows, aligned_quarters
     )
-    await sec_source.merge_fields(
-        aligned_quarters,
-        latest_insufficient_us_fields(aligned_quarters, required_fields),
-    )
+    await sec_source.merge_fields(aligned_quarters, required_fields)
     aligned_quarters = drop_incomplete_latest_us_quarter(
         symbol, aligned_quarters, required_fields
     )
     aligned_quarters = select_latest_required_quarters(aligned_quarters, limit)
-    while True:
-        consensus_failure = find_us_consensus_failure(aligned_quarters, required_fields)
-        if consensus_failure is None:
-            return resolve_all_us_quarter_consensus(
-                symbol, aligned_quarters, required_fields
-            )
-
-        _, field = consensus_failure
-        if sec_source.has_loaded(field):
-            return resolve_all_us_quarter_consensus(
-                symbol, aligned_quarters, required_fields
-            )
-
-        await sec_source.merge_field(aligned_quarters, field)
+    return resolve_all_us_quarter_consensus(symbol, aligned_quarters, required_fields)
 
 
 async def fetch_resolved_income_statement_quarters(
