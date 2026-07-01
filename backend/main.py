@@ -33,6 +33,10 @@ BTC_GROWTH_DAYS = 365
 BTC_GROWTH_SMA_WINDOW_DAYS = BTC_QUARTER_DAYS * 16
 
 
+def is_btc(market: str, symbol: str) -> bool:
+    return market == 'c' and symbol == 'BTC'
+
+
 @app.get('/content')
 async def get_content(url: str):
     async with AsyncClient(timeout=60) as sess:
@@ -98,7 +102,7 @@ async def get_scores(
     symbol: str,
     q: int,
 ):
-    if market == 'c' and symbol == 'BTC':
+    if is_btc(market, symbol):
         return await calc_btc_score(q), None
 
     df = await valuation.calc_px(market, symbol, q)
@@ -110,7 +114,7 @@ async def get_scores(
 
 @app.get('/growth')
 async def get_growth(market: Literal['c', 'j', 't', 'u'], symbol: str):
-    if market == 'c' and symbol == 'BTC':
+    if is_btc(market, symbol):
         return await calc_btc_growth()
     xps = await valuation.fetch_xps(market, symbol, 5, include_eps=False)
     r = xps['rps']
@@ -134,9 +138,8 @@ async def get_btc_price_sma_frame(periods: int, window: int) -> pd.DataFrame:
     return pd.DataFrame({'price': prices, 'sma': sma}, index=index)
 
 
-async def get_btc_price_to_sma_series(q: int) -> pd.Series:
-    window = BTC_QUARTER_DAYS * q
-    df = await get_btc_price_sma_frame(window, window)
+async def get_btc_price_to_sma_series(periods: int, window: int) -> pd.Series:
+    df = await get_btc_price_sma_frame(periods, window)
     return df['price'] / df['sma']
 
 
@@ -147,11 +150,13 @@ async def calc_btc_growth():
 
 
 async def calc_btc_score(q: int):
-    return calc_downside_score(await get_btc_price_to_sma_series(q))
+    window = BTC_QUARTER_DAYS * q
+    return calc_downside_score(await get_btc_price_to_sma_series(window, window))
 
 
 async def calc_btc_ps(q: int) -> pd.Series:
-    return await get_btc_price_to_sma_series(q)
+    window = BTC_QUARTER_DAYS * q
+    return await get_btc_price_to_sma_series(window, window)
 
 
 @app.get('/pegs')
