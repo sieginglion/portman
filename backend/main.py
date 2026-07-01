@@ -28,6 +28,9 @@ PERCENTILE_BAND_COLORS = [
     '#8000FF',
     '#FF00BF',
 ]
+BTC_QUARTER_DAYS = 91
+BTC_GROWTH_DAYS = 365
+BTC_GROWTH_SMA_WINDOW_DAYS = BTC_QUARTER_DAYS * 16
 
 
 @app.get('/content')
@@ -105,8 +108,8 @@ async def get_scores(
     )
 
 
-@app.get('/growths')
-async def get_growths(market: Literal['c', 'j', 't', 'u'], symbol: str):
+@app.get('/growth')
+async def get_growth(market: Literal['c', 'j', 't', 'u'], symbol: str):
     if market == 'c' and symbol == 'BTC':
         return await calc_btc_growth()
     xps = await valuation.fetch_xps(market, symbol, 5, include_eps=False)
@@ -114,37 +117,41 @@ async def get_growths(market: Literal['c', 'j', 't', 'u'], symbol: str):
     return r.iloc[-1] / r.iloc[-5] - 1
 
 
-async def get_btc_prices_and_4y_sma(n: int):
-    window = 1456
+async def get_btc_prices_and_sma(n: int, window: int):
     prices = await shared.get_prices('c', 'BTC', n + window - 1, False)
     cumsum = np.cumsum(prices, dtype=np.float64)
     cumsum = np.concatenate(([0.0], cumsum))
     sma = (cumsum[window:] - cumsum[:-window]) / window
-    # from .position import calc_ema, calc_k
-    # k = calc_k(1456)
-    # prices = await shared.get_prices('c', 'BTC', n + k - 1, False)
-    # return prices[-n:], calc_ema(prices, 2 / (1456 + 1), k)
     return prices[-n:], sma
 
 
+async def get_btc_price_sma_frame(periods: int, window: int) -> pd.DataFrame:
+    prices, sma = await get_btc_prices_and_sma(periods, window)
+    index = pd.date_range(
+        end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE['c']).date(),
+        periods=periods,
+    )
+    return pd.DataFrame({'price': prices, 'sma': sma}, index=index)
+
+
+async def get_btc_price_to_sma_series(q: int) -> pd.Series:
+    window = BTC_QUARTER_DAYS * q
+    df = await get_btc_price_sma_frame(window, window)
+    return df['price'] / df['sma']
+
+
 async def calc_btc_growth():
-    _, sma = await get_btc_prices_and_4y_sma(365)
-    return sma[-1] / sma[0] - 1
+    df = await get_btc_price_sma_frame(BTC_GROWTH_DAYS, BTC_GROWTH_SMA_WINDOW_DAYS)
+    sma = df['sma']
+    return sma.iloc[-1] / sma.iloc[0] - 1
 
 
 async def calc_btc_score(q: int):
-    prices, sma = await get_btc_prices_and_4y_sma(91 * q)
-    ratio = prices / sma
-    return calc_downside_score(pd.Series(ratio))
+    return calc_downside_score(await get_btc_price_to_sma_series(q))
 
 
 async def calc_btc_ps(q: int) -> pd.Series:
-    prices, sma = await get_btc_prices_and_4y_sma(91 * q)
-    index = pd.date_range(
-        end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE['c']).date(),
-        periods=len(prices),
-    )
-    return pd.Series(prices / sma, index=index)
+    return await get_btc_price_to_sma_series(q)
 
 
 @app.get('/pegs')
