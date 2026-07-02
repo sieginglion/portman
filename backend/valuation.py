@@ -554,19 +554,19 @@ def select_sec_quarter_datum(
     )
 
 
-def select_sec_q4_components(
+def select_sec_q4_derived_datum(
+    field: str,
     df: pd.DataFrame,
-    *,
-    annual_description: str,
-    q1_to_q3_description_prefix: str,
+    description_prefix: str,
     end: pd.Timestamp,
+    *,
     log_errors: bool = True,
-) -> tuple[pd.Series | None, pd.Series | None]:
+) -> int | float | None:
     min_start = date_str(end - pd.DateOffset(months=13))
     max_start = date_str(end - pd.DateOffset(months=11))
     annual = select_sec_datum(
         df,
-        description=annual_description,
+        description=f'{description_prefix} annual {date_str(end)}',
         min_start=min_start,
         max_start=max_start,
         min_end=date_str(end - pd.DateOffset(months=1)),
@@ -574,7 +574,7 @@ def select_sec_q4_components(
         log_errors=log_errors,
     )
     if annual is None:
-        return None, None
+        return None
 
     annual_start = pd.Timestamp(annual['start'])
     min_end = date_str(annual_start + pd.DateOffset(months=8))
@@ -583,19 +583,15 @@ def select_sec_q4_components(
     max_start = date_str(annual_start + pd.DateOffset(months=1))
     q1_to_q3 = select_sec_datum(
         df,
-        description=f'{q1_to_q3_description_prefix}{annual["start"]}',
+        description=f'{description_prefix} Q1-Q3 from {annual["start"]}',
         min_start=min_start,
         max_start=max_start,
         min_end=min_end,
         max_end=max_end,
         log_errors=log_errors,
     )
-    return annual, q1_to_q3
-
-
-def derive_sec_q4_value(
-    field: str, annual: pd.Series, q1_to_q3: pd.Series
-) -> int | float:
+    if q1_to_q3 is None:
+        return None
     if field == 'weightedAverageShsOutDil':
         return round(annual['val'] * 4 - q1_to_q3['val'] * 3)
     return annual['val'] - q1_to_q3['val']
@@ -631,15 +627,15 @@ def lookup_sec_field_value(
         if datum is not None:
             return datum['val']
 
-        annual, q1_to_q3 = select_sec_q4_components(
+        value = select_sec_q4_derived_datum(
+            field,
             df,
-            annual_description=(f'CIK{metadata["cik"]} {field} annual {date_str(end)}'),
-            q1_to_q3_description_prefix=(f'CIK{metadata["cik"]} {field} Q1-Q3 from '),
-            end=end,
+            f'CIK{metadata["cik"]} {field}',
+            end,
             log_errors=log_errors,
         )
-        if annual is not None and q1_to_q3 is not None:
-            return derive_sec_q4_value(field, annual, q1_to_q3)
+        if value is not None:
+            return value
     return None
 
 
@@ -1085,59 +1081,51 @@ def build_sec_quarter_metadata(
     return metadata
 
 
-class SecIncomeStatementSource:
-    def __init__(
-        self,
-        symbol: str,
-        fmp_rows: dict[str, dict],
-        massive_rows: dict[str, dict],
-        aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
-    ) -> None:
-        self.symbol = symbol
-        self.cik = select_sec_cik(fmp_rows, massive_rows)
-        self.metadata = build_sec_quarter_metadata(
-            aligned_quarters, fmp_rows, massive_rows, self.cik
-        )
+async def merge_sec_fields(
+    symbol: str,
+    aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
+    fmp_rows: dict[str, dict],
+    massive_rows: dict[str, dict],
+    fields: list[str],
+) -> None:
+    cik = select_sec_cik(fmp_rows, massive_rows)
+    if cik is None:
+        logger.warning('SEC repair unavailable for {}: no FMP/Massive CIK', symbol)
+        return
 
-    async def merge_fields(
-        self,
-        aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
-        fields: list[str],
-    ) -> None:
-        if self.cik is None:
+    metadata_by_quarter = build_sec_quarter_metadata(
+        aligned_quarters, fmp_rows, massive_rows, cik
+    )
+    if not metadata_by_quarter:
+        logger.warning(
+            'SEC repair unavailable for {}: no FMP/Massive quarter metadata',
+            symbol,
+        )
+        return
+
+    for field in dict.fromkeys(fields):
+        try:
+            frames = await fetch_sec_field_rows(cik, field)
+        except Exception as exc:
             logger.warning(
-                'SEC repair unavailable for {}: no FMP/Massive CIK',
-                self.symbol,
+                'SEC repair unavailable for {} field={}: {}; continuing without SEC',
+                symbol,
+                field,
+                exc,
             )
-            return
-        if not self.metadata:
-            logger.warning(
-                'SEC repair unavailable for {}: no FMP/Massive quarter metadata',
-                self.symbol,
-            )
-            return
-        for field in dict.fromkeys(fields):
-            try:
-                frames = await fetch_sec_field_rows(self.cik, field)
-            except Exception as exc:
-                logger.warning(
-                    'SEC repair unavailable for {} field={}: {}; continuing without SEC',
-                    self.symbol,
-                    field,
-                    exc,
-                )
+            continue
+        if not frames:
+            continue
+
+        for quarter_key, quarter in aligned_quarters.items():
+            metadata = metadata_by_quarter.get(quarter_key)
+            if metadata is None:
                 continue
-            if not frames:
+            value = lookup_sec_field_value(field, metadata, frames)
+            value = sanitize_source_field_value(field, value)
+            if value is None:
                 continue
-            for quarter_key, quarter in aligned_quarters.items():
-                metadata = self.metadata.get(quarter_key)
-                if metadata is None:
-                    continue
-                value = lookup_sec_field_value(field, metadata, frames)
-                value = sanitize_source_field_value(field, value)
-                if value is None:
-                    continue
-                quarter.setdefault(field, {})['sec'] = value
+            quarter.setdefault(field, {})['sec'] = value
 
 
 def latest_insufficient_us_fields(
@@ -1244,10 +1232,9 @@ async def resolve_us_income_statement_quarters(
     aligned_quarters = build_aligned_source_quarters(
         fmp_rows, massive_rows, eodhd_rows, finnhub_rows
     )
-    sec_source = SecIncomeStatementSource(
-        symbol, fmp_rows, massive_rows, aligned_quarters
+    await merge_sec_fields(
+        symbol, aligned_quarters, fmp_rows, massive_rows, required_fields
     )
-    await sec_source.merge_fields(aligned_quarters, required_fields)
     aligned_quarters = drop_incomplete_latest_us_quarter(
         symbol, aligned_quarters, required_fields
     )
