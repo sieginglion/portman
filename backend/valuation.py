@@ -60,6 +60,10 @@ SEC_FIELD_CONCEPTS = {
 }
 
 
+def empty_sec_rows() -> pd.DataFrame:
+    return pd.DataFrame(columns=SEC_DEDUPE_COLS)
+
+
 def source_log_diff(lhs: int | float, rhs: int | float) -> float:
     lhs = float(lhs)
     rhs = float(rhs)
@@ -456,21 +460,21 @@ def normalize_massive_fiscal_quarter(value: object) -> str | None:
 def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if df.empty or 'form' not in df:
-        return pd.DataFrame(columns=SEC_DEDUPE_COLS)
+        return empty_sec_rows()
     df = df[df['form'].isin(SEC_ALLOWED_FORMS)]
     if df.empty:
         logger.warning('SEC repair skipped; no supported forms found')
-        return pd.DataFrame(columns=SEC_DEDUPE_COLS)
+        return empty_sec_rows()
     missing_columns = [column for column in SEC_DEDUPE_COLS if column not in df]
     if missing_columns:
         logger.warning(
             'SEC repair skipped; missing expected columns {}',
             missing_columns,
         )
-        return pd.DataFrame(columns=SEC_DEDUPE_COLS)
+        return empty_sec_rows()
     df = df.dropna(subset=SEC_DEDUPE_COLS)
     if df.empty:
-        return pd.DataFrame(columns=SEC_DEDUPE_COLS)
+        return empty_sec_rows()
     df = df[SEC_DEDUPE_COLS]
     df = df.sort_values('filed', kind='mergesort')
     df = df.drop_duplicates(['start', 'end'], keep='last')
@@ -489,7 +493,7 @@ def format_sec_candidate_block(matches: pd.DataFrame) -> str:
     return '\n'.join(lines)
 
 
-def select_sec_datum(
+def select_sec_fact(
     df: pd.DataFrame,
     description: str,
     *,
@@ -501,11 +505,12 @@ def select_sec_datum(
 ) -> pd.Series | None:
     if df.empty:
         return None
-    matches = df
-    matches = matches[matches['start'].gt(min_start)]
-    matches = matches[matches['start'].lt(max_start)]
-    matches = matches[matches['end'].gt(min_end)]
-    matches = matches[matches['end'].lt(max_end)]
+    matches = df[
+        df['start'].gt(min_start)
+        & df['start'].lt(max_start)
+        & df['end'].gt(min_end)
+        & df['end'].lt(max_end)
+    ]
     if matches.empty:
         if log_errors:
             logger.warning(
@@ -533,7 +538,7 @@ def select_sec_datum(
     return matches.iloc[-1]
 
 
-def select_sec_quarter_datum(
+def select_sec_quarter_fact(
     df: pd.DataFrame,
     description: str,
     end: pd.Timestamp,
@@ -543,7 +548,7 @@ def select_sec_quarter_datum(
     min_start = date_str(end - pd.DateOffset(months=4))
     max_start = date_str(end - pd.DateOffset(months=2))
     min_end, max_end = quarter_end_bounds(end)
-    return select_sec_datum(
+    return select_sec_fact(
         df,
         description=description,
         min_start=min_start,
@@ -554,7 +559,7 @@ def select_sec_quarter_datum(
     )
 
 
-def select_sec_q4_derived_datum(
+def derive_sec_q4_value(
     field: str,
     df: pd.DataFrame,
     description_prefix: str,
@@ -562,13 +567,11 @@ def select_sec_q4_derived_datum(
     *,
     log_errors: bool = True,
 ) -> int | float | None:
-    min_start = date_str(end - pd.DateOffset(months=13))
-    max_start = date_str(end - pd.DateOffset(months=11))
-    annual = select_sec_datum(
+    annual = select_sec_fact(
         df,
         description=f'{description_prefix} annual {date_str(end)}',
-        min_start=min_start,
-        max_start=max_start,
+        min_start=date_str(end - pd.DateOffset(months=13)),
+        max_start=date_str(end - pd.DateOffset(months=11)),
         min_end=date_str(end - pd.DateOffset(months=1)),
         max_end=date_str(end + pd.DateOffset(months=1)),
         log_errors=log_errors,
@@ -577,17 +580,13 @@ def select_sec_q4_derived_datum(
         return None
 
     annual_start = pd.Timestamp(annual['start'])
-    min_end = date_str(annual_start + pd.DateOffset(months=8))
-    max_end = date_str(annual_start + pd.DateOffset(months=10))
-    min_start = date_str(annual_start - pd.DateOffset(months=1))
-    max_start = date_str(annual_start + pd.DateOffset(months=1))
-    q1_to_q3 = select_sec_datum(
+    q1_to_q3 = select_sec_fact(
         df,
         description=f'{description_prefix} Q1-Q3 from {annual["start"]}',
-        min_start=min_start,
-        max_start=max_start,
-        min_end=min_end,
-        max_end=max_end,
+        min_start=date_str(annual_start - pd.DateOffset(months=1)),
+        max_start=date_str(annual_start + pd.DateOffset(months=1)),
+        min_end=date_str(annual_start + pd.DateOffset(months=8)),
+        max_end=date_str(annual_start + pd.DateOffset(months=10)),
         log_errors=log_errors,
     )
     if q1_to_q3 is None:
@@ -607,27 +606,18 @@ def lookup_sec_field_value(
     end = pd.Timestamp(metadata['date'])
     period = metadata.get('period')
     for df in sec_frames:
-        if period != 'Q4':
-            datum = select_sec_quarter_datum(
-                df,
-                description=f'CIK{metadata["cik"]} {field} {date_str(end)}',
-                end=end,
-                log_errors=log_errors,
-            )
-            if datum is not None:
-                return datum['val']
-            continue
-
-        datum = select_sec_quarter_datum(
+        datum = select_sec_quarter_fact(
             df,
-            description=f'CIK{metadata["cik"]} {field} Q4 exact {date_str(end)}',
+            description=f'CIK{metadata["cik"]} {field} {date_str(end)}',
             end=end,
-            log_errors=False,
+            log_errors=log_errors and period != 'Q4',
         )
         if datum is not None:
             return datum['val']
+        if period != 'Q4':
+            continue
 
-        value = select_sec_q4_derived_datum(
+        value = derive_sec_q4_value(
             field,
             df,
             f'CIK{metadata["cik"]} {field}',
@@ -655,14 +645,14 @@ async def fetch_sec_concept_rows(cik: str, concept: str, unit: str) -> pd.DataFr
             logger.warning(
                 'SEC concept {} not found for CIK {}; skipping', concept, cik
             )
-            return pd.DataFrame(columns=SEC_DEDUPE_COLS)
+            return empty_sec_rows()
         logger.warning(
             'SEC concept {} fetch failed for CIK {} status={}; skipping',
             concept,
             cik,
             exc.response.status_code,
         )
-        return pd.DataFrame(columns=SEC_DEDUPE_COLS)
+        return empty_sec_rows()
     except Exception as exc:
         logger.warning(
             'SEC concept {} fetch failed for CIK {}: {}; skipping',
@@ -670,7 +660,7 @@ async def fetch_sec_concept_rows(cik: str, concept: str, unit: str) -> pd.DataFr
             cik,
             exc,
         )
-        return pd.DataFrame(columns=SEC_DEDUPE_COLS)
+        return empty_sec_rows()
     unit_rows = data.get('units', {}).get(unit, [])
     if len(unit_rows) == 0:
         logger.warning(
@@ -679,7 +669,7 @@ async def fetch_sec_concept_rows(cik: str, concept: str, unit: str) -> pd.DataFr
             unit,
             cik,
         )
-        return pd.DataFrame(columns=SEC_DEDUPE_COLS)
+        return empty_sec_rows()
     return dedupe_sec_rows(unit_rows)
 
 
@@ -1032,36 +1022,12 @@ async def fetch_us_income_statement_sources(
 def select_sec_cik(
     fmp_rows: dict[str, dict], massive_rows: dict[str, dict]
 ) -> str | None:
-    if fmp_rows:
-        return format_sec_cik(next(iter(fmp_rows.values()))['cik'])
-    for row in massive_rows.values():
-        cik = format_sec_cik(row['cik'])
-        if cik is not None:
-            return cik
+    for source_rows in (fmp_rows, massive_rows):
+        for row in source_rows.values():
+            cik = format_sec_cik(row.get('cik'))
+            if cik is not None:
+                return cik
     return None
-
-
-def build_sec_quarter_metadata_from_source(
-    aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
-    source_rows: dict[str, dict],
-    cik: str,
-) -> dict[str, dict[str, str]]:
-    metadata = {}
-    for source_date, row in sorted(source_rows.items()):
-        quarter_key = select_closest_aligned_quarter_key(
-            source_date, list(aligned_quarters)
-        )
-        if quarter_key is None:
-            continue
-        period = normalize_massive_fiscal_quarter(row.get('quarter'))
-        if period not in {'Q1', 'Q2', 'Q3', 'Q4'}:
-            continue
-        metadata[quarter_key] = {
-            'cik': cik,
-            'date': source_date,
-            'period': period,
-        }
-    return metadata
 
 
 def build_sec_quarter_metadata(
@@ -1072,12 +1038,20 @@ def build_sec_quarter_metadata(
 ) -> dict[str, dict[str, str]]:
     if cik is None:
         return {}
-    metadata = build_sec_quarter_metadata_from_source(aligned_quarters, fmp_rows, cik)
-    fallback_metadata = build_sec_quarter_metadata_from_source(
-        aligned_quarters, massive_rows, cik
-    )
-    for quarter_key, quarter_metadata in fallback_metadata.items():
-        metadata.setdefault(quarter_key, quarter_metadata)
+    metadata = {}
+    quarter_keys = list(aligned_quarters)
+    for source_rows in (fmp_rows, massive_rows):
+        for source_date, row in sorted(source_rows.items()):
+            quarter_key = select_closest_aligned_quarter_key(source_date, quarter_keys)
+            if quarter_key is None or quarter_key in metadata:
+                continue
+            period = normalize_massive_fiscal_quarter(row.get('quarter'))
+            if period in {'Q1', 'Q2', 'Q3', 'Q4'}:
+                metadata[quarter_key] = {
+                    'cik': cik,
+                    'date': source_date,
+                    'period': period,
+                }
     return metadata
 
 
