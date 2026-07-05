@@ -2,7 +2,6 @@ import unittest
 from unittest.mock import patch
 
 import pandas as pd
-
 from backend import valuation
 
 
@@ -11,6 +10,24 @@ def sec_frame(rows):
 
 
 class SecValuationTests(unittest.TestCase):
+    def test_select_latest_required_quarters_reports_symbol_and_available_dates(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            (
+                r"need 5 aligned quarters, found 2 for SPCX; "
+                r"available=\['2025-03-31', '2026-03-31'\]"
+            ),
+        ):
+            valuation.select_latest_required_quarters(
+                {
+                    '2026-03-31': {},
+                    '2025-03-31': {},
+                },
+                5,
+                symbol='SPCX',
+                quarter_label='aligned quarters',
+            )
+
     def test_format_sec_cik_normalizes_values(self):
         self.assertEqual(valuation.format_sec_cik('320193'), '0000320193')
         self.assertEqual(valuation.format_sec_cik(320193.0), '0000320193')
@@ -59,14 +76,17 @@ class SecValuationTests(unittest.TestCase):
 
         df = valuation.dedupe_sec_rows(rows)
 
-        self.assertEqual(df.to_dict('records'), [
-            {
-                'filed': '2025-05-01',
-                'val': 11,
-                'start': '2025-01-01',
-                'end': '2025-03-31',
-            }
-        ])
+        self.assertEqual(
+            df.to_dict('records'),
+            [
+                {
+                    'filed': '2025-05-01',
+                    'val': 11,
+                    'start': '2025-01-01',
+                    'end': '2025-03-31',
+                }
+            ],
+        )
 
     def test_dedupe_sec_rows_returns_expected_empty_shape(self):
         self.assertEqual(
@@ -76,14 +96,16 @@ class SecValuationTests(unittest.TestCase):
         self.assertTrue(valuation.dedupe_sec_rows([{'form': '8-K'}]).empty)
 
     def test_select_sec_fact_requires_exactly_one_date_window_match(self):
-        rows = sec_frame([
-            {
-                'filed': '2025-04-20',
-                'val': 10,
-                'start': '2025-01-01',
-                'end': '2025-03-31',
-            }
-        ])
+        rows = sec_frame(
+            [
+                {
+                    'filed': '2025-04-20',
+                    'val': 10,
+                    'start': '2025-01-01',
+                    'end': '2025-03-31',
+                }
+            ]
+        )
 
         match = valuation.select_sec_fact(
             rows,
@@ -108,20 +130,22 @@ class SecValuationTests(unittest.TestCase):
         )
 
     def test_select_sec_fact_rejects_ambiguous_matches(self):
-        rows = sec_frame([
-            {
-                'filed': '2025-04-20',
-                'val': 10,
-                'start': '2025-01-01',
-                'end': '2025-03-31',
-            },
-            {
-                'filed': '2025-04-21',
-                'val': 11,
-                'start': '2025-01-15',
-                'end': '2025-03-31',
-            },
-        ])
+        rows = sec_frame(
+            [
+                {
+                    'filed': '2025-04-20',
+                    'val': 10,
+                    'start': '2025-01-01',
+                    'end': '2025-03-31',
+                },
+                {
+                    'filed': '2025-04-21',
+                    'val': 11,
+                    'start': '2025-01-15',
+                    'end': '2025-03-31',
+                },
+            ]
+        )
 
         self.assertIsNone(
             valuation.select_sec_fact(
@@ -136,14 +160,16 @@ class SecValuationTests(unittest.TestCase):
         )
 
     def test_select_sec_quarter_fact_uses_quarter_date_window(self):
-        rows = sec_frame([
-            {
-                'filed': '2025-04-20',
-                'val': 10,
-                'start': '2025-01-01',
-                'end': '2025-03-31',
-            }
-        ])
+        rows = sec_frame(
+            [
+                {
+                    'filed': '2025-04-20',
+                    'val': 10,
+                    'start': '2025-01-01',
+                    'end': '2025-03-31',
+                }
+            ]
+        )
 
         match = valuation.select_sec_quarter_fact(
             rows, 'quarter', pd.Timestamp('2025-03-31')
@@ -152,20 +178,22 @@ class SecValuationTests(unittest.TestCase):
         self.assertEqual(match['val'], 10)
 
     def test_derive_sec_q4_value_uses_annual_less_q1_to_q3(self):
-        rows = sec_frame([
-            {
-                'filed': '2026-02-01',
-                'val': 100,
-                'start': '2025-01-01',
-                'end': '2025-12-31',
-            },
-            {
-                'filed': '2025-11-01',
-                'val': 60,
-                'start': '2025-01-01',
-                'end': '2025-09-30',
-            },
-        ])
+        rows = sec_frame(
+            [
+                {
+                    'filed': '2026-02-01',
+                    'val': 100,
+                    'start': '2025-01-01',
+                    'end': '2025-12-31',
+                },
+                {
+                    'filed': '2025-11-01',
+                    'val': 60,
+                    'start': '2025-01-01',
+                    'end': '2025-09-30',
+                },
+            ]
+        )
 
         self.assertEqual(
             valuation.derive_sec_q4_value(
@@ -175,20 +203,22 @@ class SecValuationTests(unittest.TestCase):
         )
 
     def test_derive_sec_q4_value_handles_average_share_count(self):
-        rows = sec_frame([
-            {
-                'filed': '2026-02-01',
-                'val': 25,
-                'start': '2025-01-01',
-                'end': '2025-12-31',
-            },
-            {
-                'filed': '2025-11-01',
-                'val': 20,
-                'start': '2025-01-01',
-                'end': '2025-09-30',
-            },
-        ])
+        rows = sec_frame(
+            [
+                {
+                    'filed': '2026-02-01',
+                    'val': 25,
+                    'start': '2025-01-01',
+                    'end': '2025-12-31',
+                },
+                {
+                    'filed': '2025-11-01',
+                    'val': 20,
+                    'start': '2025-01-01',
+                    'end': '2025-09-30',
+                },
+            ]
+        )
 
         self.assertEqual(
             valuation.derive_sec_q4_value(
@@ -201,26 +231,28 @@ class SecValuationTests(unittest.TestCase):
         )
 
     def test_lookup_sec_field_value_prefers_exact_q4_fact_over_derived_value(self):
-        rows = sec_frame([
-            {
-                'filed': '2026-01-20',
-                'val': 25,
-                'start': '2025-10-01',
-                'end': '2025-12-31',
-            },
-            {
-                'filed': '2026-02-01',
-                'val': 100,
-                'start': '2025-01-01',
-                'end': '2025-12-31',
-            },
-            {
-                'filed': '2025-11-01',
-                'val': 60,
-                'start': '2025-01-01',
-                'end': '2025-09-30',
-            },
-        ])
+        rows = sec_frame(
+            [
+                {
+                    'filed': '2026-01-20',
+                    'val': 25,
+                    'start': '2025-10-01',
+                    'end': '2025-12-31',
+                },
+                {
+                    'filed': '2026-02-01',
+                    'val': 100,
+                    'start': '2025-01-01',
+                    'end': '2025-12-31',
+                },
+                {
+                    'filed': '2025-11-01',
+                    'val': 60,
+                    'start': '2025-01-01',
+                    'end': '2025-09-30',
+                },
+            ]
+        )
         metadata = {'cik': '0000320193', 'date': '2025-12-31', 'period': 'Q4'}
 
         self.assertEqual(
@@ -229,20 +261,22 @@ class SecValuationTests(unittest.TestCase):
         )
 
     def test_lookup_sec_field_value_derives_q4_when_exact_fact_missing(self):
-        rows = sec_frame([
-            {
-                'filed': '2026-02-01',
-                'val': 100,
-                'start': '2025-01-01',
-                'end': '2025-12-31',
-            },
-            {
-                'filed': '2025-11-01',
-                'val': 60,
-                'start': '2025-01-01',
-                'end': '2025-09-30',
-            },
-        ])
+        rows = sec_frame(
+            [
+                {
+                    'filed': '2026-02-01',
+                    'val': 100,
+                    'start': '2025-01-01',
+                    'end': '2025-12-31',
+                },
+                {
+                    'filed': '2025-11-01',
+                    'val': 60,
+                    'start': '2025-01-01',
+                    'end': '2025-09-30',
+                },
+            ]
+        )
         metadata = {'cik': '0000320193', 'date': '2025-12-31', 'period': 'Q4'}
 
         self.assertEqual(
@@ -253,9 +287,7 @@ class SecValuationTests(unittest.TestCase):
     def test_select_sec_cik_prefers_fmp_and_falls_back_to_massive(self):
         fmp_rows = {'2025-03-31': {'cik': '320193'}}
         massive_rows = {'2025-03-31': {'cik': '789019'}}
-        self.assertEqual(
-            valuation.select_sec_cik(fmp_rows, massive_rows), '0000320193'
-        )
+        self.assertEqual(valuation.select_sec_cik(fmp_rows, massive_rows), '0000320193')
         self.assertEqual(
             valuation.select_sec_cik({'x': {}}, massive_rows), '0000789019'
         )
@@ -284,23 +316,26 @@ class SecValuationTests(unittest.TestCase):
             '0000320193',
         )
 
-        self.assertEqual(metadata, {
-            '2025-03-31': {
-                'cik': '0000320193',
-                'date': '2025-03-31',
-                'period': 'Q1',
+        self.assertEqual(
+            metadata,
+            {
+                '2025-03-31': {
+                    'cik': '0000320193',
+                    'date': '2025-03-31',
+                    'period': 'Q1',
+                },
+                '2025-06-30': {
+                    'cik': '0000320193',
+                    'date': '2025-06-29',
+                    'period': 'Q2',
+                },
+                '2025-09-30': {
+                    'cik': '0000320193',
+                    'date': '2025-09-30',
+                    'period': 'Q3',
+                },
             },
-            '2025-06-30': {
-                'cik': '0000320193',
-                'date': '2025-06-29',
-                'period': 'Q2',
-            },
-            '2025-09-30': {
-                'cik': '0000320193',
-                'date': '2025-09-30',
-                'period': 'Q3',
-            },
-        })
+        )
 
 
 class MergeSecFieldsTests(unittest.IsolatedAsyncioTestCase):
@@ -314,24 +349,28 @@ class MergeSecFieldsTests(unittest.IsolatedAsyncioTestCase):
         fmp_rows = {'2025-03-31': {'cik': '320193', 'quarter': 'Q1'}}
         frames_by_field = {
             'revenue': [
-                sec_frame([
-                    {
-                        'filed': '2025-04-20',
-                        'val': 120,
-                        'start': '2025-01-01',
-                        'end': '2025-03-31',
-                    }
-                ])
+                sec_frame(
+                    [
+                        {
+                            'filed': '2025-04-20',
+                            'val': 120,
+                            'start': '2025-01-01',
+                            'end': '2025-03-31',
+                        }
+                    ]
+                )
             ],
             'weightedAverageShsOutDil': [
-                sec_frame([
-                    {
-                        'filed': '2025-04-20',
-                        'val': 0,
-                        'start': '2025-01-01',
-                        'end': '2025-03-31',
-                    }
-                ])
+                sec_frame(
+                    [
+                        {
+                            'filed': '2025-04-20',
+                            'val': 0,
+                            'start': '2025-01-01',
+                            'end': '2025-03-31',
+                        }
+                    ]
+                )
             ],
         }
 
@@ -366,7 +405,9 @@ class MergeSecFieldsTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(
             valuation, 'fetch_sec_field_rows', side_effect=fail_if_called
         ):
-            await valuation.merge_sec_fields('AAPL', aligned_quarters, {}, {}, ['revenue'])
+            await valuation.merge_sec_fields(
+                'AAPL', aligned_quarters, {}, {}, ['revenue']
+            )
             await valuation.merge_sec_fields(
                 'AAPL',
                 aligned_quarters,

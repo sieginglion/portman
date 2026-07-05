@@ -337,9 +337,13 @@ def drop_incomplete_latest_quarter(
 
 
 def select_latest_clean_required_quarters(
-    rows: dict[str, dict], limit: int, required_fields: list[str]
+    rows: dict[str, dict],
+    limit: int,
+    required_fields: list[str],
+    *,
+    symbol: str | None = None,
 ) -> dict[str, dict]:
-    selected = select_latest_required_quarters(rows, limit)
+    selected = select_latest_required_quarters(rows, limit, symbol=symbol)
     dirty_dates = [
         date
         for date, row in selected.items()
@@ -392,7 +396,9 @@ async def fetch_finmind_taiwan_income_statements(
     )
     merge_preferred_xps_rows(rows, finmind_rows)
     rows = drop_incomplete_latest_quarter(rows, required_fields)
-    return select_latest_clean_required_quarters(rows, limit, required_fields)
+    return select_latest_clean_required_quarters(
+        rows, limit, required_fields, symbol=symbol
+    )
 
 
 def build_aligned_source_quarters(
@@ -410,11 +416,19 @@ def build_aligned_source_quarters(
 
 
 def select_latest_required_quarters(
-    quarters: dict[str, dict], limit: int
+    quarters: dict[str, dict],
+    limit: int,
+    *,
+    symbol: str | None = None,
+    quarter_label: str = 'quarters',
 ) -> dict[str, dict]:
     selected = dict(sorted(quarters.items())[-limit:])
     if len(selected) != limit:
-        raise ValueError
+        subject = f' for {symbol}' if symbol is not None else ''
+        raise ValueError(
+            f'need {limit} {quarter_label}, found {len(selected)}{subject}; '
+            f'available={sorted(quarters)}'
+        )
     return selected
 
 
@@ -1212,7 +1226,9 @@ async def resolve_us_income_statement_quarters(
     aligned_quarters = drop_incomplete_latest_us_quarter(
         symbol, aligned_quarters, required_fields
     )
-    aligned_quarters = select_latest_required_quarters(aligned_quarters, limit)
+    aligned_quarters = select_latest_required_quarters(
+        aligned_quarters, limit, symbol=symbol, quarter_label='aligned quarters'
+    )
     return resolve_all_us_quarter_consensus(symbol, aligned_quarters, required_fields)
 
 
@@ -1231,7 +1247,7 @@ async def fetch_resolved_income_statement_quarters(
         fmp_rows = await fetch_fmp_income_statements(
             market, symbol, limit, require_eps=include_eps
         )
-        return select_latest_required_quarters(fmp_rows, limit)
+        return select_latest_required_quarters(fmp_rows, limit, symbol=symbol)
 
     source_rows = await fetch_us_income_statement_sources(
         symbol, limit + 1, include_eps
