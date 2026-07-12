@@ -1,13 +1,70 @@
 import asyncio
+import os
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from httpx import HTTPStatusError, Request, Response
-
 from backend import valuation
+from httpx import HTTPStatusError, Request, Response
 
 
 class TiingoValuationTests(unittest.TestCase):
+    def test_disabled_sources_do_not_require_keys_at_startup(self):
+        project_root = Path(__file__).resolve().parents[1]
+        base_env = {
+            **os.environ,
+            'FMP_KEY': 'test',
+            'FINMIND_KEY': 'test',
+            'FINNHUB_API_KEY': 'test',
+            'MASSIVE_API_KEY': 'test',
+            'EODHD_API_KEY': 'test',
+            'FROM_COINGECKO': '',
+            'FROM_YAHOO': '',
+            'ENABLE_TIINGO_FUNDAMENTALS': 'false',
+        }
+        for flag, api_key, source in (
+            ('ENABLE_MASSIVE_FUNDAMENTALS', 'MASSIVE_API_KEY', 'massive'),
+            ('ENABLE_EODHD_FUNDAMENTALS', 'EODHD_API_KEY', 'eodhd'),
+        ):
+            with self.subTest(source=source):
+                env = {
+                    **base_env,
+                    'ENABLE_MASSIVE_FUNDAMENTALS': 'true',
+                    'ENABLE_EODHD_FUNDAMENTALS': 'true',
+                    flag: 'false',
+                }
+                env.pop(api_key)
+                code = f'''\
+import sys
+import types
+
+dotenv = types.ModuleType('dotenv')
+dotenv.load_dotenv = lambda: False
+sys.modules['dotenv'] = dotenv
+
+from backend import shared, valuation
+
+assert not shared.{flag}
+assert shared.{api_key} == ''
+assert '{source}' not in valuation.BASE_SOURCE_ORDER
+assert '{source}' not in valuation.SOURCE_ORDER
+'''
+                result = subprocess.run(
+                    [sys.executable, '-c', code],
+                    cwd=project_root,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    result.returncode,
+                    0,
+                    f'{result.stdout}\n{result.stderr}',
+                )
+
     def test_tiingo_is_disabled_by_default(self):
         self.assertFalse(valuation.shared.ENABLE_TIINGO_FUNDAMENTALS)
         self.assertNotIn('tiingo', valuation.BASE_SOURCE_ORDER)
@@ -46,6 +103,68 @@ class TiingoValuationTests(unittest.TestCase):
 
         self.assertEqual(len(source_rows), 4)
         tiingo_fetch.assert_not_awaited()
+
+    def test_disabled_massive_is_not_fetched(self):
+        with (
+            patch.object(valuation.shared, 'ENABLE_MASSIVE_FUNDAMENTALS', False),
+            patch.object(
+                valuation,
+                'fetch_fmp_income_statements',
+                new=AsyncMock(return_value={}),
+            ),
+            patch.object(
+                valuation,
+                'fetch_massive_income_statements',
+                new=AsyncMock(),
+            ) as massive_fetch,
+            patch.object(
+                valuation,
+                'fetch_eodhd_income_statements',
+                new=AsyncMock(return_value={}),
+            ),
+            patch.object(
+                valuation,
+                'fetch_finnhub_income_statements',
+                new=AsyncMock(return_value={}),
+            ),
+        ):
+            source_rows = asyncio.run(
+                valuation.fetch_us_income_statement_sources('HOOD', 8, True)
+            )
+
+        self.assertNotIn('massive', source_rows)
+        massive_fetch.assert_not_awaited()
+
+    def test_disabled_eodhd_is_not_fetched(self):
+        with (
+            patch.object(valuation.shared, 'ENABLE_EODHD_FUNDAMENTALS', False),
+            patch.object(
+                valuation,
+                'fetch_fmp_income_statements',
+                new=AsyncMock(return_value={}),
+            ),
+            patch.object(
+                valuation,
+                'fetch_massive_income_statements',
+                new=AsyncMock(return_value={}),
+            ),
+            patch.object(
+                valuation,
+                'fetch_eodhd_income_statements',
+                new=AsyncMock(),
+            ) as eodhd_fetch,
+            patch.object(
+                valuation,
+                'fetch_finnhub_income_statements',
+                new=AsyncMock(return_value={}),
+            ),
+        ):
+            source_rows = asyncio.run(
+                valuation.fetch_us_income_statement_sources('HOOD', 8, True)
+            )
+
+        self.assertNotIn('eodhd', source_rows)
+        eodhd_fetch.assert_not_awaited()
 
     def test_source_fetch_error_redacts_request_url_and_token(self):
         request = Request(

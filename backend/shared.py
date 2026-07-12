@@ -22,9 +22,15 @@ dotenv.load_dotenv()
 
 FMP_KEY = os.environ['FMP_KEY']
 FINMIND_KEY = os.environ['FINMIND_KEY']
-MASSIVE_API_KEY = os.environ['MASSIVE_API_KEY']
 FINNHUB_API_KEY = os.environ['FINNHUB_API_KEY']
-EODHD_API_KEY = os.environ['EODHD_API_KEY']
+ENABLE_MASSIVE_FUNDAMENTALS = (
+    os.getenv('ENABLE_MASSIVE_FUNDAMENTALS', 'true').lower() == 'true'
+)
+ENABLE_EODHD_FUNDAMENTALS = (
+    os.getenv('ENABLE_EODHD_FUNDAMENTALS', 'true').lower() == 'true'
+)
+MASSIVE_API_KEY = os.environ['MASSIVE_API_KEY'] if ENABLE_MASSIVE_FUNDAMENTALS else ''
+EODHD_API_KEY = os.environ['EODHD_API_KEY'] if ENABLE_EODHD_FUNDAMENTALS else ''
 TIINGO_API_KEY = os.getenv('TIINGO_API_KEY', '')
 ENABLE_TIINGO_FUNDAMENTALS = (
     os.getenv('ENABLE_TIINGO_FUNDAMENTALS', '').lower() == 'true'

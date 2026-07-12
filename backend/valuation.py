@@ -28,8 +28,8 @@ EPS_ABS_TOLERANCE = 0.02
 FINNHUB_MILLION_SCALE = 1_000_000
 BASE_SOURCE_ORDER = (
     'fmp',
-    'massive',
-    'eodhd',
+    *(("massive",) if shared.ENABLE_MASSIVE_FUNDAMENTALS else ()),
+    *(("eodhd",) if shared.ENABLE_EODHD_FUNDAMENTALS else ()),
     'finnhub',
     *(("tiingo",) if shared.ENABLE_TIINGO_FUNDAMENTALS else ()),
 )
@@ -1280,23 +1280,31 @@ def format_source_fetch_error(error: Exception) -> str:
 
 async def fetch_us_income_statement_sources(
     symbol: str, limit: int, include_eps: bool
-) -> tuple[dict[str, dict], ...]:
-    source_fetches = [
-        fetch_fmp_income_statements('u', symbol, limit, require_eps=include_eps),
-        fetch_massive_income_statements(symbol, limit, require_eps=include_eps),
-        fetch_eodhd_income_statements(symbol, limit, require_eps=include_eps),
-        fetch_finnhub_income_statements(symbol, limit, require_eps=include_eps),
-    ]
+) -> dict[str, dict[str, dict]]:
+    source_fetches = {
+        'fmp': fetch_fmp_income_statements('u', symbol, limit, require_eps=include_eps),
+        'finnhub': fetch_finnhub_income_statements(
+            symbol, limit, require_eps=include_eps
+        ),
+    }
+    if shared.ENABLE_MASSIVE_FUNDAMENTALS:
+        source_fetches['massive'] = fetch_massive_income_statements(
+            symbol, limit, require_eps=include_eps
+        )
+    if shared.ENABLE_EODHD_FUNDAMENTALS:
+        source_fetches['eodhd'] = fetch_eodhd_income_statements(
+            symbol, limit, require_eps=include_eps
+        )
     if shared.ENABLE_TIINGO_FUNDAMENTALS:
-        source_fetches.append(
-            fetch_tiingo_income_statements(symbol, limit, require_eps=include_eps)
+        source_fetches['tiingo'] = fetch_tiingo_income_statements(
+            symbol, limit, require_eps=include_eps
         )
     source_rows = await asyncio.gather(
-        *source_fetches,
+        *source_fetches.values(),
         return_exceptions=True,
     )
     resolved_rows = []
-    for source_name, rows in zip(BASE_SOURCE_ORDER, source_rows, strict=True):
+    for source_name, rows in zip(source_fetches, source_rows, strict=True):
         if isinstance(rows, Exception):
             logger.warning(
                 '{} income statements unavailable for {}: {}; skipping source',
@@ -1305,8 +1313,8 @@ async def fetch_us_income_statement_sources(
                 format_source_fetch_error(rows),
             )
             rows = {}
-        resolved_rows.append(rows)
-    return tuple(resolved_rows)
+        resolved_rows.append((source_name, rows))
+    return dict(resolved_rows)
 
 
 def select_sec_cik(
@@ -1534,18 +1542,18 @@ async def fetch_resolved_income_statement_quarters(
         )
         return select_latest_required_quarters(fmp_rows, limit, symbol=symbol)
 
-    fmp_rows, massive_rows, eodhd_rows, finnhub_rows, *optional_source_rows = (
-        await fetch_us_income_statement_sources(symbol, limit + 1, include_eps)
+    source_rows = await fetch_us_income_statement_sources(
+        symbol, limit + 1, include_eps
     )
     return await resolve_us_income_statement_quarters(
         symbol,
-        fmp_rows,
-        massive_rows,
-        eodhd_rows,
-        finnhub_rows,
+        source_rows['fmp'],
+        source_rows.get('massive', {}),
+        source_rows.get('eodhd', {}),
+        source_rows['finnhub'],
         limit,
         include_eps,
-        tiingo_rows=optional_source_rows[0] if optional_source_rows else None,
+        tiingo_rows=source_rows.get('tiingo'),
     )
 
 
