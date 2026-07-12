@@ -25,6 +25,10 @@ FINMIND_KEY = os.environ['FINMIND_KEY']
 MASSIVE_API_KEY = os.environ['MASSIVE_API_KEY']
 FINNHUB_API_KEY = os.environ['FINNHUB_API_KEY']
 EODHD_API_KEY = os.environ['EODHD_API_KEY']
+TIINGO_API_KEY = os.getenv('TIINGO_API_KEY', '')
+ENABLE_TIINGO_FUNDAMENTALS = (
+    os.getenv('ENABLE_TIINGO_FUNDAMENTALS', '').lower() == 'true'
+)
 FROM_COINGECKO = set(os.environ['FROM_COINGECKO'].split(','))
 FROM_YAHOO = set(os.environ['FROM_YAHOO'].split(','))
 MARKET_TO_TIMEZONE = {

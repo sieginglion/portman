@@ -1,5 +1,7 @@
 import asyncio
 import math
+from collections import Counter
+from itertools import combinations
 from typing import Literal
 
 import pandas as pd
@@ -13,27 +15,63 @@ from .shared import (
     FINNHUB_API_KEY,
     FMP_KEY,
     MASSIVE_API_KEY,
+    TIINGO_API_KEY,
     add_suffix,
     cached,
 )
 
 EXTRA_Q = 1
 SOURCE_DIFF_THRESHOLD = 0.065
+SOURCE_MATCH_THRESHOLD = 0.02
 SOURCE_DATE_DIFF_TOLERANCE_DAYS = 7
 EPS_ABS_TOLERANCE = 0.02
 FINNHUB_MILLION_SCALE = 1_000_000
-BASE_SOURCE_ORDER = ('fmp', 'massive', 'eodhd', 'finnhub')
+BASE_SOURCE_ORDER = (
+    'fmp',
+    'massive',
+    'eodhd',
+    'finnhub',
+    *(("tiingo",) if shared.ENABLE_TIINGO_FUNDAMENTALS else ()),
+)
 SOURCE_ORDER = (*BASE_SOURCE_ORDER, 'sec')
 SOURCE_LABELS = {
     'fmp': 'FMP',
     'massive': 'Massive',
     'eodhd': 'EODHD',
     'finnhub': 'Finnhub',
+    'tiingo': 'Tiingo',
     'sec': 'SEC',
 }
+
+# Coverage is intentionally process-local. Restarting the backend starts a new
+# screener run with a clean counter.
+_xps_coverage_points = Counter()
+_xps_coverage_observations = 0
+_xps_coverage_seen: set[tuple[str, str]] = set()
 BASE_XPS_FIELDS = ('revenue', 'weightedAverageShsOutDil')
 EPS_XPS_FIELD = 'epsDiluted'
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
+# SEC is a repair/reference source, not a peer provider for source comparison.
+XPS_SOURCE_PAIRS = tuple(combinations(BASE_SOURCE_ORDER, 2))
+_xps_coverage_complete_keys = {source: set() for source in SOURCE_ORDER}
+_xps_coverage_pair_stats = {
+    pair: {
+        'both_complete': 0,
+        'all_fields_exact': 0,
+        'all_fields_within_2_percent': 0,
+        'all_fields_within_consensus': 0,
+        'fields': {
+            field: {
+                'both_present': 0,
+                'exact_matches': 0,
+                'within_2_percent': 0,
+                'within_consensus': 0,
+            }
+            for field in ALL_XPS_FIELDS
+        },
+    }
+    for pair in XPS_SOURCE_PAIRS
+}
 SEC_USER_AGENT = (
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
     'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
@@ -43,8 +81,12 @@ SEC_COMPANY_CONCEPT_URL = (
 )
 FINMIND_API_URL = 'https://api.finmindtrade.com/api/v4/data'
 EODHD_FUNDAMENTALS_URL = 'https://eodhd.com/api/v1.1/fundamentals/{}'
+TIINGO_FUNDAMENTALS_STATEMENTS_URL = (
+    'https://api.tiingo.com/tiingo/fundamentals/{}/statements'
+)
 FINMIND_TAIWAN_QUARTER_BUFFER = 2
 FMP_TAIWAN_QUARTER_BUFFER = 1
+TIINGO_QUARTER_BUFFER = 1
 FINMIND_TAIWAN_SHARE_PAR_VALUE = 10
 SEC_DEDUPE_COLS = ['filed', 'val', 'start', 'end']
 SEC_ALLOWED_FORMS = {'10-Q', '10-K', '10-Q/A', '10-K/A'}
@@ -89,6 +131,168 @@ def source_abs_diff(lhs: int | float, rhs: int | float) -> float:
 
 def has_source_field_value(value: int | float | None) -> bool:
     return value is not None and not pd.isna(value)
+
+
+def source_values_within_match_threshold(lhs: int | float, rhs: int | float) -> bool:
+    lhs = float(lhs)
+    rhs = float(rhs)
+    if not all(map(math.isfinite, (lhs, rhs))):
+        return False
+    scale = max(abs(lhs), abs(rhs))
+    if scale == 0:
+        return True
+    return abs(lhs - rhs) / scale <= SOURCE_MATCH_THRESHOLD
+
+
+def record_xps_coverage(
+    symbol: str,
+    aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
+    required_fields: list[str],
+) -> None:
+    """Count complete source quarters once for the current backend run."""
+    global _xps_coverage_observations
+
+    for quarter, data in aligned_quarters.items():
+        key = (symbol, quarter)
+        if key in _xps_coverage_seen:
+            continue
+
+        _xps_coverage_seen.add(key)
+        _xps_coverage_observations += 1
+        source_complete = {}
+        for source in SOURCE_ORDER:
+            complete = all(
+                has_source_field_value(data.get(field, {}).get(source))
+                for field in required_fields
+            )
+            source_complete[source] = complete
+            _xps_coverage_points[source] += int(complete)
+            if complete:
+                _xps_coverage_complete_keys[source].add(key)
+
+        for pair in XPS_SOURCE_PAIRS:
+            lhs_source, rhs_source = pair
+            pair_stats = _xps_coverage_pair_stats[pair]
+            if source_complete[lhs_source] and source_complete[rhs_source]:
+                pair_stats['both_complete'] += 1
+
+            all_fields_exact = True
+            all_fields_within_2_percent = True
+            all_fields_within_consensus = True
+            for field in required_fields:
+                lhs = data.get(field, {}).get(lhs_source)
+                rhs = data.get(field, {}).get(rhs_source)
+                if not (has_source_field_value(lhs) and has_source_field_value(rhs)):
+                    all_fields_exact = False
+                    all_fields_within_2_percent = False
+                    all_fields_within_consensus = False
+                    continue
+
+                field_stats = pair_stats['fields'][field]
+                field_stats['both_present'] += 1
+                field_stats['exact_matches'] += int(lhs == rhs)
+                within_2_percent = source_values_within_match_threshold(lhs, rhs)
+                field_stats['within_2_percent'] += int(within_2_percent)
+                within_consensus = field_has_consensus(field, lhs, rhs)
+                field_stats['within_consensus'] += int(within_consensus)
+                all_fields_exact &= lhs == rhs
+                all_fields_within_2_percent &= within_2_percent
+                all_fields_within_consensus &= within_consensus
+
+            if source_complete[lhs_source] and source_complete[rhs_source]:
+                pair_stats['all_fields_exact'] += int(all_fields_exact)
+                pair_stats['all_fields_within_2_percent'] += int(
+                    all_fields_within_2_percent
+                )
+                pair_stats['all_fields_within_consensus'] += int(
+                    all_fields_within_consensus
+                )
+
+
+def get_xps_coverage() -> dict:
+    """Return aggregate source coverage for the current backend process."""
+    source_coverage = {}
+    for source in SOURCE_ORDER:
+        complete_keys = _xps_coverage_complete_keys[source]
+        source_coverage[source] = {
+            'points': _xps_coverage_points[source],
+            'ratio': (
+                _xps_coverage_points[source] / _xps_coverage_observations
+                if _xps_coverage_observations
+                else 0
+            ),
+        }
+
+    comparisons = {}
+    for lhs_source, rhs_source in XPS_SOURCE_PAIRS:
+        lhs_keys = _xps_coverage_complete_keys[lhs_source]
+        rhs_keys = _xps_coverage_complete_keys[rhs_source]
+        intersection = lhs_keys & rhs_keys
+        union = lhs_keys | rhs_keys
+        pair_stats = _xps_coverage_pair_stats[(lhs_source, rhs_source)]
+        values = {}
+        for field, field_stats in pair_stats['fields'].items():
+            both_present = field_stats['both_present']
+            values[field] = {
+                **field_stats,
+                'exact_ratio': (
+                    field_stats['exact_matches'] / both_present if both_present else 0
+                ),
+                'match_ratio': (
+                    field_stats['within_2_percent'] / both_present
+                    if both_present
+                    else 0
+                ),
+                'consensus_ratio': (
+                    field_stats['within_consensus'] / both_present
+                    if both_present
+                    else 0
+                ),
+            }
+        comparisons[f'{lhs_source}:{rhs_source}'] = {
+            'coverage': {
+                'left_points': len(lhs_keys),
+                'right_points': len(rhs_keys),
+                'overlap_points': len(intersection),
+                'left_only_points': len(lhs_keys - rhs_keys),
+                'right_only_points': len(rhs_keys - lhs_keys),
+                'jaccard_ratio': len(intersection) / len(union) if union else 0,
+            },
+            'complete_rows': {
+                'both_complete': pair_stats['both_complete'],
+                'all_fields_exact': pair_stats['all_fields_exact'],
+                'exact_ratio': (
+                    pair_stats['all_fields_exact'] / pair_stats['both_complete']
+                    if pair_stats['both_complete']
+                    else 0
+                ),
+                'all_fields_within_2_percent': pair_stats[
+                    'all_fields_within_2_percent'
+                ],
+                'match_ratio': (
+                    pair_stats['all_fields_within_2_percent']
+                    / pair_stats['both_complete']
+                    if pair_stats['both_complete']
+                    else 0
+                ),
+                'all_fields_within_consensus': pair_stats[
+                    'all_fields_within_consensus'
+                ],
+                'consensus_ratio': (
+                    pair_stats['all_fields_within_consensus']
+                    / pair_stats['both_complete']
+                    if pair_stats['both_complete']
+                    else 0
+                ),
+            },
+            'fields': values,
+        }
+
+    return {
+        'observations': _xps_coverage_observations,
+        'sources': source_coverage,
+        'comparisons': comparisons,
+    }
 
 
 def select_closest_aligned_quarter_key(
@@ -816,6 +1020,64 @@ async def fetch_finnhub_income_statements(
     )
 
 
+def tiingo_fundamentals_start_date(
+    limit: int, quarter_buffer: int = TIINGO_QUARTER_BUFFER
+) -> str:
+    start = pd.Timestamp.now(
+        tz=shared.MARKET_TO_TIMEZONE['u']
+    ).normalize() - pd.DateOffset(months=3 * (limit + quarter_buffer))
+    return date_str(start.tz_localize(None))
+
+
+def normalize_tiingo_income_statement_rows(
+    statements: list[dict], *, include_eps: bool
+) -> dict[str, dict]:
+    """Normalize Tiingo's nested quarterly income-statement response."""
+    rows = {}
+    field_map = {
+        'revenue': 'revenue',
+        'weightedAverageShsOutDil': 'shareswaDil',
+        EPS_XPS_FIELD: 'epsDil',
+    }
+    for statement in statements:
+        if normalize_massive_fiscal_quarter(statement.get('quarter')) is None:
+            continue
+        statement_data = statement.get('statementData', {})
+        if not isinstance(statement_data, dict):
+            continue
+        income_statement = statement_data.get('incomeStatement', [])
+        if not isinstance(income_statement, list) or 'date' not in statement:
+            continue
+        values = {
+            entry.get('dataCode'): entry.get('value')
+            for entry in income_statement
+            if isinstance(entry, dict) and entry.get('dataCode') is not None
+        }
+        date = date_str(pd.Timestamp(statement['date']))
+        rows[date] = normalize_source_row(values, field_map, include_eps)
+    return rows
+
+
+async def fetch_tiingo_income_statements(
+    symbol: str, limit: int, require_eps: bool = True
+) -> dict[str, dict]:
+    params = {
+        # Use Tiingo's latest restated values, whose dates are fiscal period ends.
+        'asReported': 'false',
+        'startDate': tiingo_fundamentals_start_date(limit),
+    }
+    async with AsyncClient(
+        timeout=30, headers={'Authorization': f'Token {TIINGO_API_KEY}'}
+    ) as client:
+        response = await client.get(
+            TIINGO_FUNDAMENTALS_STATEMENTS_URL.format(symbol), params=params
+        )
+        response.raise_for_status()
+    return normalize_tiingo_income_statement_rows(
+        response.json(), include_eps=require_eps
+    )
+
+
 def diluted_eps_from_reported_income(
     income_statement_row: dict, diluted_shares: int | float | None
 ) -> float | None:
@@ -1009,14 +1271,28 @@ def format_source_field_block(
     return '\n'.join(lines)
 
 
+def format_source_fetch_error(error: Exception) -> str:
+    """Summarize provider failures without logging request URLs or API keys."""
+    if isinstance(error, HTTPStatusError):
+        return f'HTTP {error.response.status_code}'
+    return type(error).__name__
+
+
 async def fetch_us_income_statement_sources(
     symbol: str, limit: int, include_eps: bool
-) -> tuple[dict[str, dict], dict[str, dict], dict[str, dict], dict[str, dict]]:
-    source_rows = await asyncio.gather(
+) -> tuple[dict[str, dict], ...]:
+    source_fetches = [
         fetch_fmp_income_statements('u', symbol, limit, require_eps=include_eps),
         fetch_massive_income_statements(symbol, limit, require_eps=include_eps),
         fetch_eodhd_income_statements(symbol, limit, require_eps=include_eps),
         fetch_finnhub_income_statements(symbol, limit, require_eps=include_eps),
+    ]
+    if shared.ENABLE_TIINGO_FUNDAMENTALS:
+        source_fetches.append(
+            fetch_tiingo_income_statements(symbol, limit, require_eps=include_eps)
+        )
+    source_rows = await asyncio.gather(
+        *source_fetches,
         return_exceptions=True,
     )
     resolved_rows = []
@@ -1026,7 +1302,7 @@ async def fetch_us_income_statement_sources(
                 '{} income statements unavailable for {}: {}; skipping source',
                 SOURCE_LABELS[source_name],
                 symbol,
-                rows,
+                format_source_fetch_error(rows),
             )
             rows = {}
         resolved_rows.append(rows)
@@ -1092,6 +1368,8 @@ async def merge_sec_fields(
         return
 
     for field in dict.fromkeys(fields):
+        if field == 'revenue':
+            continue
         try:
             frames = await fetch_sec_field_rows(cik, field)
         except Exception as exc:
@@ -1215,11 +1493,16 @@ async def resolve_us_income_statement_quarters(
     finnhub_rows: dict[str, dict],
     limit: int,
     include_eps: bool,
+    *,
+    tiingo_rows: dict[str, dict] | None = None,
 ) -> dict[str, dict[str, int | float | None]]:
     required_fields = required_xps_fields(include_eps)
     aligned_quarters = build_aligned_source_quarters(
         fmp_rows, massive_rows, eodhd_rows, finnhub_rows
     )
+    if tiingo_rows is not None:
+        align_source_rows(aligned_quarters, 'tiingo', tiingo_rows)
+        aligned_quarters = dict(sorted(aligned_quarters.items()))
     await merge_sec_fields(
         symbol, aligned_quarters, fmp_rows, massive_rows, required_fields
     )
@@ -1229,6 +1512,8 @@ async def resolve_us_income_statement_quarters(
     aligned_quarters = select_latest_required_quarters(
         aligned_quarters, limit, symbol=symbol, quarter_label='aligned quarters'
     )
+    if include_eps:
+        record_xps_coverage(symbol, aligned_quarters, required_fields)
     return resolve_all_us_quarter_consensus(symbol, aligned_quarters, required_fields)
 
 
@@ -1249,11 +1534,18 @@ async def fetch_resolved_income_statement_quarters(
         )
         return select_latest_required_quarters(fmp_rows, limit, symbol=symbol)
 
-    source_rows = await fetch_us_income_statement_sources(
-        symbol, limit + 1, include_eps
+    fmp_rows, massive_rows, eodhd_rows, finnhub_rows, *optional_source_rows = (
+        await fetch_us_income_statement_sources(symbol, limit + 1, include_eps)
     )
     return await resolve_us_income_statement_quarters(
-        symbol, *source_rows, limit, include_eps
+        symbol,
+        fmp_rows,
+        massive_rows,
+        eodhd_rows,
+        finnhub_rows,
+        limit,
+        include_eps,
+        tiingo_rows=optional_source_rows[0] if optional_source_rows else None,
     )
 
 

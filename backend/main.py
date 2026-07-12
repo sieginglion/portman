@@ -112,6 +112,11 @@ async def get_scores(
     )
 
 
+@app.get('/coverage')
+async def get_coverage():
+    return valuation.get_xps_coverage()
+
+
 @app.get('/growth')
 async def get_growth(market: Literal['c', 'j', 't', 'u'], symbol: str):
     if is_btc(market, symbol):

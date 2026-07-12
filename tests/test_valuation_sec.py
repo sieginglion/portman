@@ -339,7 +339,7 @@ class SecValuationTests(unittest.TestCase):
 
 
 class MergeSecFieldsTests(unittest.IsolatedAsyncioTestCase):
-    async def test_merge_sec_fields_adds_sanitized_values_for_required_fields(self):
+    async def test_merge_sec_fields_skips_revenue_but_adds_other_fields(self):
         aligned_quarters = {
             '2025-03-31': {
                 'revenue': {'fmp': 100},
@@ -348,24 +348,12 @@ class MergeSecFieldsTests(unittest.IsolatedAsyncioTestCase):
         }
         fmp_rows = {'2025-03-31': {'cik': '320193', 'quarter': 'Q1'}}
         frames_by_field = {
-            'revenue': [
-                sec_frame(
-                    [
-                        {
-                            'filed': '2025-04-20',
-                            'val': 120,
-                            'start': '2025-01-01',
-                            'end': '2025-03-31',
-                        }
-                    ]
-                )
-            ],
             'weightedAverageShsOutDil': [
                 sec_frame(
                     [
                         {
                             'filed': '2025-04-20',
-                            'val': 0,
+                            'val': 12,
                             'start': '2025-01-01',
                             'end': '2025-03-31',
                         }
@@ -374,8 +362,11 @@ class MergeSecFieldsTests(unittest.IsolatedAsyncioTestCase):
             ],
         }
 
+        fetched_fields = []
+
         async def fake_fetch_sec_field_rows(cik, field):
             self.assertEqual(cik, '0000320193')
+            fetched_fields.append(field)
             return frames_by_field[field]
 
         with patch.object(
@@ -391,9 +382,10 @@ class MergeSecFieldsTests(unittest.IsolatedAsyncioTestCase):
                 ['revenue', 'weightedAverageShsOutDil', 'revenue'],
             )
 
-        self.assertEqual(aligned_quarters['2025-03-31']['revenue']['sec'], 120)
-        self.assertNotIn(
-            'sec', aligned_quarters['2025-03-31']['weightedAverageShsOutDil']
+        self.assertEqual(fetched_fields, ['weightedAverageShsOutDil'])
+        self.assertNotIn('sec', aligned_quarters['2025-03-31']['revenue'])
+        self.assertEqual(
+            aligned_quarters['2025-03-31']['weightedAverageShsOutDil']['sec'], 12
         )
 
     async def test_merge_sec_fields_skips_when_cik_or_metadata_is_unavailable(self):
