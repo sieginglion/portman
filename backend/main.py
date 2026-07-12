@@ -164,36 +164,6 @@ async def calc_btc_ps(q: int) -> pd.Series:
     return await get_btc_price_to_sma_series(window, window)
 
 
-@app.get('/pegs')
-async def get_pegs(
-    market: Literal['j', 't', 'u'],
-    symbol: str,
-    q: int,
-):
-    os.environ.setdefault('MPLCONFIGDIR', '/tmp/matplotlib')
-    from matplotlib import pyplot as plt
-
-    peg = await valuation.calc_pegs(market, symbol, q)
-    if peg.empty:
-        raise fastapi.HTTPException(422, 'No positive historical PEG values')
-
-    fig, ax = plt.subplots(figsize=(8, 4), dpi=160)
-    ax.scatter(peg.index, peg, s=10, color='#2563eb', alpha=0.72, linewidths=0)
-    ax.scatter(peg.index[-1:], peg.iloc[-1:], s=32, color='#dc2626', linewidths=0)
-    ax.axhline(peg.iloc[-1], color='#dc2626', linewidth=1, alpha=0.45)
-    ax.set_title(f'{symbol} historical PEG, last {q} quarters')
-    ax.set_ylabel('PEG')
-    ax.grid(True, axis='y', color='#e5e7eb', linewidth=0.8)
-    ax.spines[['top', 'right']].set_visible(False)
-    fig.autofmt_xdate()
-    fig.tight_layout()
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png')
-    plt.close(fig)
-    return fastapi.Response(buf.getvalue(), media_type='image/png')
-
-
 @app.get('/px')
 async def get_px(
     market: Literal['c', 'j', 't', 'u'],

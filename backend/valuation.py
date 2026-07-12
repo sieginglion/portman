@@ -1599,34 +1599,6 @@ async def calc_px(market: Literal['j', 't', 'u'], symbol: str, q: int) -> pd.Dat
     return df[['ps', 'pe']]
 
 
-async def calc_pegs(market: Literal['j', 't', 'u'], symbol: str, q: int) -> pd.Series:
-    prices, xps = await asyncio.gather(
-        shared.get_prices(market, symbol, 91 * q, False),
-        fetch_xps(market, symbol, q + EXTRA_Q + 4),
-    )
-    xps['eps_growth'] = xps['eps'].pct_change(4)
-    index = pd.date_range(
-        end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date(),
-        periods=len(prices),
-    )
-    df = (
-        pd.DataFrame({'price': prices}, index)
-        .join(xps, how='outer')
-        .ffill()
-        .tail(91 * q)
-    )
-    # if (
-    #     (len(df) != 91 * q)
-    #     or (pd.isna(df['price'].iloc[0]))
-    #     or pd.isna(df['eps'].iloc[0])
-    #     or pd.isna(df['eps_growth'].iloc[0])
-    # ):
-    #     raise ValueError
-
-    # df = df[(df['eps'] > 0) & (df['eps_growth'] > 0)]
-    return df['price'] / df['eps'] / (df['eps_growth'] * 100)
-
-
 # def avg_by_period_ends(values, ends):
 #     today = pd.Timestamp.now(tz='Asia/Taipei').normalize().tz_localize(None)
 #     series = pd.Series(
