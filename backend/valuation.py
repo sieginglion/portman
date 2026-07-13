@@ -1508,13 +1508,11 @@ def resolve_all_us_quarter_consensus(
     }
 
 
-async def resolve_us_income_statement_quarters(
+async def prepare_us_income_statement_quarters(
     symbol: str,
     source_rows: dict[str, dict[str, dict]],
-    limit: int,
-    include_eps: bool,
-) -> dict[str, dict[str, int | float | None]]:
-    required_fields = required_xps_fields(include_eps)
+    required_fields: list[str],
+) -> dict[str, dict[str, dict[str, int | float | None]]]:
     aligned_quarters = build_aligned_source_quarters(source_rows)
     await merge_sec_fields(
         symbol,
@@ -1523,8 +1521,18 @@ async def resolve_us_income_statement_quarters(
         source_rows.get('massive', {}),
         required_fields,
     )
-    aligned_quarters = drop_incomplete_latest_us_quarter(
-        symbol, aligned_quarters, required_fields
+    return drop_incomplete_latest_us_quarter(symbol, aligned_quarters, required_fields)
+
+
+async def resolve_us_income_statement_quarters(
+    symbol: str,
+    source_rows: dict[str, dict[str, dict]],
+    limit: int,
+    include_eps: bool,
+) -> dict[str, dict[str, int | float | None]]:
+    required_fields = required_xps_fields(include_eps)
+    aligned_quarters = await prepare_us_income_statement_quarters(
+        symbol, source_rows, required_fields
     )
     aligned_quarters = select_latest_required_quarters(
         aligned_quarters, limit, symbol=symbol, quarter_label='aligned quarters'
