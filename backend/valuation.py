@@ -1,7 +1,5 @@
 import asyncio
 import math
-from collections import Counter
-from itertools import combinations
 from typing import Literal
 
 import pandas as pd
@@ -32,7 +30,6 @@ BASE_SOURCE_ORDER = (
     *(("tiingo",) if shared.ENABLE_TIINGO_FUNDAMENTALS else ()),
 )
 SOURCE_ORDER = (*BASE_SOURCE_ORDER, 'sec')
-COVERAGE_SOURCE_ORDER = BASE_SOURCE_ORDER
 SOURCE_LABELS = {
     'fmp': 'FMP',
     'massive': 'Massive',
@@ -42,38 +39,26 @@ SOURCE_LABELS = {
     'sec': 'SEC',
 }
 
-# Coverage is intentionally process-local. Restarting the backend starts a new
-# screener run with a clean counter.
-_xps_coverage_points = Counter()
-_xps_coverage_observations = 0
-_xps_coverage_seen: set[tuple[str, str]] = set()
 BASE_XPS_FIELDS = ('revenue', 'weightedAverageShsOutDil')
 EPS_XPS_FIELD = 'epsDiluted'
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
-# SEC is a repair/reference source, not a peer provider for coverage comparison.
-XPS_SOURCE_PAIRS = tuple(combinations(COVERAGE_SOURCE_ORDER, 2))
-_xps_missingness_seen: set[tuple[str, str]] = set()
+# Coverage is intentionally process-local. Restarting the backend starts a new
+# screener run with clean matrices. SEC is a repair/reference source, not a
+# peer provider, so it is excluded.
+_xps_hole_matrix_seen: set[tuple[str, str]] = set()
 
 
-def new_xps_missingness_pair_stats() -> dict:
+def new_xps_hole_matrices() -> dict[str, dict[str, dict[str, int]]]:
     return {
-        pair: {
-            'fields': {
-                field: {
-                    'observations': 0,
-                    'both_present': 0,
-                    'left_only': 0,
-                    'right_only': 0,
-                    'both_missing': 0,
-                }
-                for field in ALL_XPS_FIELDS
-            },
+        field: {
+            source: {other_source: 0 for other_source in BASE_SOURCE_ORDER}
+            for source in BASE_SOURCE_ORDER
         }
-        for pair in XPS_SOURCE_PAIRS
+        for field in ALL_XPS_FIELDS
     }
 
 
-_xps_missingness_pair_stats = new_xps_missingness_pair_stats()
+_xps_hole_matrices = new_xps_hole_matrices()
 SEC_USER_AGENT = (
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
     'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
@@ -147,154 +132,45 @@ def has_source_field_value(value: int | float | None) -> bool:
     return value is not None and not pd.isna(value)
 
 
-def summarize_missingness_pair(field_stats: dict[str, int]) -> dict:
-    """Return presence and phi-correlation metrics for one source pair/field."""
-    observations = field_stats['observations']
-    both_present = field_stats['both_present']
-    left_only = field_stats['left_only']
-    right_only = field_stats['right_only']
-    both_missing = field_stats['both_missing']
-
-    left_missing = right_only + both_missing
-    right_missing = left_only + both_missing
-    left_missing_rate = left_missing / observations if observations else 0
-    right_missing_rate = right_missing / observations if observations else 0
-    both_missing_rate = both_missing / observations if observations else 0
-    expected_both_missing_rate = left_missing_rate * right_missing_rate
-
-    denominator = math.sqrt(
-        left_missing
-        * (left_only + both_present)
-        * right_missing
-        * (right_only + both_present)
-    )
-    phi_correlation = (
-        (both_missing * both_present - left_only * right_only) / denominator
-        if denominator
-        else None
-    )
-
-    return {
-        **field_stats,
-        'left_missing_rate': left_missing_rate,
-        'right_missing_rate': right_missing_rate,
-        'both_missing_rate': both_missing_rate,
-        'expected_both_missing_rate': expected_both_missing_rate,
-        'missingness_lift': (
-            both_missing_rate / expected_both_missing_rate
-            if expected_both_missing_rate
-            else None
-        ),
-        'phi_correlation': phi_correlation,
-    }
+def missing_xps_sources(
+    quarter: dict[str, dict[str, int | float | None]],
+    field: str,
+    unavailable_sources: frozenset[str],
+) -> list[str]:
+    return [
+        source
+        for source in BASE_SOURCE_ORDER
+        if source not in unavailable_sources
+        and not has_source_field_value(quarter.get(field, {}).get(source))
+    ]
 
 
-def record_xps_missingness(
+def record_xps_hole_matrices(
     symbol: str,
     aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
-    required_fields: list[str],
     *,
     unavailable_sources: frozenset[str] = frozenset(),
 ) -> None:
-    """Record raw peer-provider presence before quarter filtering or SEC repair."""
+    """Record raw field-level provider holes before quarter filtering or SEC repair."""
     for quarter, data in aligned_quarters.items():
         key = (symbol, quarter)
-        if key in _xps_missingness_seen:
+        if key in _xps_hole_matrix_seen:
             continue
 
-        _xps_missingness_seen.add(key)
-        for pair in XPS_SOURCE_PAIRS:
-            lhs_source, rhs_source = pair
-            if lhs_source in unavailable_sources or rhs_source in unavailable_sources:
-                continue
-
-            for field in required_fields:
-                field_stats = _xps_missingness_pair_stats[pair]['fields'][field]
-                lhs_present = has_source_field_value(
-                    data.get(field, {}).get(lhs_source)
-                )
-                rhs_present = has_source_field_value(
-                    data.get(field, {}).get(rhs_source)
-                )
-                field_stats['observations'] += 1
-                if lhs_present and rhs_present:
-                    field_stats['both_present'] += 1
-                elif lhs_present:
-                    field_stats['left_only'] += 1
-                elif rhs_present:
-                    field_stats['right_only'] += 1
-                else:
-                    field_stats['both_missing'] += 1
-
-
-def record_xps_coverage(
-    symbol: str,
-    aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
-    required_fields: list[str],
-) -> None:
-    """Count complete source quarters once for the current backend run."""
-    global _xps_coverage_observations
-
-    for quarter, data in aligned_quarters.items():
-        key = (symbol, quarter)
-        if key in _xps_coverage_seen:
-            continue
-
-        _xps_coverage_seen.add(key)
-        _xps_coverage_observations += 1
-        for source in COVERAGE_SOURCE_ORDER:
-            complete = all(
-                has_source_field_value(data.get(field, {}).get(source))
-                for field in required_fields
-            )
-            _xps_coverage_points[source] += int(complete)
+        _xps_hole_matrix_seen.add(key)
+        for field in ALL_XPS_FIELDS:
+            # Diagonal entries count field missingness; off-diagonal entries
+            # count co-missingness between two providers.
+            missing = missing_xps_sources(data, field, unavailable_sources)
+            matrix = _xps_hole_matrices[field]
+            for source in missing:
+                for other_source in missing:
+                    matrix[source][other_source] += 1
 
 
 def get_xps_coverage() -> dict:
-    """Return aggregate source coverage for the current backend process."""
-    source_coverage = {}
-    for source in COVERAGE_SOURCE_ORDER:
-        source_coverage[source] = {
-            'points': _xps_coverage_points[source],
-            'ratio': (
-                _xps_coverage_points[source] / _xps_coverage_observations
-                if _xps_coverage_observations
-                else 0
-            ),
-        }
-
-    phi_matrix = {
-        field: {
-            source: {
-                other_source: 1.0 if source == other_source else None
-                for other_source in COVERAGE_SOURCE_ORDER
-            }
-            for source in COVERAGE_SOURCE_ORDER
-        }
-        for field in ALL_XPS_FIELDS
-    }
-    missingness_pairs = {}
-    for lhs_source, rhs_source in XPS_SOURCE_PAIRS:
-        pair_stats = _xps_missingness_pair_stats[(lhs_source, rhs_source)]
-        fields = {
-            field: summarize_missingness_pair(field_stats)
-            for field, field_stats in pair_stats['fields'].items()
-        }
-        pair_key = f'{lhs_source}:{rhs_source}'
-        missingness_pairs[pair_key] = {'fields': fields}
-        for field, field_stats in fields.items():
-            phi = field_stats['phi_correlation']
-            phi_matrix[field][lhs_source][rhs_source] = phi
-            phi_matrix[field][rhs_source][lhs_source] = phi
-
-    return {
-        'observations': _xps_coverage_observations,
-        'sources': source_coverage,
-        'missingness': {
-            'pairs': missingness_pairs,
-            'phi_matrix': phi_matrix,
-        },
-    }
+    """Return raw field-level vendor hole matrices for this backend process."""
+    return _xps_hole_matrices
 
 
 def select_closest_aligned_quarter_key(
@@ -1532,14 +1408,13 @@ async def prepare_us_income_statement_quarters(
     source_rows: dict[str, dict[str, dict]],
     required_fields: list[str],
     *,
-    record_missingness: bool = False,
+    record_holes: bool = False,
 ) -> dict[str, dict[str, dict[str, int | float | None]]]:
     aligned_quarters = build_aligned_source_quarters(source_rows)
-    if record_missingness:
-        record_xps_missingness(
+    if record_holes:
+        record_xps_hole_matrices(
             symbol,
             aligned_quarters,
-            required_fields,
             unavailable_sources=getattr(
                 source_rows, 'unavailable_sources', frozenset()
             ),
@@ -1565,13 +1440,11 @@ async def resolve_us_income_statement_quarters(
         symbol,
         source_rows,
         required_fields,
-        record_missingness=include_eps,
+        record_holes=include_eps,
     )
     aligned_quarters = select_latest_required_quarters(
         aligned_quarters, limit, symbol=symbol, quarter_label='aligned quarters'
     )
-    if include_eps:
-        record_xps_coverage(symbol, aligned_quarters, required_fields)
     return resolve_all_us_quarter_consensus(symbol, aligned_quarters, required_fields)
 
 

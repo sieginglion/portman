@@ -75,84 +75,59 @@ class SecValuationTests(unittest.TestCase):
         self.assertAlmostEqual(value, -0.0045)
         self.assertEqual(sources, ('fmp', 'finnhub'))
 
-    def test_coverage_excludes_sec_repair_source(self):
-        sec_points_before = valuation._xps_coverage_points.get('sec', 0)
+    def test_coverage_reports_raw_hole_matrices(self):
+        def row(fmp, finnhub):
+            return {
+                field: {'fmp': fmp, 'finnhub': finnhub}
+                for field in valuation.ALL_XPS_FIELDS
+            }
 
-        valuation.record_xps_coverage(
-            'COVERAGE-SEC-EXCLUSION',
-            {
-                '2025-03-31': {
-                    'revenue': {'fmp': 100, 'finnhub': 100, 'sec': 100},
-                    'weightedAverageShsOutDil': {
-                        'fmp': 10,
-                        'finnhub': 10,
-                        'sec': 10,
-                    },
-                    'epsDiluted': {'fmp': 1, 'finnhub': 1, 'sec': 1},
-                }
-            },
-            valuation.required_xps_fields(True),
-        )
-
-        coverage = valuation.get_xps_coverage()
-
-        self.assertEqual(
-            valuation._xps_coverage_points.get('sec', 0), sec_points_before
-        )
-        self.assertNotIn('sec', coverage['sources'])
-        self.assertEqual(set(coverage['sources']), set(valuation.COVERAGE_SOURCE_ORDER))
-
-    def test_missingness_coverage_reports_phi_matrix(self):
         rows = {
-            '2025-03-31': {'revenue': {'fmp': 100, 'finnhub': 100}},
-            '2025-06-30': {'revenue': {'fmp': 100}},
-            '2025-09-30': {'revenue': {'finnhub': 100}},
-            '2025-12-31': {'revenue': {'fmp': None, 'finnhub': None}},
+            '2025-03-31': row(100, 100),
+            '2025-06-30': row(100, None),
+            '2025-09-30': row(None, 100),
+            '2025-12-31': row(None, None),
         }
         with (
-            patch.object(valuation, '_xps_missingness_seen', set()),
+            patch.object(valuation, '_xps_hole_matrix_seen', set()),
             patch.object(
                 valuation,
-                '_xps_missingness_pair_stats',
-                valuation.new_xps_missingness_pair_stats(),
+                '_xps_hole_matrices',
+                valuation.new_xps_hole_matrices(),
             ),
         ):
-            valuation.record_xps_missingness('MISSINGNESS-TEST', rows, ['revenue'])
+            valuation.record_xps_hole_matrices('MISSINGNESS-TEST', rows)
             coverage = valuation.get_xps_coverage()
 
-        field = coverage['missingness']['pairs']['fmp:finnhub']['fields']['revenue']
-        self.assertEqual(field['observations'], 4)
-        self.assertEqual(field['both_present'], 1)
-        self.assertEqual(field['left_only'], 1)
-        self.assertEqual(field['right_only'], 1)
-        self.assertEqual(field['both_missing'], 1)
-        self.assertEqual(field['missingness_lift'], 1)
-        self.assertEqual(field['phi_correlation'], 0)
-        self.assertEqual(
-            coverage['missingness']['phi_matrix']['revenue']['fmp']['finnhub'],
-            0,
-        )
+        revenue = coverage['revenue']
+        self.assertNotIn('sec', revenue)
+        self.assertEqual(revenue['fmp']['fmp'], 2)
+        self.assertEqual(revenue['finnhub']['finnhub'], 2)
+        self.assertEqual(revenue['fmp']['finnhub'], 1)
+        self.assertEqual(revenue['finnhub']['fmp'], 1)
+        self.assertEqual(coverage['weightedAverageShsOutDil'], revenue)
+        self.assertEqual(coverage['epsDiluted'], revenue)
 
-    def test_missingness_coverage_excludes_unavailable_sources(self):
+    def test_hole_matrices_exclude_unavailable_sources(self):
         with (
-            patch.object(valuation, '_xps_missingness_seen', set()),
+            patch.object(valuation, '_xps_hole_matrix_seen', set()),
             patch.object(
                 valuation,
-                '_xps_missingness_pair_stats',
-                valuation.new_xps_missingness_pair_stats(),
+                '_xps_hole_matrices',
+                valuation.new_xps_hole_matrices(),
             ),
         ):
-            valuation.record_xps_missingness(
+            valuation.record_xps_hole_matrices(
                 'UNAVAILABLE-SOURCE-TEST',
-                {'2025-03-31': {'revenue': {'fmp': 100, 'finnhub': 100}}},
-                ['revenue'],
+                {'2025-03-31': {'revenue': {'fmp': None, 'finnhub': None}}},
                 unavailable_sources=frozenset({'fmp'}),
             )
             coverage = valuation.get_xps_coverage()
 
-        field = coverage['missingness']['pairs']['fmp:finnhub']['fields']['revenue']
-        self.assertEqual(field['observations'], 0)
-        self.assertIsNone(field['phi_correlation'])
+        revenue = coverage['revenue']
+        self.assertEqual(revenue['fmp']['fmp'], 0)
+        self.assertEqual(revenue['finnhub']['finnhub'], 1)
+        self.assertEqual(revenue['fmp']['finnhub'], 0)
 
     def test_resolve_us_income_statement_quarters_accepts_source_rows(self):
         source_rows = {
