@@ -1,5 +1,6 @@
+import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pandas as pd
 from backend import valuation
@@ -10,6 +11,45 @@ def sec_frame(rows):
 
 
 class SecValuationTests(unittest.TestCase):
+    def test_resolve_us_income_statement_quarters_accepts_source_rows(self):
+        source_rows = {
+            # Insertion order intentionally differs from BASE_SOURCE_ORDER.
+            'finnhub': {
+                '2025-04-05': {
+                    'revenue': 100,
+                    'weightedAverageShsOutDil': 10,
+                    'epsDiluted': 1,
+                }
+            },
+            'fmp': {
+                '2025-03-31': {
+                    'revenue': 100,
+                    'weightedAverageShsOutDil': 10,
+                    'epsDiluted': 1,
+                }
+            },
+        }
+
+        with patch.object(
+            valuation, 'merge_sec_fields', new=AsyncMock()
+        ):
+            resolved = asyncio.run(
+                valuation.resolve_us_income_statement_quarters(
+                    'AAPL', source_rows, 1, include_eps=True
+                )
+            )
+
+        self.assertEqual(
+            resolved,
+            {
+                '2025-03-31': {
+                    'revenue': 100,
+                    'weightedAverageShsOutDil': 10,
+                    'epsDiluted': 1,
+                }
+            },
+        )
+
     def test_select_latest_required_quarters_reports_symbol_and_available_dates(self):
         with self.assertRaisesRegex(
             ValueError,

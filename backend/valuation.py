@@ -606,16 +606,13 @@ async def fetch_finmind_taiwan_income_statements(
 
 
 def build_aligned_source_quarters(
-    fmp_rows: dict[str, dict],
-    massive_rows: dict[str, dict],
-    eodhd_rows: dict[str, dict],
-    finnhub_rows: dict[str, dict],
+    source_rows: dict[str, dict[str, dict]],
 ) -> dict[str, dict[str, dict[str, int | float | None]]]:
     aligned_quarters = {}
-    align_source_rows(aligned_quarters, 'fmp', fmp_rows)
-    align_source_rows(aligned_quarters, 'massive', massive_rows)
-    align_source_rows(aligned_quarters, 'eodhd', eodhd_rows)
-    align_source_rows(aligned_quarters, 'finnhub', finnhub_rows)
+    for source_name in BASE_SOURCE_ORDER:
+        align_source_rows(
+            aligned_quarters, source_name, source_rows.get(source_name, {})
+        )
     return dict(sorted(aligned_quarters.items()))
 
 
@@ -1495,24 +1492,18 @@ def resolve_all_us_quarter_consensus(
 
 async def resolve_us_income_statement_quarters(
     symbol: str,
-    fmp_rows: dict[str, dict],
-    massive_rows: dict[str, dict],
-    eodhd_rows: dict[str, dict],
-    finnhub_rows: dict[str, dict],
+    source_rows: dict[str, dict[str, dict]],
     limit: int,
     include_eps: bool,
-    *,
-    tiingo_rows: dict[str, dict] | None = None,
 ) -> dict[str, dict[str, int | float | None]]:
     required_fields = required_xps_fields(include_eps)
-    aligned_quarters = build_aligned_source_quarters(
-        fmp_rows, massive_rows, eodhd_rows, finnhub_rows
-    )
-    if tiingo_rows is not None:
-        align_source_rows(aligned_quarters, 'tiingo', tiingo_rows)
-        aligned_quarters = dict(sorted(aligned_quarters.items()))
+    aligned_quarters = build_aligned_source_quarters(source_rows)
     await merge_sec_fields(
-        symbol, aligned_quarters, fmp_rows, massive_rows, required_fields
+        symbol,
+        aligned_quarters,
+        source_rows['fmp'],
+        source_rows.get('massive', {}),
+        required_fields,
     )
     aligned_quarters = drop_incomplete_latest_us_quarter(
         symbol, aligned_quarters, required_fields
@@ -1547,13 +1538,9 @@ async def fetch_resolved_income_statement_quarters(
     )
     return await resolve_us_income_statement_quarters(
         symbol,
-        source_rows['fmp'],
-        source_rows.get('massive', {}),
-        source_rows.get('eodhd', {}),
-        source_rows['finnhub'],
+        source_rows,
         limit,
         include_eps,
-        tiingo_rows=source_rows.get('tiingo'),
     )
 
 
