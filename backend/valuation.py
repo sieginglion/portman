@@ -1,9 +1,10 @@
 import asyncio
+import json
 import math
 from typing import Literal
 
 import pandas as pd
-from httpx import AsyncClient, HTTPStatusError
+from httpx import HTTPStatusError
 from loguru import logger
 
 from . import shared
@@ -439,18 +440,16 @@ def select_latest_clean_required_quarters(
 async def fetch_finmind_taiwan_rows(
     dataset: str, symbol: str, start_date: str
 ) -> list[dict]:
-    async with AsyncClient(timeout=60) as client:
-        response = await client.get(
-            FINMIND_API_URL,
-            params={
-                'dataset': dataset,
-                'data_id': symbol,
-                'start_date': start_date,
-                'token': FINMIND_KEY,
-            },
-        )
-    response.raise_for_status()
-    return response.json().get('data', [])
+    text = await shared.cached_get(
+        FINMIND_API_URL,
+        {
+            'dataset': dataset,
+            'data_id': symbol,
+            'start_date': start_date,
+            'token': FINMIND_KEY,
+        },
+    )
+    return json.loads(text).get('data', [])
 
 
 async def fetch_finmind_taiwan_income_statements(
@@ -722,10 +721,11 @@ def lookup_sec_field_value(
 
 
 async def fetch_sec_company_concept_raw(cik: str, concept: str) -> dict:
-    async with AsyncClient(headers={'User-Agent': SEC_USER_AGENT}) as client:
-        response = await client.get(SEC_COMPANY_CONCEPT_URL.format(cik, concept))
-        response.raise_for_status()
-        return response.json()
+    text = await shared.cached_get(
+        SEC_COMPANY_CONCEPT_URL.format(cik, concept),
+        headers={'User-Agent': SEC_USER_AGENT},
+    )
+    return json.loads(text)
 
 
 async def fetch_sec_concept_rows(cik: str, concept: str, unit: str) -> pd.DataFrame:
@@ -808,11 +808,9 @@ async def fetch_fmp_income_statements(
         'weightedAverageShsOutDil': 'weightedAverageShsOutDil',
         EPS_XPS_FIELD: eps_field,
     }
-    async with AsyncClient() as client:
-        response = await client.get(url, params=params)
-        response.raise_for_status()
+    text = await shared.cached_get(url, params)
     return normalize_income_statement_rows(
-        response.json(),
+        json.loads(text),
         field_map=field_map,
         date_field='date',
         include_eps=require_eps,
@@ -833,19 +831,16 @@ async def fetch_massive_income_statements(
         'sort': 'period_end.desc',
         'apiKey': MASSIVE_API_KEY,
     }
-    async with AsyncClient() as client:
-        response = await client.get(
-            'https://api.massive.com/stocks/financials/v1/income-statements',
-            params=params,
-        )
-        response.raise_for_status()
+    text = await shared.cached_get(
+        'https://api.massive.com/stocks/financials/v1/income-statements', params
+    )
     field_map = {
         'revenue': 'revenue',
         'weightedAverageShsOutDil': 'diluted_shares_outstanding',
         EPS_XPS_FIELD: 'diluted_earnings_per_share',
     }
     return normalize_income_statement_rows(
-        response.json()['results'] or [],
+        json.loads(text)['results'] or [],
         field_map=field_map,
         date_field='period_end',
         include_eps=require_eps,
@@ -866,12 +861,7 @@ async def fetch_finnhub_income_statements(
         'preliminary': 'false',
         'token': FINNHUB_API_KEY,
     }
-    async with AsyncClient(timeout=30) as client:
-        response = await client.get(
-            'https://finnhub.io/api/v1/stock/financials',
-            params=params,
-        )
-        response.raise_for_status()
+    text = await shared.cached_get('https://finnhub.io/api/v1/stock/financials', params)
 
     field_map = {
         'revenue': 'revenue',
@@ -879,7 +869,7 @@ async def fetch_finnhub_income_statements(
         EPS_XPS_FIELD: 'dilutedEPS',
     }
     financials = sorted(
-        response.json()['financials'] or [],
+        json.loads(text)['financials'] or [],
         key=lambda row: row['period'],
         reverse=True,
     )
@@ -940,15 +930,13 @@ async def fetch_tiingo_income_statements(
         'asReported': 'false',
         'startDate': tiingo_fundamentals_start_date(limit),
     }
-    async with AsyncClient(
-        timeout=30, headers={'Authorization': f'Token {TIINGO_API_KEY}'}
-    ) as client:
-        response = await client.get(
-            TIINGO_FUNDAMENTALS_STATEMENTS_URL.format(symbol), params=params
-        )
-        response.raise_for_status()
+    text = await shared.cached_get(
+        TIINGO_FUNDAMENTALS_STATEMENTS_URL.format(symbol),
+        params,
+        headers={'Authorization': f'Token {TIINGO_API_KEY}'},
+    )
     return normalize_tiingo_income_statement_rows(
-        response.json(), include_eps=require_eps
+        json.loads(text), include_eps=require_eps
     )
 
 
@@ -985,13 +973,10 @@ async def fetch_eodhd_fundamentals(symbol: str) -> dict:
             'Financials::Balance_Sheet::quarterly'
         ),
     }
-    async with AsyncClient(timeout=30) as client:
-        response = await client.get(
-            EODHD_FUNDAMENTALS_URL.format(f'{symbol}.US'),
-            params=params,
-        )
-        response.raise_for_status()
-    return response.json()
+    text = await shared.cached_get(
+        EODHD_FUNDAMENTALS_URL.format(f'{symbol}.US'), params
+    )
+    return json.loads(text)
 
 
 async def fetch_eodhd_income_statements(

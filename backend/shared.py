@@ -116,20 +116,30 @@ def cached(ttl):
 
 
 @cached(43200)
-def get_text(url: str, params: dict | None = None):
-    return h.get(url, params=params, verify=False).text
+async def cached_get(
+    url: str,
+    params: dict | None = None,
+    *,
+    headers: dict[str, str] | None = None,
+) -> str:
+    async with h.AsyncClient(headers=headers, timeout=30) as client:
+        response = await client.get(url, params=params)
+    response.raise_for_status()
+    return response.text
 
 
 async def get_today_dividend(market: Literal['j', 't', 'u'], symbol: str):
     today = to_date(arrow.now(MARKET_TO_TIMEZONE[market]))
     if market == 't':
-        text = get_text('https://www.twse.com.tw/rwd/zh/exRight/TWT48U?response=json')
+        text = await cached_get(
+            'https://www.twse.com.tw/rwd/zh/exRight/TWT48U?response=json'
+        )
         for e in json.loads(text)['data']:
             y, m, d = map(int, re.findall('\\d+', e[0]))
             if to_date(Arrow(y + 1911, m, d)) == today and e[1] == symbol:
                 return float(e[7])
     else:
-        text = get_text(
+        text = await cached_get(
             'https://financialmodelingprep.com/api/v3/stock_dividend_calendar',
             {
                 'apikey': FMP_KEY,
@@ -176,7 +186,7 @@ def post_process(prices: Array[f8], n: int, limited: bool = False):
     return prices[-n:]
 
 
-@cached(240)
+@cached(43200)
 async def get_prices(
     market: Literal['c', 'j', 't', 'u'],
     symbol: str,
