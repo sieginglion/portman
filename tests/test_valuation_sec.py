@@ -75,6 +75,34 @@ class SecValuationTests(unittest.TestCase):
         self.assertAlmostEqual(value, -0.0045)
         self.assertEqual(sources, ('fmp', 'finnhub'))
 
+    def test_coverage_excludes_sec_repair_source(self):
+        sec_points_before = valuation._xps_coverage_points.get('sec', 0)
+
+        valuation.record_xps_coverage(
+            'COVERAGE-SEC-EXCLUSION',
+            {
+                '2025-03-31': {
+                    'revenue': {'fmp': 100, 'finnhub': 100, 'sec': 100},
+                    'weightedAverageShsOutDil': {
+                        'fmp': 10,
+                        'finnhub': 10,
+                        'sec': 10,
+                    },
+                    'epsDiluted': {'fmp': 1, 'finnhub': 1, 'sec': 1},
+                }
+            },
+            valuation.required_xps_fields(True),
+        )
+
+        coverage = valuation.get_xps_coverage()
+
+        self.assertEqual(
+            valuation._xps_coverage_points.get('sec', 0), sec_points_before
+        )
+        self.assertNotIn('sec', valuation._xps_coverage_complete_keys)
+        self.assertNotIn('sec', coverage['sources'])
+        self.assertEqual(set(coverage['sources']), set(valuation.COVERAGE_SOURCE_ORDER))
+
     def test_resolve_us_income_statement_quarters_accepts_source_rows(self):
         source_rows = {
             # Insertion order intentionally differs from BASE_SOURCE_ORDER.

@@ -34,6 +34,7 @@ BASE_SOURCE_ORDER = (
     *(("tiingo",) if shared.ENABLE_TIINGO_FUNDAMENTALS else ()),
 )
 SOURCE_ORDER = (*BASE_SOURCE_ORDER, 'sec')
+COVERAGE_SOURCE_ORDER = BASE_SOURCE_ORDER
 SOURCE_LABELS = {
     'fmp': 'FMP',
     'massive': 'Massive',
@@ -51,9 +52,9 @@ _xps_coverage_seen: set[tuple[str, str]] = set()
 BASE_XPS_FIELDS = ('revenue', 'weightedAverageShsOutDil')
 EPS_XPS_FIELD = 'epsDiluted'
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
-# SEC is a repair/reference source, not a peer provider for source comparison.
-XPS_SOURCE_PAIRS = tuple(combinations(BASE_SOURCE_ORDER, 2))
-_xps_coverage_complete_keys = {source: set() for source in SOURCE_ORDER}
+# SEC is a repair/reference source, not a peer provider for coverage comparison.
+XPS_SOURCE_PAIRS = tuple(combinations(COVERAGE_SOURCE_ORDER, 2))
+_xps_coverage_complete_keys = {source: set() for source in COVERAGE_SOURCE_ORDER}
 _xps_coverage_pair_stats = {
     pair: {
         'both_complete': 0,
@@ -160,7 +161,7 @@ def record_xps_coverage(
         _xps_coverage_seen.add(key)
         _xps_coverage_observations += 1
         source_complete = {}
-        for source in SOURCE_ORDER:
+        for source in COVERAGE_SOURCE_ORDER:
             complete = all(
                 has_source_field_value(data.get(field, {}).get(source))
                 for field in required_fields
@@ -212,7 +213,7 @@ def record_xps_coverage(
 def get_xps_coverage() -> dict:
     """Return aggregate source coverage for the current backend process."""
     source_coverage = {}
-    for source in SOURCE_ORDER:
+    for source in COVERAGE_SOURCE_ORDER:
         complete_keys = _xps_coverage_complete_keys[source]
         source_coverage[source] = {
             'points': _xps_coverage_points[source],
