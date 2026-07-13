@@ -519,6 +519,95 @@ class SecValuationTests(unittest.TestCase):
         )
 
 
+class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
+    async def test_skips_revenue_and_returns_only_usable_values(self):
+        metadata_by_quarter = {
+            '2025-03-31': {'date': '2025-03-31', 'period': 'Q1'},
+            '2025-06-30': {'date': '2025-06-30', 'period': 'Q2'},
+        }
+        frames_by_field = {
+            'weightedAverageShsOutDil': [sec_frame([])],
+            'epsDiluted': [sec_frame([])],
+        }
+        values_by_field_and_date = {
+            ('weightedAverageShsOutDil', '2025-03-31'): 12,
+            ('weightedAverageShsOutDil', '2025-06-30'): 0,
+            ('epsDiluted', '2025-03-31'): 1.2,
+            ('epsDiluted', '2025-06-30'): float('nan'),
+        }
+        fetched_fields = []
+
+        async def fake_fetch_sec_field_rows(cik, field):
+            self.assertEqual(cik, '0000320193')
+            fetched_fields.append(field)
+            return frames_by_field[field]
+
+        def fake_lookup_sec_field_value(field, metadata, frames):
+            return values_by_field_and_date[(field, metadata['date'])]
+
+        with (
+            patch.object(
+                valuation,
+                'fetch_sec_field_rows',
+                side_effect=fake_fetch_sec_field_rows,
+            ),
+            patch.object(
+                valuation,
+                'lookup_sec_field_value',
+                side_effect=fake_lookup_sec_field_value,
+            ),
+        ):
+            values = await valuation.fetch_sec_values_for_quarters(
+                'AAPL',
+                '0000320193',
+                metadata_by_quarter,
+                [
+                    'revenue',
+                    'weightedAverageShsOutDil',
+                    'epsDiluted',
+                    'revenue',
+                ],
+            )
+
+        self.assertEqual(fetched_fields, ['weightedAverageShsOutDil', 'epsDiluted'])
+        self.assertEqual(
+            values,
+            {
+                '2025-03-31': {
+                    'weightedAverageShsOutDil': 12,
+                    'epsDiluted': 1.2,
+                }
+            },
+        )
+
+    async def test_continues_when_a_field_fetch_fails(self):
+        metadata_by_quarter = {
+            '2025-03-31': {'date': '2025-03-31', 'period': 'Q1'},
+        }
+
+        async def fake_fetch_sec_field_rows(cik, field):
+            if field == 'weightedAverageShsOutDil':
+                raise RuntimeError('temporary SEC error')
+            return [sec_frame([])]
+
+        with (
+            patch.object(
+                valuation,
+                'fetch_sec_field_rows',
+                side_effect=fake_fetch_sec_field_rows,
+            ),
+            patch.object(valuation, 'lookup_sec_field_value', return_value=1.2),
+        ):
+            values = await valuation.fetch_sec_values_for_quarters(
+                'AAPL',
+                '0000320193',
+                metadata_by_quarter,
+                ['weightedAverageShsOutDil', 'epsDiluted'],
+            )
+
+        self.assertEqual(values, {'2025-03-31': {'epsDiluted': 1.2}})
+
+
 class MergeSecFieldsTests(unittest.IsolatedAsyncioTestCase):
     async def test_merge_sec_fields_skips_revenue_but_adds_other_fields(self):
         aligned_quarters = {

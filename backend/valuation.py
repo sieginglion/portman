@@ -1368,6 +1368,38 @@ def build_sec_quarter_metadata(
     return metadata
 
 
+async def fetch_sec_values_for_quarters(
+    symbol: str,
+    cik: str,
+    metadata_by_quarter: dict[str, dict[str, str]],
+    fields: list[str],
+) -> dict[str, dict[str, int | float]]:
+    """Fetch usable SEC field values keyed by aligned quarter."""
+    values_by_quarter = {}
+    for field in dict.fromkeys(fields):
+        if field == 'revenue':
+            continue
+        try:
+            frames = await fetch_sec_field_rows(cik, field)
+        except Exception as exc:
+            logger.warning(
+                'SEC repair unavailable for {} field={}: {}; continuing without SEC',
+                symbol,
+                field,
+                exc,
+            )
+            continue
+        if not frames:
+            continue
+
+        for quarter_key, metadata in metadata_by_quarter.items():
+            value = lookup_sec_field_value(field, metadata, frames)
+            value = sanitize_source_field_value(field, value)
+            if value is not None:
+                values_by_quarter.setdefault(quarter_key, {})[field] = value
+    return values_by_quarter
+
+
 async def merge_sec_fields(
     symbol: str,
     aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
@@ -1390,30 +1422,15 @@ async def merge_sec_fields(
         )
         return
 
-    for field in dict.fromkeys(fields):
-        if field == 'revenue':
-            continue
-        try:
-            frames = await fetch_sec_field_rows(cik, field)
-        except Exception as exc:
-            logger.warning(
-                'SEC repair unavailable for {} field={}: {}; continuing without SEC',
-                symbol,
-                field,
-                exc,
-            )
-            continue
-        if not frames:
-            continue
-
-        for quarter_key, quarter in aligned_quarters.items():
-            metadata = metadata_by_quarter.get(quarter_key)
-            if metadata is None:
-                continue
-            value = lookup_sec_field_value(field, metadata, frames)
-            value = sanitize_source_field_value(field, value)
-            if value is None:
-                continue
+    values_by_quarter = await fetch_sec_values_for_quarters(
+        symbol,
+        cik,
+        metadata_by_quarter,
+        fields,
+    )
+    for quarter_key, field_values in values_by_quarter.items():
+        quarter = aligned_quarters[quarter_key]
+        for field, value in field_values.items():
             quarter.setdefault(field, {})['sec'] = value
 
 
