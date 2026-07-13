@@ -17,12 +17,10 @@ from .shared import (
     MASSIVE_API_KEY,
     TIINGO_API_KEY,
     add_suffix,
-    cached,
 )
 
 EXTRA_Q = 1
 SOURCE_DIFF_THRESHOLD = 0.065
-SOURCE_MATCH_THRESHOLD = 0.02
 SOURCE_DATE_DIFF_TOLERANCE_DAYS = 7
 EPS_ABS_TOLERANCE = 0.02
 FINNHUB_MILLION_SCALE = 1_000_000
@@ -54,25 +52,28 @@ EPS_XPS_FIELD = 'epsDiluted'
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
 # SEC is a repair/reference source, not a peer provider for coverage comparison.
 XPS_SOURCE_PAIRS = tuple(combinations(COVERAGE_SOURCE_ORDER, 2))
-_xps_coverage_complete_keys = {source: set() for source in COVERAGE_SOURCE_ORDER}
-_xps_coverage_pair_stats = {
-    pair: {
-        'both_complete': 0,
-        'all_fields_exact': 0,
-        'all_fields_within_2_percent': 0,
-        'all_fields_within_consensus': 0,
-        'fields': {
-            field: {
-                'both_present': 0,
-                'exact_matches': 0,
-                'within_2_percent': 0,
-                'within_consensus': 0,
-            }
-            for field in ALL_XPS_FIELDS
-        },
+_xps_missingness_seen: set[tuple[str, str]] = set()
+
+
+def new_xps_missingness_pair_stats() -> dict:
+    return {
+        pair: {
+            'fields': {
+                field: {
+                    'observations': 0,
+                    'both_present': 0,
+                    'left_only': 0,
+                    'right_only': 0,
+                    'both_missing': 0,
+                }
+                for field in ALL_XPS_FIELDS
+            },
+        }
+        for pair in XPS_SOURCE_PAIRS
     }
-    for pair in XPS_SOURCE_PAIRS
-}
+
+
+_xps_missingness_pair_stats = new_xps_missingness_pair_stats()
 SEC_USER_AGENT = (
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
     'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
@@ -101,6 +102,18 @@ SEC_FIELD_CONCEPTS = {
     ),
     EPS_XPS_FIELD: (('EarningsPerShareDiluted', 'USD/shares'),),
 }
+
+
+class IncomeStatementSourceRows(dict[str, dict[str, dict]]):
+    """Fetched source rows together with provider-level availability metadata."""
+
+    def __init__(
+        self,
+        rows: list[tuple[str, dict[str, dict]]],
+        unavailable_sources: set[str],
+    ) -> None:
+        super().__init__(rows)
+        self.unavailable_sources = frozenset(unavailable_sources)
 
 
 def empty_sec_rows() -> pd.DataFrame:
@@ -134,15 +147,84 @@ def has_source_field_value(value: int | float | None) -> bool:
     return value is not None and not pd.isna(value)
 
 
-def source_values_within_match_threshold(lhs: int | float, rhs: int | float) -> bool:
-    lhs = float(lhs)
-    rhs = float(rhs)
-    if not all(map(math.isfinite, (lhs, rhs))):
-        return False
-    scale = max(abs(lhs), abs(rhs))
-    if scale == 0:
-        return True
-    return abs(lhs - rhs) / scale <= SOURCE_MATCH_THRESHOLD
+def summarize_missingness_pair(field_stats: dict[str, int]) -> dict:
+    """Return presence and phi-correlation metrics for one source pair/field."""
+    observations = field_stats['observations']
+    both_present = field_stats['both_present']
+    left_only = field_stats['left_only']
+    right_only = field_stats['right_only']
+    both_missing = field_stats['both_missing']
+
+    left_missing = right_only + both_missing
+    right_missing = left_only + both_missing
+    left_missing_rate = left_missing / observations if observations else 0
+    right_missing_rate = right_missing / observations if observations else 0
+    both_missing_rate = both_missing / observations if observations else 0
+    expected_both_missing_rate = left_missing_rate * right_missing_rate
+
+    denominator = math.sqrt(
+        left_missing
+        * (left_only + both_present)
+        * right_missing
+        * (right_only + both_present)
+    )
+    phi_correlation = (
+        (both_missing * both_present - left_only * right_only) / denominator
+        if denominator
+        else None
+    )
+
+    return {
+        **field_stats,
+        'left_missing_rate': left_missing_rate,
+        'right_missing_rate': right_missing_rate,
+        'both_missing_rate': both_missing_rate,
+        'expected_both_missing_rate': expected_both_missing_rate,
+        'missingness_lift': (
+            both_missing_rate / expected_both_missing_rate
+            if expected_both_missing_rate
+            else None
+        ),
+        'phi_correlation': phi_correlation,
+    }
+
+
+def record_xps_missingness(
+    symbol: str,
+    aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
+    required_fields: list[str],
+    *,
+    unavailable_sources: frozenset[str] = frozenset(),
+) -> None:
+    """Record raw peer-provider presence before quarter filtering or SEC repair."""
+    for quarter, data in aligned_quarters.items():
+        key = (symbol, quarter)
+        if key in _xps_missingness_seen:
+            continue
+
+        _xps_missingness_seen.add(key)
+        for pair in XPS_SOURCE_PAIRS:
+            lhs_source, rhs_source = pair
+            if lhs_source in unavailable_sources or rhs_source in unavailable_sources:
+                continue
+
+            for field in required_fields:
+                field_stats = _xps_missingness_pair_stats[pair]['fields'][field]
+                lhs_present = has_source_field_value(
+                    data.get(field, {}).get(lhs_source)
+                )
+                rhs_present = has_source_field_value(
+                    data.get(field, {}).get(rhs_source)
+                )
+                field_stats['observations'] += 1
+                if lhs_present and rhs_present:
+                    field_stats['both_present'] += 1
+                elif lhs_present:
+                    field_stats['left_only'] += 1
+                elif rhs_present:
+                    field_stats['right_only'] += 1
+                else:
+                    field_stats['both_missing'] += 1
 
 
 def record_xps_coverage(
@@ -160,61 +242,18 @@ def record_xps_coverage(
 
         _xps_coverage_seen.add(key)
         _xps_coverage_observations += 1
-        source_complete = {}
         for source in COVERAGE_SOURCE_ORDER:
             complete = all(
                 has_source_field_value(data.get(field, {}).get(source))
                 for field in required_fields
             )
-            source_complete[source] = complete
             _xps_coverage_points[source] += int(complete)
-            if complete:
-                _xps_coverage_complete_keys[source].add(key)
-
-        for pair in XPS_SOURCE_PAIRS:
-            lhs_source, rhs_source = pair
-            pair_stats = _xps_coverage_pair_stats[pair]
-            if source_complete[lhs_source] and source_complete[rhs_source]:
-                pair_stats['both_complete'] += 1
-
-            all_fields_exact = True
-            all_fields_within_2_percent = True
-            all_fields_within_consensus = True
-            for field in required_fields:
-                lhs = data.get(field, {}).get(lhs_source)
-                rhs = data.get(field, {}).get(rhs_source)
-                if not (has_source_field_value(lhs) and has_source_field_value(rhs)):
-                    all_fields_exact = False
-                    all_fields_within_2_percent = False
-                    all_fields_within_consensus = False
-                    continue
-
-                field_stats = pair_stats['fields'][field]
-                field_stats['both_present'] += 1
-                field_stats['exact_matches'] += int(lhs == rhs)
-                within_2_percent = source_values_within_match_threshold(lhs, rhs)
-                field_stats['within_2_percent'] += int(within_2_percent)
-                within_consensus = field_has_consensus(field, lhs, rhs)
-                field_stats['within_consensus'] += int(within_consensus)
-                all_fields_exact &= lhs == rhs
-                all_fields_within_2_percent &= within_2_percent
-                all_fields_within_consensus &= within_consensus
-
-            if source_complete[lhs_source] and source_complete[rhs_source]:
-                pair_stats['all_fields_exact'] += int(all_fields_exact)
-                pair_stats['all_fields_within_2_percent'] += int(
-                    all_fields_within_2_percent
-                )
-                pair_stats['all_fields_within_consensus'] += int(
-                    all_fields_within_consensus
-                )
 
 
 def get_xps_coverage() -> dict:
     """Return aggregate source coverage for the current backend process."""
     source_coverage = {}
     for source in COVERAGE_SOURCE_ORDER:
-        complete_keys = _xps_coverage_complete_keys[source]
         source_coverage[source] = {
             'points': _xps_coverage_points[source],
             'ratio': (
@@ -224,75 +263,37 @@ def get_xps_coverage() -> dict:
             ),
         }
 
-    comparisons = {}
-    for lhs_source, rhs_source in XPS_SOURCE_PAIRS:
-        lhs_keys = _xps_coverage_complete_keys[lhs_source]
-        rhs_keys = _xps_coverage_complete_keys[rhs_source]
-        intersection = lhs_keys & rhs_keys
-        union = lhs_keys | rhs_keys
-        pair_stats = _xps_coverage_pair_stats[(lhs_source, rhs_source)]
-        values = {}
-        for field, field_stats in pair_stats['fields'].items():
-            both_present = field_stats['both_present']
-            values[field] = {
-                **field_stats,
-                'exact_ratio': (
-                    field_stats['exact_matches'] / both_present if both_present else 0
-                ),
-                'match_ratio': (
-                    field_stats['within_2_percent'] / both_present
-                    if both_present
-                    else 0
-                ),
-                'consensus_ratio': (
-                    field_stats['within_consensus'] / both_present
-                    if both_present
-                    else 0
-                ),
+    phi_matrix = {
+        field: {
+            source: {
+                other_source: 1.0 if source == other_source else None
+                for other_source in COVERAGE_SOURCE_ORDER
             }
-        comparisons[f'{lhs_source}:{rhs_source}'] = {
-            'coverage': {
-                'left_points': len(lhs_keys),
-                'right_points': len(rhs_keys),
-                'overlap_points': len(intersection),
-                'left_only_points': len(lhs_keys - rhs_keys),
-                'right_only_points': len(rhs_keys - lhs_keys),
-                'jaccard_ratio': len(intersection) / len(union) if union else 0,
-            },
-            'complete_rows': {
-                'both_complete': pair_stats['both_complete'],
-                'all_fields_exact': pair_stats['all_fields_exact'],
-                'exact_ratio': (
-                    pair_stats['all_fields_exact'] / pair_stats['both_complete']
-                    if pair_stats['both_complete']
-                    else 0
-                ),
-                'all_fields_within_2_percent': pair_stats[
-                    'all_fields_within_2_percent'
-                ],
-                'match_ratio': (
-                    pair_stats['all_fields_within_2_percent']
-                    / pair_stats['both_complete']
-                    if pair_stats['both_complete']
-                    else 0
-                ),
-                'all_fields_within_consensus': pair_stats[
-                    'all_fields_within_consensus'
-                ],
-                'consensus_ratio': (
-                    pair_stats['all_fields_within_consensus']
-                    / pair_stats['both_complete']
-                    if pair_stats['both_complete']
-                    else 0
-                ),
-            },
-            'fields': values,
+            for source in COVERAGE_SOURCE_ORDER
         }
+        for field in ALL_XPS_FIELDS
+    }
+    missingness_pairs = {}
+    for lhs_source, rhs_source in XPS_SOURCE_PAIRS:
+        pair_stats = _xps_missingness_pair_stats[(lhs_source, rhs_source)]
+        fields = {
+            field: summarize_missingness_pair(field_stats)
+            for field, field_stats in pair_stats['fields'].items()
+        }
+        pair_key = f'{lhs_source}:{rhs_source}'
+        missingness_pairs[pair_key] = {'fields': fields}
+        for field, field_stats in fields.items():
+            phi = field_stats['phi_correlation']
+            phi_matrix[field][lhs_source][rhs_source] = phi
+            phi_matrix[field][rhs_source][lhs_source] = phi
 
     return {
         'observations': _xps_coverage_observations,
         'sources': source_coverage,
-        'comparisons': comparisons,
+        'missingness': {
+            'pairs': missingness_pairs,
+            'phi_matrix': phi_matrix,
+        },
     }
 
 
@@ -559,7 +560,6 @@ def select_latest_clean_required_quarters(
     return selected
 
 
-@cached(43200)
 async def fetch_finmind_taiwan_rows(
     dataset: str, symbol: str, start_date: str
 ) -> list[dict]:
@@ -845,7 +845,6 @@ def lookup_sec_field_value(
     return None
 
 
-@cached(43200)
 async def fetch_sec_company_concept_raw(cik: str, concept: str) -> dict:
     async with AsyncClient(headers={'User-Agent': SEC_USER_AGENT}) as client:
         response = await client.get(SEC_COMPANY_CONCEPT_URL.format(cik, concept))
@@ -988,6 +987,7 @@ async def fetch_finnhub_income_statements(
         'symbol': symbol,
         'statement': 'ic',
         'freq': 'quarterly',
+        'preliminary': 'false',
         'token': FINNHUB_API_KEY,
     }
     async with AsyncClient(timeout=30) as client:
@@ -1100,7 +1100,6 @@ def diluted_eps_from_reported_income(
     return round(earnings / diluted_shares, 6)
 
 
-@cached(43200)
 async def fetch_eodhd_fundamentals(symbol: str) -> dict:
     params = {
         'api_token': EODHD_API_KEY,
@@ -1320,6 +1319,7 @@ async def fetch_us_income_statement_sources(
         return_exceptions=True,
     )
     resolved_rows = []
+    unavailable_sources = set()
     for source_name, rows in zip(source_fetches, source_rows, strict=True):
         if isinstance(rows, Exception):
             logger.warning(
@@ -1328,9 +1328,10 @@ async def fetch_us_income_statement_sources(
                 symbol,
                 format_source_fetch_error(rows),
             )
+            unavailable_sources.add(source_name)
             rows = {}
         resolved_rows.append((source_name, rows))
-    return dict(resolved_rows)
+    return IncomeStatementSourceRows(resolved_rows, unavailable_sources)
 
 
 def select_sec_cik(
@@ -1530,8 +1531,19 @@ async def prepare_us_income_statement_quarters(
     symbol: str,
     source_rows: dict[str, dict[str, dict]],
     required_fields: list[str],
+    *,
+    record_missingness: bool = False,
 ) -> dict[str, dict[str, dict[str, int | float | None]]]:
     aligned_quarters = build_aligned_source_quarters(source_rows)
+    if record_missingness:
+        record_xps_missingness(
+            symbol,
+            aligned_quarters,
+            required_fields,
+            unavailable_sources=getattr(
+                source_rows, 'unavailable_sources', frozenset()
+            ),
+        )
     await merge_sec_fields(
         symbol,
         aligned_quarters,
@@ -1550,7 +1562,10 @@ async def resolve_us_income_statement_quarters(
 ) -> dict[str, dict[str, int | float | None]]:
     required_fields = required_xps_fields(include_eps)
     aligned_quarters = await prepare_us_income_statement_quarters(
-        symbol, source_rows, required_fields
+        symbol,
+        source_rows,
+        required_fields,
+        record_missingness=include_eps,
     )
     aligned_quarters = select_latest_required_quarters(
         aligned_quarters, limit, symbol=symbol, quarter_label='aligned quarters'
