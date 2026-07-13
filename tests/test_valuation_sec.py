@@ -11,6 +11,70 @@ def sec_frame(rows):
 
 
 class SecValuationTests(unittest.TestCase):
+    def test_consensus_helpers_select_and_average_agreeing_sources(self):
+        source_values = {'fmp': 100, 'finnhub': 102, 'sec': None}
+
+        values = valuation.usable_source_values(source_values)
+        groups = valuation.build_consensus_groups('revenue', values)
+        group = valuation.choose_consensus_group(groups)
+
+        self.assertEqual(values, [('fmp', 100), ('finnhub', 102)])
+        self.assertEqual(group, (('fmp', 100), ('finnhub', 102)))
+        self.assertEqual(valuation.average_consensus_group(group), 101)
+        self.assertEqual(
+            valuation.select_consensus_source_value('revenue', source_values),
+            (101, ('fmp', 'finnhub')),
+        )
+
+    def test_consensus_helpers_reject_disagreeing_sources(self):
+        source_values = {'fmp': 100, 'finnhub': 120}
+
+        values = valuation.usable_source_values(source_values)
+
+        self.assertEqual(valuation.build_consensus_groups('revenue', values), [])
+        self.assertIsNone(valuation.choose_consensus_group([]))
+        self.assertEqual(
+            valuation.select_consensus_source_value('revenue', source_values),
+            (None, None),
+        )
+
+    def test_consensus_helpers_keep_transitive_consensus_groups(self):
+        source_values = {'fmp': 100, 'finnhub': 106, 'sec': 112}
+
+        self.assertEqual(
+            valuation.select_consensus_source_value('revenue', source_values),
+            (106, ('fmp', 'finnhub', 'sec')),
+        )
+
+    def test_choose_consensus_group_prefers_sec_in_a_tie(self):
+        groups = [
+            (('fmp', 100), ('finnhub', 100)),
+            (('massive', 200), ('sec', 200)),
+        ]
+
+        self.assertEqual(
+            valuation.choose_consensus_group(groups),
+            (('massive', 200), ('sec', 200)),
+        )
+
+    def test_choose_consensus_group_rejects_tie_without_sec(self):
+        groups = [
+            (('fmp', 100), ('finnhub', 100)),
+            (('massive', 200), ('eodhd', 200)),
+        ]
+
+        self.assertIsNone(valuation.choose_consensus_group(groups))
+
+    def test_consensus_helpers_apply_eps_absolute_tolerance(self):
+        source_values = {'fmp': 0.001, 'finnhub': -0.01}
+
+        value, sources = valuation.select_consensus_source_value(
+            'epsDiluted', source_values
+        )
+
+        self.assertAlmostEqual(value, -0.0045)
+        self.assertEqual(sources, ('fmp', 'finnhub'))
+
     def test_resolve_us_income_statement_quarters_accepts_source_rows(self):
         source_rows = {
             # Insertion order intentionally differs from BASE_SOURCE_ORDER.
@@ -30,9 +94,7 @@ class SecValuationTests(unittest.TestCase):
             },
         }
 
-        with patch.object(
-            valuation, 'merge_sec_fields', new=AsyncMock()
-        ):
+        with patch.object(valuation, 'merge_sec_fields', new=AsyncMock()):
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
                     'AAPL', source_rows, 1, include_eps=True

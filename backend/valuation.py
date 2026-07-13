@@ -1163,28 +1163,28 @@ def field_has_consensus(field: str, lhs: int | float, rhs: int | float) -> bool:
     return log_diff < SOURCE_DIFF_THRESHOLD
 
 
-def select_consensus_source_value(
-    field: str, source_values: dict[str, int | float | None]
-) -> tuple[int | float | None, tuple[str, ...] | None]:
-    values = []
+def usable_source_values(
+    source_values: dict[str, int | float | None],
+) -> list[tuple[str, int | float]]:
+    values: list[tuple[str, int | float]] = []
     for source_name in SOURCE_ORDER:
         value = source_values.get(source_name)
         if not has_source_field_value(value):
             continue
         values.append((source_name, value))
+    return values
 
-    passing_pairs = []
+
+def build_consensus_groups(
+    field: str, values: list[tuple[str, int | float]]
+) -> list[tuple[tuple[str, int | float], ...]]:
     adjacent_sources = {source_name: set() for source_name, _ in values}
     for i, (lhs_name, lhs_value) in enumerate(values):
         for rhs_name, rhs_value in values[i + 1 :]:
             if not field_has_consensus(field, lhs_value, rhs_value):
                 continue
-            passing_pairs.append(((lhs_name, lhs_value), (rhs_name, rhs_value)))
             adjacent_sources[lhs_name].add(rhs_name)
             adjacent_sources[rhs_name].add(lhs_name)
-
-    if not passing_pairs:
-        return None, None
 
     consensus_groups = []
     value_by_source = dict(values)
@@ -1212,26 +1212,44 @@ def select_consensus_source_value(
                 if name in group_names
             )
         )
+    return consensus_groups
 
-    largest_group_size = max(len(group) for group in consensus_groups)
-    consensus_groups = [
-        group for group in consensus_groups if len(group) == largest_group_size
-    ]
+
+def choose_consensus_group(
+    groups: list[tuple[tuple[str, int | float], ...]],
+) -> tuple[tuple[str, int | float], ...] | None:
+    if not groups:
+        return None
+
+    largest_group_size = max(len(group) for group in groups)
+    largest_groups = [group for group in groups if len(group) == largest_group_size]
 
     sec_consensus_groups = [
         group
-        for group in consensus_groups
+        for group in largest_groups
         if any(source_name == 'sec' for source_name, _ in group)
     ]
-    if len(consensus_groups) == 1:
-        consensus_group = consensus_groups[0]
+    if len(largest_groups) == 1:
+        return largest_groups[0]
     elif len(sec_consensus_groups) == 1:
-        consensus_group = sec_consensus_groups[0]
-    else:
+        return sec_consensus_groups[0]
+    return None
+
+
+def average_consensus_group(group: tuple[tuple[str, int | float], ...]) -> float:
+    return sum(value for _, value in group) / len(group)
+
+
+def select_consensus_source_value(
+    field: str, source_values: dict[str, int | float | None]
+) -> tuple[int | float | None, tuple[str, ...] | None]:
+    values = usable_source_values(source_values)
+    consensus_group = choose_consensus_group(build_consensus_groups(field, values))
+    if consensus_group is None:
         return None, None
 
     return (
-        sum(value for _, value in consensus_group) / len(consensus_group),
+        average_consensus_group(consensus_group),
         tuple(name for name, _ in consensus_group),
     )
 
