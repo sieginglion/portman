@@ -75,7 +75,7 @@ class SecValuationTests(unittest.TestCase):
         self.assertAlmostEqual(value, -0.0045)
         self.assertEqual(sources, ('fmp', 'finnhub'))
 
-    def test_coverage_reports_raw_hole_matrices(self):
+    def test_diagnostics_reports_per_vendor_missing_counts(self):
         def row(fmp, finnhub):
             return {
                 field: {'fmp': fmp, 'finnhub': finnhub}
@@ -89,45 +89,171 @@ class SecValuationTests(unittest.TestCase):
             '2025-12-31': row(None, None),
         }
         with (
-            patch.object(valuation, '_xps_hole_matrix_seen', set()),
+            patch.object(valuation, '_xps_diagnostics_seen', set()),
             patch.object(
                 valuation,
-                '_xps_hole_matrices',
-                valuation.new_xps_hole_matrices(),
+                '_xps_missing_counts',
+                valuation.new_xps_missing_counts(),
+            ),
+            patch.object(
+                valuation,
+                '_xps_consensus_pair_counts',
+                valuation.new_xps_consensus_pair_counts(),
             ),
         ):
-            valuation.record_xps_hole_matrices('MISSINGNESS-TEST', rows)
-            coverage = valuation.get_xps_coverage()
+            valuation.record_xps_diagnostics('MISSINGNESS-TEST', rows)
+            diagnostics = valuation.get_xps_diagnostics()
 
-        revenue = coverage['revenue']
+        self.assertEqual(diagnostics['total_quarters'], 4)
+        revenue = diagnostics['missing']['revenue']
         self.assertNotIn('sec', revenue)
-        self.assertEqual(revenue['fmp']['fmp'], 2)
-        self.assertEqual(revenue['finnhub']['finnhub'], 2)
-        self.assertEqual(revenue['fmp']['finnhub'], 1)
-        self.assertEqual(revenue['finnhub']['fmp'], 1)
-        self.assertEqual(coverage['weightedAverageShsOutDil'], revenue)
-        self.assertEqual(coverage['epsDiluted'], revenue)
+        self.assertEqual(revenue['fmp'], 2)
+        self.assertEqual(revenue['finnhub'], 2)
+        self.assertEqual(diagnostics['missing']['weightedAverageShsOutDil'], revenue)
+        self.assertEqual(diagnostics['missing']['epsDiluted'], revenue)
+        self.assertEqual(diagnostics['consensus_pairs']['revenue']['fmp:finnhub'], 1)
+        self.assertEqual(
+            diagnostics['consensus_pairs']['weightedAverageShsOutDil']['fmp:finnhub'],
+            1,
+        )
+        self.assertEqual(diagnostics['consensus_pairs']['epsDiluted']['fmp:finnhub'], 1)
 
-    def test_hole_matrices_exclude_unavailable_sources(self):
+    def test_missing_counts_exclude_unavailable_sources(self):
         with (
-            patch.object(valuation, '_xps_hole_matrix_seen', set()),
+            patch.object(valuation, '_xps_diagnostics_seen', set()),
             patch.object(
                 valuation,
-                '_xps_hole_matrices',
-                valuation.new_xps_hole_matrices(),
+                '_xps_missing_counts',
+                valuation.new_xps_missing_counts(),
+            ),
+            patch.object(
+                valuation,
+                '_xps_consensus_pair_counts',
+                valuation.new_xps_consensus_pair_counts(),
             ),
         ):
-            valuation.record_xps_hole_matrices(
+            valuation.record_xps_diagnostics(
                 'UNAVAILABLE-SOURCE-TEST',
                 {'2025-03-31': {'revenue': {'fmp': None, 'finnhub': None}}},
                 unavailable_sources=frozenset({'fmp'}),
             )
-            coverage = valuation.get_xps_coverage()
+            diagnostics = valuation.get_xps_diagnostics()
 
-        revenue = coverage['revenue']
-        self.assertEqual(revenue['fmp']['fmp'], 0)
-        self.assertEqual(revenue['finnhub']['finnhub'], 1)
-        self.assertEqual(revenue['fmp']['finnhub'], 0)
+        self.assertEqual(diagnostics['total_quarters'], 1)
+        revenue = diagnostics['missing']['revenue']
+        self.assertEqual(revenue['fmp'], 0)
+        self.assertEqual(revenue['finnhub'], 1)
+        self.assertTrue(
+            all(
+                count == 0
+                for count in diagnostics['consensus_pairs']['revenue'].values()
+            )
+        )
+
+    def test_diagnostics_counts_each_directly_agreeing_pair_once(self):
+        rows = {'2025-03-31': {'revenue': {'fmp': 100, 'massive': 104, 'finnhub': 108}}}
+        with (
+            patch.object(valuation, 'BASE_SOURCE_ORDER', ('fmp', 'massive', 'finnhub')),
+            patch.object(valuation, '_xps_diagnostics_seen', set()),
+            patch.object(
+                valuation,
+                '_xps_missing_counts',
+                valuation.new_xps_missing_counts(),
+            ),
+            patch.object(
+                valuation,
+                '_xps_consensus_pair_counts',
+                valuation.new_xps_consensus_pair_counts(),
+            ),
+        ):
+            valuation.record_xps_diagnostics('PAIR-TEST', rows)
+            diagnostics = valuation.get_xps_diagnostics()
+
+        self.assertEqual(
+            diagnostics['consensus_pairs']['revenue'],
+            {
+                'fmp:massive': 1,
+                'fmp:finnhub': 0,
+                'massive:finnhub': 1,
+            },
+        )
+        self.assertNotIn('sec', diagnostics['consensus_pairs']['revenue'])
+
+    def test_diagnostics_deduplicates_missing_and_pair_counts(self):
+        rows = {
+            '2025-03-31': {
+                'revenue': {'fmp': 100, 'finnhub': 100},
+            }
+        }
+        with (
+            patch.object(valuation, 'BASE_SOURCE_ORDER', ('fmp', 'finnhub')),
+            patch.object(valuation, '_xps_diagnostics_seen', set()),
+            patch.object(
+                valuation,
+                '_xps_missing_counts',
+                valuation.new_xps_missing_counts(),
+            ),
+            patch.object(
+                valuation,
+                '_xps_consensus_pair_counts',
+                valuation.new_xps_consensus_pair_counts(),
+            ),
+        ):
+            valuation.record_xps_diagnostics('DEDUP-TEST', rows)
+            valuation.record_xps_diagnostics('DEDUP-TEST', rows)
+            diagnostics = valuation.get_xps_diagnostics()
+
+        self.assertEqual(diagnostics['total_quarters'], 1)
+        self.assertEqual(diagnostics['missing']['revenue'], {'fmp': 0, 'finnhub': 0})
+        self.assertEqual(diagnostics['consensus_pairs']['revenue'], {'fmp:finnhub': 1})
+
+    def test_diagnostics_skips_request_that_falls_short_after_latest_drop(self):
+        def row(revenue):
+            return {
+                'revenue': revenue,
+                'weightedAverageShsOutDil': 10,
+                'epsDiluted': revenue / 100,
+            }
+
+        source_rows = {
+            'fmp': {
+                '2025-03-31': row(100),
+                '2025-06-30': row(110),
+                '2025-09-30': row(120),
+                '2025-12-31': row(130),
+            },
+            'finnhub': {
+                '2025-03-31': row(100),
+                '2025-06-30': row(110),
+                '2025-09-30': row(120),
+            },
+        }
+        seen = set()
+        with (
+            patch.object(valuation, '_xps_diagnostics_seen', seen),
+            patch.object(
+                valuation,
+                '_xps_missing_counts',
+                valuation.new_xps_missing_counts(),
+            ),
+            patch.object(
+                valuation,
+                '_xps_consensus_pair_counts',
+                valuation.new_xps_consensus_pair_counts(),
+            ),
+            patch.object(valuation, 'merge_sec_fields', new=AsyncMock()),
+            self.assertRaises(ValueError),
+        ):
+            asyncio.run(
+                valuation.resolve_us_income_statement_quarters(
+                    'SPCX', source_rows, limit=4, include_eps=True
+                )
+            )
+
+        self.assertEqual(seen, set())
+        diagnostics = valuation.get_xps_diagnostics()
+        self.assertEqual(diagnostics['total_quarters'], 0)
+        self.assertEqual(diagnostics['missing']['revenue']['finnhub'], 0)
 
     def test_resolve_us_income_statement_quarters_accepts_source_rows(self):
         source_rows = {

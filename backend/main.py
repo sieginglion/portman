@@ -112,9 +112,9 @@ async def get_scores(
     )
 
 
-@app.get('/coverage')
-async def get_coverage():
-    return valuation.get_xps_coverage()
+@app.get('/diagnostics')
+async def get_diagnostics():
+    return valuation.get_xps_diagnostics()
 
 
 @app.get('/growth')

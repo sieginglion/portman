@@ -1,6 +1,7 @@
 import asyncio
 import json
 import math
+from itertools import combinations
 from typing import Literal
 
 import pandas as pd
@@ -43,23 +44,33 @@ SOURCE_LABELS = {
 BASE_XPS_FIELDS = ('revenue', 'weightedAverageShsOutDil')
 EPS_XPS_FIELD = 'epsDiluted'
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
-# Coverage is intentionally process-local. Restarting the backend starts a new
-# screener run with clean matrices. SEC is a repair/reference source, not a
-# peer provider, so it is excluded.
-_xps_hole_matrix_seen: set[tuple[str, str]] = set()
+# Diagnostics are intentionally process-local. Restarting the backend starts a new
+# screener run with clean counts. SEC is a repair/reference source, not a peer
+# provider, so it is excluded.
+_xps_diagnostics_seen: set[tuple[str, str]] = set()
 
 
-def new_xps_hole_matrices() -> dict[str, dict[str, dict[str, int]]]:
+def new_xps_missing_counts() -> dict[str, dict[str, int]]:
+    return {
+        field: {source: 0 for source in BASE_SOURCE_ORDER} for field in ALL_XPS_FIELDS
+    }
+
+
+_xps_missing_counts = new_xps_missing_counts()
+
+
+def new_xps_consensus_pair_counts() -> dict[str, dict[str, int]]:
     return {
         field: {
-            source: {other_source: 0 for other_source in BASE_SOURCE_ORDER}
-            for source in BASE_SOURCE_ORDER
+            f'{left}:{right}': 0
+            for index, left in enumerate(BASE_SOURCE_ORDER)
+            for right in BASE_SOURCE_ORDER[index + 1 :]
         }
         for field in ALL_XPS_FIELDS
     }
 
 
-_xps_hole_matrices = new_xps_hole_matrices()
+_xps_consensus_pair_counts = new_xps_consensus_pair_counts()
 SEC_USER_AGENT = (
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
     'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
@@ -146,32 +157,45 @@ def missing_xps_sources(
     ]
 
 
-def record_xps_hole_matrices(
+def record_xps_diagnostics(
     symbol: str,
     aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
     *,
     unavailable_sources: frozenset[str] = frozenset(),
 ) -> None:
-    """Record raw field-level provider holes before quarter filtering or SEC repair."""
+    """Record missing values and pairwise consensus for selected quarters."""
     for quarter, data in aligned_quarters.items():
         key = (symbol, quarter)
-        if key in _xps_hole_matrix_seen:
+        if key in _xps_diagnostics_seen:
             continue
 
-        _xps_hole_matrix_seen.add(key)
+        _xps_diagnostics_seen.add(key)
         for field in ALL_XPS_FIELDS:
-            # Diagonal entries count field missingness; off-diagonal entries
-            # count co-missingness between two providers.
-            missing = missing_xps_sources(data, field, unavailable_sources)
-            matrix = _xps_hole_matrices[field]
-            for source in missing:
-                for other_source in missing:
-                    matrix[source][other_source] += 1
+            counts = _xps_missing_counts[field]
+            for source in missing_xps_sources(data, field, unavailable_sources):
+                counts[source] += 1
+
+            source_values = data.get(field, {})
+            peer_values = [
+                (source, source_values[source])
+                for source in BASE_SOURCE_ORDER
+                if has_source_field_value(source_values.get(source))
+            ]
+            pair_counts = _xps_consensus_pair_counts[field]
+            for (left_source, left_value), (right_source, right_value) in combinations(
+                peer_values, 2
+            ):
+                if field_has_consensus(field, left_value, right_value):
+                    pair_counts[f'{left_source}:{right_source}'] += 1
 
 
-def get_xps_coverage() -> dict:
-    """Return raw field-level vendor hole matrices for this backend process."""
-    return _xps_hole_matrices
+def get_xps_diagnostics() -> dict:
+    """Return missing-value and pairwise-consensus counts."""
+    return {
+        'total_quarters': len(_xps_diagnostics_seen),
+        'missing': _xps_missing_counts,
+        'consensus_pairs': _xps_consensus_pair_counts,
+    }
 
 
 def select_closest_aligned_quarter_key(
@@ -1392,18 +1416,8 @@ async def prepare_us_income_statement_quarters(
     symbol: str,
     source_rows: dict[str, dict[str, dict]],
     required_fields: list[str],
-    *,
-    record_holes: bool = False,
 ) -> dict[str, dict[str, dict[str, int | float | None]]]:
     aligned_quarters = build_aligned_source_quarters(source_rows)
-    if record_holes:
-        record_xps_hole_matrices(
-            symbol,
-            aligned_quarters,
-            unavailable_sources=getattr(
-                source_rows, 'unavailable_sources', frozenset()
-            ),
-        )
     await merge_sec_fields(
         symbol,
         aligned_quarters,
@@ -1425,11 +1439,18 @@ async def resolve_us_income_statement_quarters(
         symbol,
         source_rows,
         required_fields,
-        record_holes=include_eps,
     )
     aligned_quarters = select_latest_required_quarters(
         aligned_quarters, limit, symbol=symbol, quarter_label='aligned quarters'
     )
+    if include_eps:
+        record_xps_diagnostics(
+            symbol,
+            aligned_quarters,
+            unavailable_sources=getattr(
+                source_rows, 'unavailable_sources', frozenset()
+            ),
+        )
     return resolve_all_us_quarter_consensus(symbol, aligned_quarters, required_fields)
 
 
