@@ -24,13 +24,24 @@ SOURCE_DIFF_THRESHOLD = 0.065
 SOURCE_DATE_DIFF_TOLERANCE_DAYS = 7
 EPS_ABS_TOLERANCE = 0.02
 FINNHUB_MILLION_SCALE = 1_000_000
-BASE_SOURCE_ORDER = (
-    'fmp',
-    *(("massive",) if shared.ENABLE_MASSIVE_FUNDAMENTALS else ()),
-    *(("eodhd",) if shared.ENABLE_EODHD_FUNDAMENTALS else ()),
-    'finnhub',
-    *(("tiingo",) if shared.ENABLE_TIINGO_FUNDAMENTALS else ()),
+US_INCOME_STATEMENT_SOURCE_FLAGS = (
+    ('fmp', None),
+    ('massive', 'ENABLE_MASSIVE_FUNDAMENTALS'),
+    ('eodhd', 'ENABLE_EODHD_FUNDAMENTALS'),
+    ('finnhub', None),
+    ('tiingo', 'ENABLE_TIINGO_FUNDAMENTALS'),
 )
+
+
+def enabled_us_income_statement_sources() -> tuple[str, ...]:
+    return tuple(
+        source
+        for source, flag in US_INCOME_STATEMENT_SOURCE_FLAGS
+        if flag is None or getattr(shared, flag)
+    )
+
+
+BASE_SOURCE_ORDER = enabled_us_income_statement_sources()
 SOURCE_ORDER = (*BASE_SOURCE_ORDER, 'sec')
 SOURCE_LABELS = {
     'fmp': 'FMP',
@@ -1181,24 +1192,27 @@ def format_source_fetch_error(error: Exception) -> str:
 async def fetch_us_income_statement_sources(
     symbol: str, limit: int, include_eps: bool
 ) -> dict[str, dict[str, dict]]:
-    source_fetches = {
-        'fmp': fetch_fmp_income_statements('u', symbol, limit, require_eps=include_eps),
-        'finnhub': fetch_finnhub_income_statements(
+    source_fetchers = {
+        'fmp': lambda: fetch_fmp_income_statements(
+            'u', symbol, limit, require_eps=include_eps
+        ),
+        'massive': lambda: fetch_massive_income_statements(
+            symbol, limit, require_eps=include_eps
+        ),
+        'eodhd': lambda: fetch_eodhd_income_statements(
+            symbol, limit, require_eps=include_eps
+        ),
+        'finnhub': lambda: fetch_finnhub_income_statements(
+            symbol, limit, require_eps=include_eps
+        ),
+        'tiingo': lambda: fetch_tiingo_income_statements(
             symbol, limit, require_eps=include_eps
         ),
     }
-    if shared.ENABLE_MASSIVE_FUNDAMENTALS:
-        source_fetches['massive'] = fetch_massive_income_statements(
-            symbol, limit, require_eps=include_eps
-        )
-    if shared.ENABLE_EODHD_FUNDAMENTALS:
-        source_fetches['eodhd'] = fetch_eodhd_income_statements(
-            symbol, limit, require_eps=include_eps
-        )
-    if shared.ENABLE_TIINGO_FUNDAMENTALS:
-        source_fetches['tiingo'] = fetch_tiingo_income_statements(
-            symbol, limit, require_eps=include_eps
-        )
+    source_fetches = {
+        source: source_fetchers[source]()
+        for source in enabled_us_income_statement_sources()
+    }
     source_rows = await asyncio.gather(
         *source_fetches.values(),
         return_exceptions=True,

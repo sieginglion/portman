@@ -143,6 +143,51 @@ assert 'tiingo' not in valuation.SOURCE_ORDER
         self.assertEqual(set(source_rows), {'fmp', 'massive', 'eodhd', 'finnhub'})
         tiingo_fetch.assert_not_awaited()
 
+    def test_enabled_sources_are_fetched_in_registry_order(self):
+        with (
+            patch.object(valuation.shared, 'ENABLE_MASSIVE_FUNDAMENTALS', True),
+            patch.object(valuation.shared, 'ENABLE_EODHD_FUNDAMENTALS', True),
+            patch.object(valuation.shared, 'ENABLE_TIINGO_FUNDAMENTALS', True),
+            patch.object(
+                valuation,
+                'fetch_fmp_income_statements',
+                new=AsyncMock(return_value={}),
+            ) as fmp_fetch,
+            patch.object(
+                valuation,
+                'fetch_massive_income_statements',
+                new=AsyncMock(return_value={}),
+            ) as massive_fetch,
+            patch.object(
+                valuation,
+                'fetch_eodhd_income_statements',
+                new=AsyncMock(return_value={}),
+            ) as eodhd_fetch,
+            patch.object(
+                valuation,
+                'fetch_finnhub_income_statements',
+                new=AsyncMock(return_value={}),
+            ) as finnhub_fetch,
+            patch.object(
+                valuation,
+                'fetch_tiingo_income_statements',
+                new=AsyncMock(return_value={}),
+            ) as tiingo_fetch,
+        ):
+            source_rows = asyncio.run(
+                valuation.fetch_us_income_statement_sources('HOOD', 8, True)
+            )
+
+        self.assertEqual(
+            list(source_rows),
+            ['fmp', 'massive', 'eodhd', 'finnhub', 'tiingo'],
+        )
+        fmp_fetch.assert_awaited_once_with('u', 'HOOD', 8, require_eps=True)
+        massive_fetch.assert_awaited_once_with('HOOD', 8, require_eps=True)
+        eodhd_fetch.assert_awaited_once_with('HOOD', 8, require_eps=True)
+        finnhub_fetch.assert_awaited_once_with('HOOD', 8, require_eps=True)
+        tiingo_fetch.assert_awaited_once_with('HOOD', 8, require_eps=True)
+
     def test_disabled_massive_is_not_fetched(self):
         with (
             patch.object(valuation.shared, 'ENABLE_MASSIVE_FUNDAMENTALS', False),
