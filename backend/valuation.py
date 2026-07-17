@@ -1,6 +1,8 @@
 import asyncio
 import json
 import math
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from itertools import combinations
 from typing import Literal
 
@@ -24,31 +26,67 @@ SOURCE_DIFF_THRESHOLD = 0.065
 SOURCE_DATE_DIFF_TOLERANCE_DAYS = 7
 EPS_ABS_TOLERANCE = 0.02
 FINNHUB_MILLION_SCALE = 1_000_000
-US_INCOME_STATEMENT_SOURCE_FLAGS = (
-    ('fmp', None),
-    ('massive', 'ENABLE_MASSIVE_FUNDAMENTALS'),
-    ('eodhd', 'ENABLE_EODHD_FUNDAMENTALS'),
-    ('finnhub', None),
-    ('tiingo', 'ENABLE_TIINGO_FUNDAMENTALS'),
+
+
+@dataclass(frozen=True)
+class USIncomeStatementSource:
+    name: str
+    label: str
+    enable_flag: str | None
+    fetch: Callable[[str, int, bool], Awaitable[dict[str, dict]]]
+
+
+US_INCOME_STATEMENT_SOURCES = (
+    USIncomeStatementSource(
+        'fmp',
+        'FMP',
+        None,
+        lambda symbol, limit, include_eps: fetch_fmp_income_statements(
+            'u', symbol, limit, include_eps=include_eps
+        ),
+    ),
+    USIncomeStatementSource(
+        'massive',
+        'Massive',
+        'ENABLE_MASSIVE_FUNDAMENTALS',
+        lambda symbol, limit, include_eps: fetch_massive_income_statements(
+            symbol, limit, include_eps=include_eps
+        ),
+    ),
+    USIncomeStatementSource(
+        'eodhd',
+        'EODHD',
+        'ENABLE_EODHD_FUNDAMENTALS',
+        lambda symbol, limit, include_eps: fetch_eodhd_income_statements(
+            symbol, limit, include_eps=include_eps
+        ),
+    ),
+    USIncomeStatementSource(
+        'finnhub',
+        'Finnhub',
+        None,
+        lambda symbol, limit, include_eps: fetch_finnhub_income_statements(
+            symbol, limit, include_eps=include_eps
+        ),
+    ),
+    USIncomeStatementSource(
+        'tiingo',
+        'Tiingo',
+        'ENABLE_TIINGO_FUNDAMENTALS',
+        lambda symbol, limit, include_eps: fetch_tiingo_income_statements(
+            symbol, limit, include_eps=include_eps
+        ),
+    ),
 )
-
-
-def enabled_us_income_statement_sources() -> tuple[str, ...]:
-    return tuple(
-        source
-        for source, flag in US_INCOME_STATEMENT_SOURCE_FLAGS
-        if flag is None or getattr(shared, flag)
-    )
-
-
-BASE_SOURCE_ORDER = enabled_us_income_statement_sources()
+ENABLED_US_INCOME_STATEMENT_SOURCES = tuple(
+    source
+    for source in US_INCOME_STATEMENT_SOURCES
+    if source.enable_flag is None or getattr(shared, source.enable_flag)
+)
+BASE_SOURCE_ORDER = tuple(source.name for source in ENABLED_US_INCOME_STATEMENT_SOURCES)
 SOURCE_ORDER = (*BASE_SOURCE_ORDER, 'sec')
 SOURCE_LABELS = {
-    'fmp': 'FMP',
-    'massive': 'Massive',
-    'eodhd': 'EODHD',
-    'finnhub': 'Finnhub',
-    'tiingo': 'Tiingo',
+    **{source.name: source.label for source in US_INCOME_STATEMENT_SOURCES},
     'sec': 'SEC',
 }
 
@@ -504,7 +542,7 @@ async def fetch_finmind_taiwan_income_statements(
             't',
             symbol,
             limit + FMP_TAIWAN_QUARTER_BUFFER,
-            require_eps=require_eps,
+            include_eps=require_eps,
         ),
     )
     finmind_rows = normalize_finmind_taiwan_income_statement_rows(
@@ -824,7 +862,7 @@ async def fetch_fmp_income_statements(
     market: Literal['j', 't', 'u'],
     symbol: str,
     limit: int,
-    require_eps: bool = True,
+    include_eps: bool = True,
 ) -> dict[str, dict]:
     params = {
         'apikey': FMP_KEY,
@@ -851,7 +889,7 @@ async def fetch_fmp_income_statements(
         json.loads(text),
         field_map=field_map,
         date_field='date',
-        include_eps=require_eps,
+        include_eps=include_eps,
         metadata_fields={
             'cik': 'cik',
             'quarter': 'period',
@@ -860,7 +898,7 @@ async def fetch_fmp_income_statements(
 
 
 async def fetch_massive_income_statements(
-    symbol: str, limit: int, require_eps: bool = True
+    symbol: str, limit: int, include_eps: bool = True
 ) -> dict[str, dict]:
     params = {
         'tickers': symbol,
@@ -881,7 +919,7 @@ async def fetch_massive_income_statements(
         json.loads(text)['results'] or [],
         field_map=field_map,
         date_field='period_end',
-        include_eps=require_eps,
+        include_eps=include_eps,
         metadata_fields={
             'cik': 'cik',
             'quarter': 'fiscal_quarter',
@@ -890,7 +928,7 @@ async def fetch_massive_income_statements(
 
 
 async def fetch_finnhub_income_statements(
-    symbol: str, limit: int | None = None, require_eps: bool = True
+    symbol: str, limit: int, include_eps: bool = True
 ) -> dict[str, dict]:
     params = {
         'symbol': symbol,
@@ -911,13 +949,12 @@ async def fetch_finnhub_income_statements(
         key=lambda row: row['period'],
         reverse=True,
     )
-    if limit is not None:
-        financials = financials[:limit]
+    financials = financials[:limit]
     return normalize_income_statement_rows(
         financials,
         field_map=field_map,
         date_field='period',
-        include_eps=require_eps,
+        include_eps=include_eps,
         value_transform=normalize_finnhub_field_value,
     )
 
@@ -961,7 +998,7 @@ def normalize_tiingo_income_statement_rows(
 
 
 async def fetch_tiingo_income_statements(
-    symbol: str, limit: int, require_eps: bool = True
+    symbol: str, limit: int, include_eps: bool = True
 ) -> dict[str, dict]:
     params = {
         # Use Tiingo's latest restated values, whose dates are fiscal period ends.
@@ -974,7 +1011,7 @@ async def fetch_tiingo_income_statements(
         headers={'Authorization': f'Token {TIINGO_API_KEY}'},
     )
     return normalize_tiingo_income_statement_rows(
-        json.loads(text), include_eps=require_eps
+        json.loads(text), include_eps=include_eps
     )
 
 
@@ -1018,7 +1055,7 @@ async def fetch_eodhd_fundamentals(symbol: str) -> dict:
 
 
 async def fetch_eodhd_income_statements(
-    symbol: str, limit: int | None = None, require_eps: bool = True
+    symbol: str, limit: int, include_eps: bool = True
 ) -> dict[str, dict]:
     data = await fetch_eodhd_fundamentals(symbol)
     income_statement = data.get('Financials::Income_Statement::quarterly', {})
@@ -1041,13 +1078,13 @@ async def fetch_eodhd_income_statements(
                 'weightedAverageShsOutDil', diluted_shares
             ),
         }
-        if require_eps:
+        if include_eps:
             normalized_row[EPS_XPS_FIELD] = sanitize_source_field_value(
                 EPS_XPS_FIELD,
                 diluted_eps_from_reported_income(income_row, diluted_shares),
             )
         rows[date] = normalized_row
-        if limit is not None and len(rows) >= limit:
+        if len(rows) >= limit:
             break
     return rows
 
@@ -1195,44 +1232,27 @@ def format_source_fetch_error(error: Exception) -> str:
 async def fetch_us_income_statement_sources(
     symbol: str, limit: int, include_eps: bool
 ) -> dict[str, dict[str, dict]]:
-    source_fetchers = {
-        'fmp': lambda: fetch_fmp_income_statements(
-            'u', symbol, limit, require_eps=include_eps
-        ),
-        'massive': lambda: fetch_massive_income_statements(
-            symbol, limit, require_eps=include_eps
-        ),
-        'eodhd': lambda: fetch_eodhd_income_statements(
-            symbol, limit, require_eps=include_eps
-        ),
-        'finnhub': lambda: fetch_finnhub_income_statements(
-            symbol, limit, require_eps=include_eps
-        ),
-        'tiingo': lambda: fetch_tiingo_income_statements(
-            symbol, limit, require_eps=include_eps
-        ),
-    }
-    source_fetches = {
-        source: source_fetchers[source]()
-        for source in enabled_us_income_statement_sources()
-    }
+    source_fetches = [
+        (source, source.fetch(symbol, limit, include_eps))
+        for source in ENABLED_US_INCOME_STATEMENT_SOURCES
+    ]
     source_rows = await asyncio.gather(
-        *source_fetches.values(),
+        *(fetch for _, fetch in source_fetches),
         return_exceptions=True,
     )
     resolved_rows = []
     unavailable_sources = set()
-    for source_name, rows in zip(source_fetches, source_rows, strict=True):
+    for (source, _), rows in zip(source_fetches, source_rows, strict=True):
         if isinstance(rows, Exception):
             logger.warning(
                 '{} income statements unavailable for {}: {}; skipping source',
-                SOURCE_LABELS[source_name],
+                source.label,
                 symbol,
                 format_source_fetch_error(rows),
             )
-            unavailable_sources.add(source_name)
+            unavailable_sources.add(source.name)
             rows = {}
-        resolved_rows.append((source_name, rows))
+        resolved_rows.append((source.name, rows))
     return IncomeStatementSourceRows(resolved_rows, unavailable_sources)
 
 
@@ -1476,7 +1496,7 @@ async def fetch_resolved_income_statement_quarters(
 
     if market != 'u':
         fmp_rows = await fetch_fmp_income_statements(
-            market, symbol, limit, require_eps=include_eps
+            market, symbol, limit, include_eps=include_eps
         )
         return select_latest_required_quarters(fmp_rows, limit, symbol=symbol)
 

@@ -10,6 +10,13 @@ from backend import valuation
 from httpx import HTTPStatusError, Request, Response
 
 
+def selected_sources(*names: str):
+    source_by_name = {
+        source.name: source for source in valuation.US_INCOME_STATEMENT_SOURCES
+    }
+    return tuple(source_by_name[name] for name in names)
+
+
 class TiingoValuationTests(unittest.TestCase):
     def test_disabled_sources_do_not_require_keys_at_startup(self):
         project_root = Path(__file__).resolve().parents[1]
@@ -105,11 +112,54 @@ assert 'tiingo' not in valuation.SOURCE_ORDER
 
         self.assertEqual(result.returncode, 0, f'{result.stdout}\n{result.stderr}')
 
+    def test_all_sources_enabled_at_startup_match_the_registry(self):
+        project_root = Path(__file__).resolve().parents[1]
+        env = {
+            **os.environ,
+            'FMP_KEY': 'test',
+            'FINMIND_KEY': 'test',
+            'FINNHUB_API_KEY': 'test',
+            'MASSIVE_API_KEY': 'test',
+            'EODHD_API_KEY': 'test',
+            'FROM_COINGECKO': '',
+            'FROM_YAHOO': '',
+            'ENABLE_MASSIVE_FUNDAMENTALS': 'true',
+            'ENABLE_EODHD_FUNDAMENTALS': 'true',
+            'ENABLE_TIINGO_FUNDAMENTALS': 'true',
+        }
+        code = '''\
+import sys
+import types
+
+dotenv = types.ModuleType('dotenv')
+dotenv.load_dotenv = lambda: False
+sys.modules['dotenv'] = dotenv
+
+from backend import valuation
+
+expected = ('fmp', 'massive', 'eodhd', 'finnhub', 'tiingo')
+assert tuple(source.name for source in valuation.ENABLED_US_INCOME_STATEMENT_SOURCES) == expected
+assert valuation.BASE_SOURCE_ORDER == expected
+assert valuation.SOURCE_ORDER == (*expected, 'sec')
+'''
+        result = subprocess.run(
+            [sys.executable, '-c', code],
+            cwd=project_root,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, f'{result.stdout}\n{result.stderr}')
+
     def test_disabled_tiingo_is_not_fetched(self):
         with (
-            patch.object(valuation.shared, 'ENABLE_MASSIVE_FUNDAMENTALS', True),
-            patch.object(valuation.shared, 'ENABLE_EODHD_FUNDAMENTALS', True),
-            patch.object(valuation.shared, 'ENABLE_TIINGO_FUNDAMENTALS', False),
+            patch.object(
+                valuation,
+                'ENABLED_US_INCOME_STATEMENT_SOURCES',
+                selected_sources('fmp', 'massive', 'eodhd', 'finnhub'),
+            ),
             patch.object(
                 valuation,
                 'fetch_fmp_income_statements',
@@ -143,11 +193,13 @@ assert 'tiingo' not in valuation.SOURCE_ORDER
         self.assertEqual(set(source_rows), {'fmp', 'massive', 'eodhd', 'finnhub'})
         tiingo_fetch.assert_not_awaited()
 
-    def test_enabled_sources_are_fetched_in_registry_order(self):
+    def test_enabled_sources_are_fetched_in_registry_order_with_requested_eps(self):
         with (
-            patch.object(valuation.shared, 'ENABLE_MASSIVE_FUNDAMENTALS', True),
-            patch.object(valuation.shared, 'ENABLE_EODHD_FUNDAMENTALS', True),
-            patch.object(valuation.shared, 'ENABLE_TIINGO_FUNDAMENTALS', True),
+            patch.object(
+                valuation,
+                'ENABLED_US_INCOME_STATEMENT_SOURCES',
+                selected_sources('fmp', 'massive', 'eodhd', 'finnhub', 'tiingo'),
+            ),
             patch.object(
                 valuation,
                 'fetch_fmp_income_statements',
@@ -174,25 +226,75 @@ assert 'tiingo' not in valuation.SOURCE_ORDER
                 new=AsyncMock(return_value={}),
             ) as tiingo_fetch,
         ):
+            for include_eps in (True, False):
+                with self.subTest(include_eps=include_eps):
+                    source_rows = asyncio.run(
+                        valuation.fetch_us_income_statement_sources(
+                            'HOOD', 8, include_eps
+                        )
+                    )
+
+                    self.assertEqual(
+                        list(source_rows),
+                        ['fmp', 'massive', 'eodhd', 'finnhub', 'tiingo'],
+                    )
+                    fmp_fetch.assert_awaited_once_with(
+                        'u', 'HOOD', 8, include_eps=include_eps
+                    )
+                    massive_fetch.assert_awaited_once_with(
+                        'HOOD', 8, include_eps=include_eps
+                    )
+                    eodhd_fetch.assert_awaited_once_with(
+                        'HOOD', 8, include_eps=include_eps
+                    )
+                    finnhub_fetch.assert_awaited_once_with(
+                        'HOOD', 8, include_eps=include_eps
+                    )
+                    tiingo_fetch.assert_awaited_once_with(
+                        'HOOD', 8, include_eps=include_eps
+                    )
+                    for fetch in (
+                        fmp_fetch,
+                        massive_fetch,
+                        eodhd_fetch,
+                        finnhub_fetch,
+                        tiingo_fetch,
+                    ):
+                        fetch.reset_mock()
+
+    def test_failed_source_is_empty_and_marked_unavailable(self):
+        fmp_rows = {'2025-03-31': {'revenue': 100}}
+        with (
+            patch.object(
+                valuation,
+                'ENABLED_US_INCOME_STATEMENT_SOURCES',
+                selected_sources('fmp', 'massive'),
+            ),
+            patch.object(
+                valuation,
+                'fetch_fmp_income_statements',
+                new=AsyncMock(return_value=fmp_rows),
+            ),
+            patch.object(
+                valuation,
+                'fetch_massive_income_statements',
+                new=AsyncMock(side_effect=RuntimeError),
+            ),
+        ):
             source_rows = asyncio.run(
                 valuation.fetch_us_income_statement_sources('HOOD', 8, True)
             )
 
-        self.assertEqual(
-            list(source_rows),
-            ['fmp', 'massive', 'eodhd', 'finnhub', 'tiingo'],
-        )
-        fmp_fetch.assert_awaited_once_with('u', 'HOOD', 8, require_eps=True)
-        massive_fetch.assert_awaited_once_with('HOOD', 8, require_eps=True)
-        eodhd_fetch.assert_awaited_once_with('HOOD', 8, require_eps=True)
-        finnhub_fetch.assert_awaited_once_with('HOOD', 8, require_eps=True)
-        tiingo_fetch.assert_awaited_once_with('HOOD', 8, require_eps=True)
+        self.assertEqual(source_rows, {'fmp': fmp_rows, 'massive': {}})
+        self.assertEqual(source_rows.unavailable_sources, frozenset({'massive'}))
 
     def test_disabled_massive_is_not_fetched(self):
         with (
-            patch.object(valuation.shared, 'ENABLE_MASSIVE_FUNDAMENTALS', False),
-            patch.object(valuation.shared, 'ENABLE_EODHD_FUNDAMENTALS', True),
-            patch.object(valuation.shared, 'ENABLE_TIINGO_FUNDAMENTALS', False),
+            patch.object(
+                valuation,
+                'ENABLED_US_INCOME_STATEMENT_SOURCES',
+                selected_sources('fmp', 'eodhd', 'finnhub'),
+            ),
             patch.object(
                 valuation,
                 'fetch_fmp_income_statements',
@@ -223,9 +325,11 @@ assert 'tiingo' not in valuation.SOURCE_ORDER
 
     def test_disabled_eodhd_is_not_fetched(self):
         with (
-            patch.object(valuation.shared, 'ENABLE_MASSIVE_FUNDAMENTALS', True),
-            patch.object(valuation.shared, 'ENABLE_EODHD_FUNDAMENTALS', False),
-            patch.object(valuation.shared, 'ENABLE_TIINGO_FUNDAMENTALS', False),
+            patch.object(
+                valuation,
+                'ENABLED_US_INCOME_STATEMENT_SOURCES',
+                selected_sources('fmp', 'massive', 'finnhub'),
+            ),
             patch.object(
                 valuation,
                 'fetch_fmp_income_statements',
