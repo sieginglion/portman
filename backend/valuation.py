@@ -94,7 +94,7 @@ BASE_XPS_FIELDS = ('revenue', 'weightedAverageShsOutDil')
 EPS_XPS_FIELD = 'epsDiluted'
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
 # Diagnostics are intentionally process-local. Restarting the backend starts a new
-# screener run with clean counts. SEC is a repair/reference source, not a peer
+# screener run with clean counts. SEC is a reference source, not a peer
 # provider, so it is excluded.
 _xps_diagnostics_seen: set[tuple[str, str]] = set()
 
@@ -138,7 +138,7 @@ TIINGO_QUARTER_BUFFER = 1
 FINMIND_TAIWAN_SHARE_PAR_VALUE = 10
 SEC_DEDUPE_COLS = ['filed', 'val', 'start', 'end']
 SEC_ALLOWED_FORMS = {'10-Q', '10-K', '10-Q/A', '10-K/A'}
-SEC_REPAIR_FIELDS = ('weightedAverageShsOutDil', EPS_XPS_FIELD)
+SEC_REFERENCE_FIELDS = ('weightedAverageShsOutDil', EPS_XPS_FIELD)
 SEC_FIELD_CONCEPTS = {
     'weightedAverageShsOutDil': (
         ('WeightedAverageNumberOfDilutedSharesOutstanding', 'shares'),
@@ -630,12 +630,12 @@ def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
         return empty_sec_rows()
     df = df[df['form'].isin(SEC_ALLOWED_FORMS)]
     if df.empty:
-        logger.warning('SEC repair skipped; no supported forms found')
+        logger.warning('SEC reference lookup skipped; no supported forms found')
         return empty_sec_rows()
     missing_columns = [column for column in SEC_DEDUPE_COLS if column not in df]
     if missing_columns:
         logger.warning(
-            'SEC repair skipped; missing expected columns {}',
+            'SEC reference lookup skipped; missing expected columns {}',
             missing_columns,
         )
         return empty_sec_rows()
@@ -1300,12 +1300,12 @@ async def fetch_sec_values_for_quarters(
 ) -> dict[str, dict[str, int | float]]:
     """Fetch usable SEC field values keyed by aligned quarter."""
     values_by_quarter = {}
-    for field in (field for field in SEC_REPAIR_FIELDS if field in fields):
+    for field in (field for field in SEC_REFERENCE_FIELDS if field in fields):
         try:
             frames = await fetch_sec_field_rows(cik, field)
         except Exception as exc:
             logger.warning(
-                'SEC repair unavailable for {} field={}: {}; continuing without SEC',
+                'SEC reference unavailable for {} field={}: {}; continuing without SEC',
                 symbol,
                 field,
                 exc,
@@ -1332,7 +1332,7 @@ async def add_sec_reference_values(
     """Add usable SEC facts to aligned US quarters as reference-source values."""
     cik = select_sec_cik(fmp_rows, massive_rows)
     if cik is None:
-        logger.warning('SEC repair unavailable for {}: no FMP/Massive CIK', symbol)
+        logger.warning('SEC reference unavailable for {}: no FMP/Massive CIK', symbol)
         return
 
     metadata_by_quarter = build_sec_quarter_metadata(
@@ -1340,7 +1340,7 @@ async def add_sec_reference_values(
     )
     if not metadata_by_quarter:
         logger.warning(
-            'SEC repair unavailable for {}: no FMP/Massive quarter metadata',
+            'SEC reference unavailable for {}: no FMP/Massive quarter metadata',
             symbol,
         )
         return
@@ -1357,22 +1357,6 @@ async def add_sec_reference_values(
             quarter.setdefault(field, {})['sec'] = value
 
 
-def latest_insufficient_us_fields(
-    aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
-    required_fields: list[str],
-) -> list[str]:
-    quarter_dates = list(aligned_quarters)
-    if not quarter_dates:
-        return []
-
-    latest_quarter = aligned_quarters[quarter_dates[-1]]
-    return [
-        field
-        for field in required_fields
-        if count_usable_source_values(latest_quarter.get(field, {})) < 2
-    ]
-
-
 def drop_incomplete_latest_us_quarter(
     symbol: str,
     aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
@@ -1384,22 +1368,19 @@ def drop_incomplete_latest_us_quarter(
 
     latest_date = quarter_dates[-1]
     latest_quarter = aligned_quarters[latest_date]
-    latest_field_source_context = {
-        field: latest_quarter.get(field, {}) for field in required_fields
-    }
-    latest_missing_usable_fields = latest_insufficient_us_fields(
-        aligned_quarters, required_fields
-    )
+    insufficient_fields = [
+        field
+        for field in required_fields
+        if count_usable_source_values(latest_quarter.get(field, {})) < 2
+    ]
 
-    if not latest_missing_usable_fields:
+    if not insufficient_fields:
         return aligned_quarters
 
     mismatch_blocks = [
-        format_source_field_block(
-            field, latest_field_source_context[field], latest_date
-        )
+        format_source_field_block(field, latest_quarter.get(field, {}), latest_date)
         for field in required_fields
-        if field in latest_missing_usable_fields
+        if field in insufficient_fields
     ]
     logger.warning(
         'Dropping latest {} quarter {}: fewer than 2 usable sources\n{}',
@@ -1441,13 +1422,13 @@ async def resolve_us_income_statement_quarters(
     limit: int,
     include_eps: bool,
 ) -> dict[str, dict[str, int | float | None]]:
-    """Align US provider data, repair it from SEC, then resolve consensus values."""
+    """Align US provider data, add SEC references, then resolve consensus values."""
     required_fields = required_xps_fields(include_eps)
 
     # 1. Group provider rows that describe the same fiscal quarter.
     aligned_quarters = build_aligned_source_quarters(source_rows)
 
-    # 2. Use SEC only to repair/reference missing fields before validation.
+    # 2. Add SEC shares/EPS as a reference source before validation.
     await add_sec_reference_values(
         symbol,
         aligned_quarters,
