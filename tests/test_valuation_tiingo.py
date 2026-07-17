@@ -55,8 +55,8 @@ from backend import shared, valuation
 
 assert not shared.{flag}
 assert shared.{api_key} == ''
-assert '{source}' not in valuation.BASE_SOURCE_ORDER
-assert '{source}' not in valuation.SOURCE_ORDER
+assert '{source}' not in valuation.us_income_statement_source_order()
+assert '{source}' not in valuation.us_income_statement_source_order(include_sec=True)
 '''
                 result = subprocess.run(
                     [sys.executable, '-c', code],
@@ -98,8 +98,8 @@ sys.modules['dotenv'] = dotenv
 from backend import shared, valuation
 
 assert not shared.ENABLE_TIINGO_FUNDAMENTALS
-assert 'tiingo' not in valuation.BASE_SOURCE_ORDER
-assert 'tiingo' not in valuation.SOURCE_ORDER
+assert 'tiingo' not in valuation.us_income_statement_source_order()
+assert 'tiingo' not in valuation.us_income_statement_source_order(include_sec=True)
 '''
         result = subprocess.run(
             [sys.executable, '-c', code],
@@ -139,8 +139,8 @@ from backend import valuation
 
 expected = ('fmp', 'massive', 'eodhd', 'finnhub', 'tiingo')
 assert tuple(source.name for source in valuation.ENABLED_US_INCOME_STATEMENT_SOURCES) == expected
-assert valuation.BASE_SOURCE_ORDER == expected
-assert valuation.SOURCE_ORDER == (*expected, 'sec')
+assert valuation.us_income_statement_source_order() == expected
+assert valuation.us_income_statement_source_order(include_sec=True) == (*expected, 'sec')
 '''
         result = subprocess.run(
             [sys.executable, '-c', code],
@@ -289,6 +289,24 @@ assert valuation.SOURCE_ORDER == (*expected, 'sec')
 
         self.assertEqual(fetched.rows, {'fmp': fmp_rows, 'massive': {}})
         self.assertEqual(fetched.unavailable_sources, frozenset({'massive'}))
+
+    def test_cancelled_source_propagates(self):
+        with (
+            patch.object(
+                valuation,
+                'ENABLED_US_INCOME_STATEMENT_SOURCES',
+                selected_sources('fmp'),
+            ),
+            patch.object(
+                valuation,
+                'fetch_fmp_income_statements',
+                new=AsyncMock(side_effect=asyncio.CancelledError),
+            ),
+        ):
+            with self.assertRaises(asyncio.CancelledError):
+                asyncio.run(
+                    valuation.fetch_us_income_statement_sources('HOOD', 8, True)
+                )
 
     def test_us_resolution_receives_fetched_rows_and_availability(self):
         rows = {'fmp': {'2025-03-31': {'revenue': 100}}}

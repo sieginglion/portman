@@ -10,6 +10,13 @@ def sec_frame(rows):
     return pd.DataFrame(rows, columns=valuation.SEC_DEDUPE_COLS)
 
 
+def selected_sources(*names: str):
+    source_by_name = {
+        source.name: source for source in valuation.US_INCOME_STATEMENT_SOURCES
+    }
+    return tuple(source_by_name[name] for name in names)
+
+
 class SecValuationTests(unittest.TestCase):
     def test_consensus_helpers_select_and_average_agreeing_sources(self):
         source_values = {'fmp': 100, 'finnhub': 102, 'sec': None}
@@ -25,6 +32,24 @@ class SecValuationTests(unittest.TestCase):
             valuation.select_consensus_source_value('revenue', source_values),
             (101, ('fmp', 'finnhub')),
         )
+
+    def test_configured_source_order_drives_alignment_and_consensus(self):
+        source_rows = {
+            'fmp': {'2025-03-31': {'revenue': 100}},
+            'finnhub': {'2025-04-05': {'revenue': 102}},
+        }
+        with patch.object(
+            valuation,
+            'ENABLED_US_INCOME_STATEMENT_SOURCES',
+            selected_sources('finnhub', 'fmp'),
+        ):
+            aligned_quarters = valuation.build_aligned_source_quarters(source_rows)
+            consensus = valuation.select_consensus_source_value(
+                'revenue', {'fmp': 100, 'finnhub': 102}
+            )
+
+        self.assertEqual(list(aligned_quarters), ['2025-04-05'])
+        self.assertEqual(consensus, (101, ('finnhub', 'fmp')))
 
     def test_consensus_helpers_reject_disagreeing_sources(self):
         source_values = {'fmp': 100, 'finnhub': 120}
@@ -153,7 +178,11 @@ class SecValuationTests(unittest.TestCase):
     def test_diagnostics_counts_each_directly_agreeing_pair_once(self):
         rows = {'2025-03-31': {'revenue': {'fmp': 100, 'massive': 104, 'finnhub': 108}}}
         with (
-            patch.object(valuation, 'BASE_SOURCE_ORDER', ('fmp', 'massive', 'finnhub')),
+            patch.object(
+                valuation,
+                'ENABLED_US_INCOME_STATEMENT_SOURCES',
+                selected_sources('fmp', 'massive', 'finnhub'),
+            ),
             patch.object(valuation, '_xps_diagnostics_seen', set()),
             patch.object(
                 valuation,
@@ -186,7 +215,11 @@ class SecValuationTests(unittest.TestCase):
             }
         }
         with (
-            patch.object(valuation, 'BASE_SOURCE_ORDER', ('fmp', 'finnhub')),
+            patch.object(
+                valuation,
+                'ENABLED_US_INCOME_STATEMENT_SOURCES',
+                selected_sources('fmp', 'finnhub'),
+            ),
             patch.object(valuation, '_xps_diagnostics_seen', set()),
             patch.object(
                 valuation,
@@ -213,7 +246,11 @@ class SecValuationTests(unittest.TestCase):
             }
         }
         with (
-            patch.object(valuation, 'BASE_SOURCE_ORDER', ('fmp', 'finnhub')),
+            patch.object(
+                valuation,
+                'ENABLED_US_INCOME_STATEMENT_SOURCES',
+                selected_sources('fmp', 'finnhub'),
+            ),
             patch.object(valuation, '_xps_diagnostics_seen', set()),
             patch.object(
                 valuation,
@@ -284,7 +321,7 @@ class SecValuationTests(unittest.TestCase):
 
     def test_resolve_us_income_statement_quarters_accepts_source_rows(self):
         source_rows = {
-            # Insertion order intentionally differs from BASE_SOURCE_ORDER.
+            # Insertion order intentionally differs from the source registry.
             'finnhub': {
                 '2025-04-05': {
                     'revenue': 100,

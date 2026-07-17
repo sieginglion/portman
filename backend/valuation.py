@@ -83,12 +83,18 @@ ENABLED_US_INCOME_STATEMENT_SOURCES = tuple(
     for source in US_INCOME_STATEMENT_SOURCES
     if source.enable_flag is None or getattr(shared, source.enable_flag)
 )
-BASE_SOURCE_ORDER = tuple(source.name for source in ENABLED_US_INCOME_STATEMENT_SOURCES)
-SOURCE_ORDER = (*BASE_SOURCE_ORDER, 'sec')
 SOURCE_LABELS = {
     **{source.name: source.label for source in US_INCOME_STATEMENT_SOURCES},
     'sec': 'SEC',
 }
+
+
+def us_income_statement_source_order(
+    include_sec: bool = False,
+) -> tuple[str, ...]:
+    names = tuple(source.name for source in ENABLED_US_INCOME_STATEMENT_SOURCES)
+    return (*names, 'sec') if include_sec else names
+
 
 BASE_XPS_FIELDS = ('revenue', 'weightedAverageShsOutDil')
 EPS_XPS_FIELD = 'epsDiluted'
@@ -101,7 +107,8 @@ _xps_diagnostics_seen: set[tuple[str, str]] = set()
 
 def new_xps_missing_counts() -> dict[str, dict[str, int]]:
     return {
-        field: {source: 0 for source in BASE_SOURCE_ORDER} for field in ALL_XPS_FIELDS
+        field: {source: 0 for source in us_income_statement_source_order()}
+        for field in ALL_XPS_FIELDS
     }
 
 
@@ -109,11 +116,12 @@ _xps_missing_counts = new_xps_missing_counts()
 
 
 def new_xps_consensus_pair_counts() -> dict[str, dict[str, int]]:
+    source_names = us_income_statement_source_order()
     return {
         field: {
             f'{left}:{right}': 0
-            for index, left in enumerate(BASE_SOURCE_ORDER)
-            for right in BASE_SOURCE_ORDER[index + 1 :]
+            for index, left in enumerate(source_names)
+            for right in source_names[index + 1 :]
         }
         for field in ALL_XPS_FIELDS
     }
@@ -193,7 +201,7 @@ def missing_xps_sources(
 ) -> list[str]:
     return [
         source
-        for source in BASE_SOURCE_ORDER
+        for source in us_income_statement_source_order()
         if source not in unavailable_sources
         and not has_source_field_value(quarter.get(field, {}).get(source))
     ]
@@ -218,7 +226,9 @@ def record_xps_diagnostics(
                 counts[source] += 1
 
             source_values = data.get(field, {})
-            peer_values = usable_source_values(source_values, BASE_SOURCE_ORDER)
+            peer_values = usable_source_values(
+                source_values, us_income_statement_source_order()
+            )
             pair_counts = _xps_consensus_pair_counts[field]
             for (left_source, left_value), (right_source, right_value) in combinations(
                 peer_values, 2
@@ -553,7 +563,7 @@ def build_aligned_source_quarters(
     source_rows: dict[str, dict[str, dict]],
 ) -> dict[str, dict[str, dict[str, int | float | None]]]:
     aligned_quarters = {}
-    for source_name in BASE_SOURCE_ORDER:
+    for source_name in us_income_statement_source_order():
         align_source_rows(
             aligned_quarters, source_name, source_rows.get(source_name, {})
         )
@@ -1093,10 +1103,12 @@ def field_has_consensus(field: str, lhs: int | float, rhs: int | float) -> bool:
 
 def usable_source_values(
     source_values: dict[str, int | float | None],
-    source_order: tuple[str, ...] = SOURCE_ORDER,
+    source_names: tuple[str, ...] | None = None,
 ) -> list[tuple[str, int | float]]:
+    if source_names is None:
+        source_names = us_income_statement_source_order(include_sec=True)
     values: list[tuple[str, int | float]] = []
-    for source_name in source_order:
+    for source_name in source_names:
         value = source_values.get(source_name)
         if not has_source_field_value(value):
             continue
@@ -1105,7 +1117,8 @@ def usable_source_values(
 
 
 def build_consensus_groups(
-    field: str, values: list[tuple[str, int | float]]
+    field: str,
+    values: list[tuple[str, int | float]],
 ) -> list[tuple[tuple[str, int | float], ...]]:
     adjacent_sources = {source_name: set() for source_name, _ in values}
     for i, (lhs_name, lhs_value) in enumerate(values):
@@ -1137,7 +1150,7 @@ def build_consensus_groups(
         consensus_groups.append(
             tuple(
                 (name, value_by_source[name])
-                for name in SOURCE_ORDER
+                for name in us_income_statement_source_order(include_sec=True)
                 if name in group_names
             )
         )
@@ -1170,7 +1183,8 @@ def average_consensus_group(group: tuple[tuple[str, int | float], ...]) -> float
 
 
 def select_consensus_source_value(
-    field: str, source_values: dict[str, int | float | None]
+    field: str,
+    source_values: dict[str, int | float | None],
 ) -> tuple[int | float | None, tuple[str, ...] | None]:
     values = usable_source_values(source_values)
     consensus_group = choose_consensus_group(build_consensus_groups(field, values))
@@ -1198,7 +1212,7 @@ def format_source_field_block(
     quarter_key: str,
 ) -> str:
     lines = [f'  {field}:']
-    for source_name in SOURCE_ORDER:
+    for source_name in us_income_statement_source_order(include_sec=True):
         lines.append(
             '    '
             f'{SOURCE_LABELS[source_name]:<8} '
@@ -1215,31 +1229,39 @@ def format_source_fetch_error(error: Exception) -> str:
     return type(error).__name__
 
 
+async def fetch_us_income_statement_source(
+    source: USIncomeStatementSource,
+    symbol: str,
+    limit: int,
+    include_eps: bool,
+) -> tuple[str, dict[str, dict], bool]:
+    try:
+        return source.name, await source.fetch(symbol, limit, include_eps), False
+    except Exception as error:
+        logger.warning(
+            '{} income statements unavailable for {}: {}; skipping source',
+            source.label,
+            symbol,
+            format_source_fetch_error(error),
+        )
+        return source.name, {}, True
+
+
 async def fetch_us_income_statement_sources(
     symbol: str, limit: int, include_eps: bool
 ) -> IncomeStatementFetch:
-    source_fetches = [
-        (source, source.fetch(symbol, limit, include_eps))
-        for source in ENABLED_US_INCOME_STATEMENT_SOURCES
-    ]
-    source_rows = await asyncio.gather(
-        *(fetch for _, fetch in source_fetches),
-        return_exceptions=True,
+    results = await asyncio.gather(
+        *(
+            fetch_us_income_statement_source(source, symbol, limit, include_eps)
+            for source in ENABLED_US_INCOME_STATEMENT_SOURCES
+        )
     )
-    resolved_rows = []
-    unavailable_sources = set()
-    for (source, _), rows in zip(source_fetches, source_rows, strict=True):
-        if isinstance(rows, Exception):
-            logger.warning(
-                '{} income statements unavailable for {}: {}; skipping source',
-                source.label,
-                symbol,
-                format_source_fetch_error(rows),
-            )
-            unavailable_sources.add(source.name)
-            rows = {}
-        resolved_rows.append((source.name, rows))
-    return IncomeStatementFetch(dict(resolved_rows), frozenset(unavailable_sources))
+    return IncomeStatementFetch(
+        rows={name: rows for name, rows, _ in results},
+        unavailable_sources=frozenset(
+            name for name, _, unavailable in results if unavailable
+        ),
+    )
 
 
 def select_sec_cik(
