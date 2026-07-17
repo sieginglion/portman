@@ -186,11 +186,13 @@ assert valuation.SOURCE_ORDER == (*expected, 'sec')
                 new=AsyncMock(),
             ) as tiingo_fetch,
         ):
-            source_rows = asyncio.run(
+            fetched = asyncio.run(
                 valuation.fetch_us_income_statement_sources('HOOD', 8, True)
             )
 
-        self.assertEqual(set(source_rows), {'fmp', 'massive', 'eodhd', 'finnhub'})
+        self.assertEqual(
+            set(fetched.rows), {'fmp', 'massive', 'eodhd', 'finnhub'}
+        )
         tiingo_fetch.assert_not_awaited()
 
     def test_enabled_sources_are_fetched_in_registry_order_with_requested_eps(self):
@@ -228,14 +230,14 @@ assert valuation.SOURCE_ORDER == (*expected, 'sec')
         ):
             for include_eps in (True, False):
                 with self.subTest(include_eps=include_eps):
-                    source_rows = asyncio.run(
+                    fetched = asyncio.run(
                         valuation.fetch_us_income_statement_sources(
                             'HOOD', 8, include_eps
                         )
                     )
 
                     self.assertEqual(
-                        list(source_rows),
+                        list(fetched.rows),
                         ['fmp', 'massive', 'eodhd', 'finnhub', 'tiingo'],
                     )
                     fmp_fetch.assert_awaited_once_with(
@@ -281,12 +283,46 @@ assert valuation.SOURCE_ORDER == (*expected, 'sec')
                 new=AsyncMock(side_effect=RuntimeError),
             ),
         ):
-            source_rows = asyncio.run(
+            fetched = asyncio.run(
                 valuation.fetch_us_income_statement_sources('HOOD', 8, True)
             )
 
-        self.assertEqual(source_rows, {'fmp': fmp_rows, 'massive': {}})
-        self.assertEqual(source_rows.unavailable_sources, frozenset({'massive'}))
+        self.assertEqual(fetched.rows, {'fmp': fmp_rows, 'massive': {}})
+        self.assertEqual(fetched.unavailable_sources, frozenset({'massive'}))
+
+    def test_us_resolution_receives_fetched_rows_and_availability(self):
+        rows = {'fmp': {'2025-03-31': {'revenue': 100}}}
+        fetched = valuation.IncomeStatementFetch(
+            rows, frozenset({'massive'})
+        )
+        resolved = {'2025-03-31': {'revenue': 100}}
+        with (
+            patch.object(
+                valuation,
+                'fetch_us_income_statement_sources',
+                new=AsyncMock(return_value=fetched),
+            ) as fetch_sources,
+            patch.object(
+                valuation,
+                'resolve_us_income_statement_quarters',
+                new=AsyncMock(return_value=resolved),
+            ) as resolve_quarters,
+        ):
+            result = asyncio.run(
+                valuation.fetch_resolved_income_statement_quarters(
+                    'u', 'HOOD', 8, True
+                )
+            )
+
+        self.assertEqual(result, resolved)
+        fetch_sources.assert_awaited_once_with('HOOD', 9, True)
+        resolve_quarters.assert_awaited_once_with(
+            'HOOD',
+            rows,
+            8,
+            True,
+            unavailable_sources=frozenset({'massive'}),
+        )
 
     def test_disabled_massive_is_not_fetched(self):
         with (
@@ -316,11 +352,11 @@ assert valuation.SOURCE_ORDER == (*expected, 'sec')
                 new=AsyncMock(return_value={}),
             ),
         ):
-            source_rows = asyncio.run(
+            fetched = asyncio.run(
                 valuation.fetch_us_income_statement_sources('HOOD', 8, True)
             )
 
-        self.assertNotIn('massive', source_rows)
+        self.assertNotIn('massive', fetched.rows)
         massive_fetch.assert_not_awaited()
 
     def test_disabled_eodhd_is_not_fetched(self):
@@ -351,11 +387,11 @@ assert valuation.SOURCE_ORDER == (*expected, 'sec')
                 new=AsyncMock(return_value={}),
             ),
         ):
-            source_rows = asyncio.run(
+            fetched = asyncio.run(
                 valuation.fetch_us_income_statement_sources('HOOD', 8, True)
             )
 
-        self.assertNotIn('eodhd', source_rows)
+        self.assertNotIn('eodhd', fetched.rows)
         eodhd_fetch.assert_not_awaited()
 
     def test_source_fetch_error_redacts_request_url_and_token(self):

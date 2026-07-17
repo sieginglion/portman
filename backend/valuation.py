@@ -147,16 +147,12 @@ SEC_FIELD_CONCEPTS = {
 }
 
 
-class IncomeStatementSourceRows(dict[str, dict[str, dict]]):
+@dataclass(frozen=True)
+class IncomeStatementFetch:
     """Fetched source rows together with provider-level availability metadata."""
 
-    def __init__(
-        self,
-        rows: list[tuple[str, dict[str, dict]]],
-        unavailable_sources: set[str],
-    ) -> None:
-        super().__init__(rows)
-        self.unavailable_sources = frozenset(unavailable_sources)
+    rows: dict[str, dict[str, dict]]
+    unavailable_sources: frozenset[str]
 
 
 def empty_sec_rows() -> pd.DataFrame:
@@ -222,11 +218,7 @@ def record_xps_diagnostics(
                 counts[source] += 1
 
             source_values = data.get(field, {})
-            peer_values = [
-                (source, source_values[source])
-                for source in BASE_SOURCE_ORDER
-                if has_source_field_value(source_values.get(source))
-            ]
+            peer_values = usable_source_values(source_values, BASE_SOURCE_ORDER)
             pair_counts = _xps_consensus_pair_counts[field]
             for (left_source, left_value), (right_source, right_value) in combinations(
                 peer_values, 2
@@ -1101,9 +1093,10 @@ def field_has_consensus(field: str, lhs: int | float, rhs: int | float) -> bool:
 
 def usable_source_values(
     source_values: dict[str, int | float | None],
+    source_order: tuple[str, ...] = SOURCE_ORDER,
 ) -> list[tuple[str, int | float]]:
     values: list[tuple[str, int | float]] = []
-    for source_name in SOURCE_ORDER:
+    for source_name in source_order:
         value = source_values.get(source_name)
         if not has_source_field_value(value):
             continue
@@ -1190,13 +1183,6 @@ def select_consensus_source_value(
     )
 
 
-def count_usable_source_values(source_values: dict[str, int | float | None]) -> int:
-    return sum(
-        has_source_field_value(source_values.get(source_name))
-        for source_name in SOURCE_ORDER
-    )
-
-
 def format_source_log_value(value: int | float | None) -> str:
     if value is None:
         return 'missing'
@@ -1231,7 +1217,7 @@ def format_source_fetch_error(error: Exception) -> str:
 
 async def fetch_us_income_statement_sources(
     symbol: str, limit: int, include_eps: bool
-) -> dict[str, dict[str, dict]]:
+) -> IncomeStatementFetch:
     source_fetches = [
         (source, source.fetch(symbol, limit, include_eps))
         for source in ENABLED_US_INCOME_STATEMENT_SOURCES
@@ -1253,7 +1239,7 @@ async def fetch_us_income_statement_sources(
             unavailable_sources.add(source.name)
             rows = {}
         resolved_rows.append((source.name, rows))
-    return IncomeStatementSourceRows(resolved_rows, unavailable_sources)
+    return IncomeStatementFetch(dict(resolved_rows), frozenset(unavailable_sources))
 
 
 def select_sec_cik(
@@ -1371,7 +1357,7 @@ def drop_incomplete_latest_us_quarter(
     insufficient_fields = [
         field
         for field in required_fields
-        if count_usable_source_values(latest_quarter.get(field, {})) < 2
+        if len(usable_source_values(latest_quarter.get(field, {}))) < 2
     ]
 
     if not insufficient_fields:
@@ -1421,6 +1407,8 @@ async def resolve_us_income_statement_quarters(
     source_rows: dict[str, dict[str, dict]],
     limit: int,
     include_eps: bool,
+    *,
+    unavailable_sources: frozenset[str] = frozenset(),
 ) -> dict[str, dict[str, int | float | None]]:
     """Align US provider data, add SEC references, then resolve consensus values."""
     required_fields = required_xps_fields(include_eps)
@@ -1450,9 +1438,7 @@ async def resolve_us_income_statement_quarters(
         record_xps_diagnostics(
             symbol,
             selected_quarters,
-            unavailable_sources=getattr(
-                source_rows, 'unavailable_sources', frozenset()
-            ),
+            unavailable_sources=unavailable_sources,
         )
 
     # 5. Reduce each field to the mean of its winning consensus group.
@@ -1481,14 +1467,13 @@ async def fetch_resolved_income_statement_quarters(
         )
         return select_latest_required_quarters(fmp_rows, limit, symbol=symbol)
 
-    source_rows = await fetch_us_income_statement_sources(
-        symbol, limit + 1, include_eps
-    )
+    fetched = await fetch_us_income_statement_sources(symbol, limit + 1, include_eps)
     return await resolve_us_income_statement_quarters(
         symbol,
-        source_rows,
+        fetched.rows,
         limit,
         include_eps,
+        unavailable_sources=fetched.unavailable_sources,
     )
 
 

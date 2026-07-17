@@ -179,6 +179,33 @@ class SecValuationTests(unittest.TestCase):
         )
         self.assertNotIn('sec', diagnostics['consensus_pairs']['revenue'])
 
+    def test_diagnostics_excludes_present_sec_values_from_peer_pairs(self):
+        rows = {
+            '2025-03-31': {
+                'revenue': {'fmp': 100, 'finnhub': 100, 'sec': 100},
+            }
+        }
+        with (
+            patch.object(valuation, 'BASE_SOURCE_ORDER', ('fmp', 'finnhub')),
+            patch.object(valuation, '_xps_diagnostics_seen', set()),
+            patch.object(
+                valuation,
+                '_xps_missing_counts',
+                valuation.new_xps_missing_counts(),
+            ),
+            patch.object(
+                valuation,
+                '_xps_consensus_pair_counts',
+                valuation.new_xps_consensus_pair_counts(),
+            ),
+        ):
+            valuation.record_xps_diagnostics('SEC-EXCLUSION-TEST', rows)
+            diagnostics = valuation.get_xps_diagnostics()
+
+        self.assertEqual(
+            diagnostics['consensus_pairs']['revenue'], {'fmp:finnhub': 1}
+        )
+
     def test_diagnostics_deduplicates_missing_and_pair_counts(self):
         rows = {
             '2025-03-31': {
