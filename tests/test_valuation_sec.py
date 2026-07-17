@@ -1,6 +1,6 @@
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 import pandas as pd
 from backend import valuation
@@ -288,6 +288,50 @@ class SecValuationTests(unittest.TestCase):
                     'revenue': 100,
                     'weightedAverageShsOutDil': 10,
                     'epsDiluted': 1,
+                }
+            },
+        )
+
+    def test_resolve_us_income_statement_quarters_without_eps(self):
+        source_rows = {
+            'fmp': {
+                '2025-03-31': {
+                    'revenue': 100,
+                    'weightedAverageShsOutDil': 10,
+                }
+            },
+            'finnhub': {
+                '2025-03-31': {
+                    'revenue': 100,
+                    'weightedAverageShsOutDil': 10,
+                }
+            },
+        }
+
+        with (
+            patch.object(valuation, 'merge_sec_fields', new=AsyncMock()) as merge_sec,
+            patch.object(valuation, 'record_xps_diagnostics') as diagnostics,
+        ):
+            resolved = asyncio.run(
+                valuation.resolve_us_income_statement_quarters(
+                    'AAPL', source_rows, limit=1, include_eps=False
+                )
+            )
+
+        merge_sec.assert_awaited_once_with(
+            'AAPL',
+            ANY,
+            source_rows['fmp'],
+            {},
+            ['revenue', 'weightedAverageShsOutDil'],
+        )
+        diagnostics.assert_not_called()
+        self.assertEqual(
+            resolved,
+            {
+                '2025-03-31': {
+                    'revenue': 100,
+                    'weightedAverageShsOutDil': 10,
                 }
             },
         )

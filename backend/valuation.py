@@ -1419,9 +1419,13 @@ async def resolve_us_income_statement_quarters(
     limit: int,
     include_eps: bool,
 ) -> dict[str, dict[str, int | float | None]]:
+    """Align US provider data, repair it from SEC, then resolve consensus values."""
     required_fields = required_xps_fields(include_eps)
 
+    # 1. Group provider rows that describe the same fiscal quarter.
     aligned_quarters = build_aligned_source_quarters(source_rows)
+
+    # 2. Use SEC only to repair/reference missing fields before validation.
     await merge_sec_fields(
         symbol,
         aligned_quarters,
@@ -1429,25 +1433,31 @@ async def resolve_us_income_statement_quarters(
         source_rows.get('massive', {}),
         required_fields,
     )
-    aligned_quarters = drop_incomplete_latest_us_quarter(
+
+    # 3. Ignore an under-supported newest quarter, then retain the requested window.
+    eligible_quarters = drop_incomplete_latest_us_quarter(
         symbol, aligned_quarters, required_fields
     )
-    aligned_quarters = select_latest_required_quarters(
-        aligned_quarters, limit, symbol=symbol, quarter_label='aligned quarters'
+    selected_quarters = select_latest_required_quarters(
+        eligible_quarters, limit, symbol=symbol, quarter_label='aligned quarters'
     )
+
+    # 4. Record diagnostics for the same quarters that will be returned.
     if include_eps:
         record_xps_diagnostics(
             symbol,
-            aligned_quarters,
+            selected_quarters,
             unavailable_sources=getattr(
                 source_rows, 'unavailable_sources', frozenset()
             ),
         )
+
+    # 5. Reduce each field to the mean of its winning consensus group.
     return {
         anchor_date: resolve_us_quarter_consensus(
             symbol, anchor_date, quarter, required_fields
         )
-        for anchor_date, quarter in aligned_quarters.items()
+        for anchor_date, quarter in selected_quarters.items()
     }
 
 
