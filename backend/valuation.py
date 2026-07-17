@@ -100,11 +100,8 @@ TIINGO_QUARTER_BUFFER = 1
 FINMIND_TAIWAN_SHARE_PAR_VALUE = 10
 SEC_DEDUPE_COLS = ['filed', 'val', 'start', 'end']
 SEC_ALLOWED_FORMS = {'10-Q', '10-K', '10-Q/A', '10-K/A'}
+SEC_REPAIR_FIELDS = ('weightedAverageShsOutDil', EPS_XPS_FIELD)
 SEC_FIELD_CONCEPTS = {
-    'revenue': (
-        ('RevenueFromContractWithCustomerExcludingAssessedTax', 'USD'),
-        ('Revenues', 'USD'),
-    ),
     'weightedAverageShsOutDil': (
         ('WeightedAverageNumberOfDilutedSharesOutstanding', 'shares'),
     ),
@@ -1283,9 +1280,7 @@ async def fetch_sec_values_for_quarters(
 ) -> dict[str, dict[str, int | float]]:
     """Fetch usable SEC field values keyed by aligned quarter."""
     values_by_quarter = {}
-    for field in dict.fromkeys(fields):
-        if field == 'revenue':
-            continue
+    for field in (field for field in SEC_REPAIR_FIELDS if field in fields):
         try:
             frames = await fetch_sec_field_rows(cik, field)
         except Exception as exc:
@@ -1307,13 +1302,14 @@ async def fetch_sec_values_for_quarters(
     return values_by_quarter
 
 
-async def merge_sec_fields(
+async def add_sec_reference_values(
     symbol: str,
     aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
     fmp_rows: dict[str, dict],
     massive_rows: dict[str, dict],
     fields: list[str],
 ) -> None:
+    """Add usable SEC facts to aligned US quarters as reference-source values."""
     cik = select_sec_cik(fmp_rows, massive_rows)
     if cik is None:
         logger.warning('SEC repair unavailable for {}: no FMP/Massive CIK', symbol)
@@ -1432,7 +1428,7 @@ async def resolve_us_income_statement_quarters(
     aligned_quarters = build_aligned_source_quarters(source_rows)
 
     # 2. Use SEC only to repair/reference missing fields before validation.
-    await merge_sec_fields(
+    await add_sec_reference_values(
         symbol,
         aligned_quarters,
         source_rows['fmp'],

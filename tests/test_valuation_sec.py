@@ -241,7 +241,7 @@ class SecValuationTests(unittest.TestCase):
                 '_xps_consensus_pair_counts',
                 valuation.new_xps_consensus_pair_counts(),
             ),
-            patch.object(valuation, 'merge_sec_fields', new=AsyncMock()),
+            patch.object(valuation, 'add_sec_reference_values', new=AsyncMock()),
             self.assertRaises(ValueError),
         ):
             asyncio.run(
@@ -274,7 +274,7 @@ class SecValuationTests(unittest.TestCase):
             },
         }
 
-        with patch.object(valuation, 'merge_sec_fields', new=AsyncMock()):
+        with patch.object(valuation, 'add_sec_reference_values', new=AsyncMock()):
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
                     'AAPL', source_rows, 1, include_eps=True
@@ -309,7 +309,9 @@ class SecValuationTests(unittest.TestCase):
         }
 
         with (
-            patch.object(valuation, 'merge_sec_fields', new=AsyncMock()) as merge_sec,
+            patch.object(
+                valuation, 'add_sec_reference_values', new=AsyncMock()
+            ) as add_sec_values,
             patch.object(valuation, 'record_xps_diagnostics') as diagnostics,
         ):
             resolved = asyncio.run(
@@ -318,7 +320,7 @@ class SecValuationTests(unittest.TestCase):
                 )
             )
 
-        merge_sec.assert_awaited_once_with(
+        add_sec_values.assert_awaited_once_with(
             'AAPL',
             ANY,
             source_rows['fmp'],
@@ -362,15 +364,15 @@ class SecValuationTests(unittest.TestCase):
         }
 
         with patch.object(
-            valuation, 'merge_sec_fields', new=AsyncMock()
-        ) as merge_sec_fields:
+            valuation, 'add_sec_reference_values', new=AsyncMock()
+        ) as add_sec_values:
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
                     'AAPL', source_rows, limit=1, include_eps=True
                 )
             )
 
-        merge_sec_fields.assert_awaited_once()
+        add_sec_values.assert_awaited_once()
         self.assertEqual(
             resolved,
             {
@@ -412,16 +414,16 @@ class SecValuationTests(unittest.TestCase):
 
         with patch.object(
             valuation,
-            'merge_sec_fields',
+            'add_sec_reference_values',
             new=AsyncMock(side_effect=add_sec_fields),
-        ) as merge_sec_fields:
+        ) as add_sec_values:
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
                     'AAPL', source_rows, limit=1, include_eps=True
                 )
             )
 
-        merge_sec_fields.assert_awaited_once()
+        add_sec_values.assert_awaited_once()
         self.assertEqual(
             resolved,
             {
@@ -466,7 +468,7 @@ class SecValuationTests(unittest.TestCase):
                 '_xps_consensus_pair_counts',
                 valuation.new_xps_consensus_pair_counts(),
             ),
-            patch.object(valuation, 'merge_sec_fields', new=AsyncMock()),
+            patch.object(valuation, 'add_sec_reference_values', new=AsyncMock()),
         ):
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
@@ -806,7 +808,7 @@ class SecValuationTests(unittest.TestCase):
 
 
 class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
-    async def test_skips_revenue_and_returns_only_usable_values(self):
+    async def test_fetches_required_repair_fields_and_returns_only_usable_values(self):
         metadata_by_quarter = {
             '2025-03-31': {'date': '2025-03-31', 'period': 'Q1'},
             '2025-06-30': {'date': '2025-06-30', 'period': 'Q2'},
@@ -894,8 +896,8 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(values, {'2025-03-31': {'epsDiluted': 1.2}})
 
 
-class MergeSecFieldsTests(unittest.IsolatedAsyncioTestCase):
-    async def test_merge_sec_fields_skips_revenue_but_adds_other_fields(self):
+class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
+    async def test_add_sec_reference_values_adds_supported_repair_fields(self):
         aligned_quarters = {
             '2025-03-31': {
                 'revenue': {'fmp': 100},
@@ -930,7 +932,7 @@ class MergeSecFieldsTests(unittest.IsolatedAsyncioTestCase):
             'fetch_sec_field_rows',
             side_effect=fake_fetch_sec_field_rows,
         ):
-            await valuation.merge_sec_fields(
+            await valuation.add_sec_reference_values(
                 'AAPL',
                 aligned_quarters,
                 fmp_rows,
@@ -944,7 +946,7 @@ class MergeSecFieldsTests(unittest.IsolatedAsyncioTestCase):
             aligned_quarters['2025-03-31']['weightedAverageShsOutDil']['sec'], 12
         )
 
-    async def test_merge_sec_fields_skips_when_cik_or_metadata_is_unavailable(self):
+    async def test_add_sec_reference_values_skips_without_cik_or_metadata(self):
         aligned_quarters = {'2025-03-31': {'revenue': {'fmp': 100}}}
 
         async def fail_if_called(cik, field):
@@ -953,10 +955,10 @@ class MergeSecFieldsTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(
             valuation, 'fetch_sec_field_rows', side_effect=fail_if_called
         ):
-            await valuation.merge_sec_fields(
+            await valuation.add_sec_reference_values(
                 'AAPL', aligned_quarters, {}, {}, ['revenue']
             )
-            await valuation.merge_sec_fields(
+            await valuation.add_sec_reference_values(
                 'AAPL',
                 aligned_quarters,
                 {'2025-03-31': {'cik': '320193'}},
