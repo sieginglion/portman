@@ -1499,18 +1499,14 @@ def build_xps_frame(
     resolved_quarters: dict[str, dict[str, int | float | None]], include_eps: bool
 ) -> pd.DataFrame:
     df = pd.DataFrame.from_dict(resolved_quarters, orient='index')
-    out = {
-        'rps': (df['revenue'] / df['weightedAverageShsOutDil'])
-        .rolling(4)
-        .sum()
-        .to_numpy()
-    }
-    if include_eps:
-        out['eps'] = df['epsDiluted'].rolling(4).sum().to_numpy()
-    return pd.DataFrame(
-        out,
-        pd.to_datetime(df.index) + pd.Timedelta(days=1),
-    ).iloc[3:]
+    df.index = pd.to_datetime(df.index) + pd.Timedelta(days=1)
+    frame = pd.DataFrame(
+        {
+            'rps': df['revenue'] / df['weightedAverageShsOutDil'],
+            **({'eps': df['epsDiluted']} if include_eps else {}),
+        }
+    )
+    return frame.rolling(4).sum().iloc[3:]
 
 
 async def fetch_xps(
