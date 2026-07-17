@@ -1399,24 +1399,14 @@ def resolve_us_quarter_consensus(
     return resolved_quarter
 
 
-def resolve_all_us_quarter_consensus(
-    symbol: str,
-    aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
-    required_fields: list[str],
-) -> dict[str, dict[str, int | float | None]]:
-    return {
-        anchor_date: resolve_us_quarter_consensus(
-            symbol, anchor_date, quarter, required_fields
-        )
-        for anchor_date, quarter in aligned_quarters.items()
-    }
-
-
-async def prepare_us_income_statement_quarters(
+async def resolve_us_income_statement_quarters(
     symbol: str,
     source_rows: dict[str, dict[str, dict]],
-    required_fields: list[str],
-) -> dict[str, dict[str, dict[str, int | float | None]]]:
+    limit: int,
+    include_eps: bool,
+) -> dict[str, dict[str, int | float | None]]:
+    required_fields = required_xps_fields(include_eps)
+
     aligned_quarters = build_aligned_source_quarters(source_rows)
     await merge_sec_fields(
         symbol,
@@ -1425,20 +1415,8 @@ async def prepare_us_income_statement_quarters(
         source_rows.get('massive', {}),
         required_fields,
     )
-    return drop_incomplete_latest_us_quarter(symbol, aligned_quarters, required_fields)
-
-
-async def resolve_us_income_statement_quarters(
-    symbol: str,
-    source_rows: dict[str, dict[str, dict]],
-    limit: int,
-    include_eps: bool,
-) -> dict[str, dict[str, int | float | None]]:
-    required_fields = required_xps_fields(include_eps)
-    aligned_quarters = await prepare_us_income_statement_quarters(
-        symbol,
-        source_rows,
-        required_fields,
+    aligned_quarters = drop_incomplete_latest_us_quarter(
+        symbol, aligned_quarters, required_fields
     )
     aligned_quarters = select_latest_required_quarters(
         aligned_quarters, limit, symbol=symbol, quarter_label='aligned quarters'
@@ -1451,7 +1429,12 @@ async def resolve_us_income_statement_quarters(
                 source_rows, 'unavailable_sources', frozenset()
             ),
         )
-    return resolve_all_us_quarter_consensus(symbol, aligned_quarters, required_fields)
+    return {
+        anchor_date: resolve_us_quarter_consensus(
+            symbol, anchor_date, quarter, required_fields
+        )
+        for anchor_date, quarter in aligned_quarters.items()
+    }
 
 
 async def fetch_resolved_income_statement_quarters(

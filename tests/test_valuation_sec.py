@@ -292,7 +292,7 @@ class SecValuationTests(unittest.TestCase):
             },
         )
 
-    def test_prepare_us_income_statement_quarters_drops_latest_single_source_row(
+    def test_resolve_us_income_statement_quarters_drops_latest_single_source_row(
         self,
     ):
         source_rows = {
@@ -320,16 +320,25 @@ class SecValuationTests(unittest.TestCase):
         with patch.object(
             valuation, 'merge_sec_fields', new=AsyncMock()
         ) as merge_sec_fields:
-            prepared = asyncio.run(
-                valuation.prepare_us_income_statement_quarters(
-                    'AAPL', source_rows, valuation.required_xps_fields(True)
+            resolved = asyncio.run(
+                valuation.resolve_us_income_statement_quarters(
+                    'AAPL', source_rows, limit=1, include_eps=True
                 )
             )
 
         merge_sec_fields.assert_awaited_once()
-        self.assertEqual(list(prepared), ['2025-03-31'])
+        self.assertEqual(
+            resolved,
+            {
+                '2025-03-31': {
+                    'revenue': 100,
+                    'weightedAverageShsOutDil': 10,
+                    'epsDiluted': 1,
+                }
+            },
+        )
 
-    def test_prepare_us_income_statement_quarters_merges_sec_before_dropping_latest(
+    def test_resolve_us_income_statement_quarters_merges_sec_before_dropping_latest(
         self,
     ):
         source_rows = {
@@ -362,14 +371,67 @@ class SecValuationTests(unittest.TestCase):
             'merge_sec_fields',
             new=AsyncMock(side_effect=add_sec_fields),
         ) as merge_sec_fields:
-            prepared = asyncio.run(
-                valuation.prepare_us_income_statement_quarters(
-                    'AAPL', source_rows, valuation.required_xps_fields(True)
+            resolved = asyncio.run(
+                valuation.resolve_us_income_statement_quarters(
+                    'AAPL', source_rows, limit=1, include_eps=True
                 )
             )
 
         merge_sec_fields.assert_awaited_once()
-        self.assertEqual(list(prepared), ['2025-06-30'])
+        self.assertEqual(
+            resolved,
+            {
+                '2025-06-30': {
+                    'revenue': 120.5,
+                    'weightedAverageShsOutDil': 10,
+                    'epsDiluted': 1.2,
+                }
+            },
+        )
+
+    def test_resolve_us_income_statement_quarters_records_selected_quarters_only(
+        self,
+    ):
+        def row(revenue):
+            return {
+                'revenue': revenue,
+                'weightedAverageShsOutDil': 10,
+                'epsDiluted': revenue / 100,
+            }
+
+        source_rows = {
+            'fmp': {
+                '2025-03-31': row(100),
+                '2025-06-30': row(110),
+            },
+            'finnhub': {
+                '2025-03-31': row(100),
+                '2025-06-30': row(110),
+            },
+        }
+        seen = set()
+        with (
+            patch.object(valuation, '_xps_diagnostics_seen', seen),
+            patch.object(
+                valuation,
+                '_xps_missing_counts',
+                valuation.new_xps_missing_counts(),
+            ),
+            patch.object(
+                valuation,
+                '_xps_consensus_pair_counts',
+                valuation.new_xps_consensus_pair_counts(),
+            ),
+            patch.object(valuation, 'merge_sec_fields', new=AsyncMock()),
+        ):
+            resolved = asyncio.run(
+                valuation.resolve_us_income_statement_quarters(
+                    'AAPL', source_rows, limit=1, include_eps=True
+                )
+            )
+
+        self.assertEqual(list(resolved), ['2025-06-30'])
+        self.assertEqual(seen, {('AAPL', '2025-06-30')})
 
     def test_select_latest_required_quarters_reports_symbol_and_available_dates(self):
         with self.assertRaisesRegex(

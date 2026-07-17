@@ -65,12 +65,51 @@ assert '{source}' not in valuation.SOURCE_ORDER
                     f'{result.stdout}\n{result.stderr}',
                 )
 
-    def test_tiingo_is_disabled_by_default(self):
-        self.assertFalse(valuation.shared.ENABLE_TIINGO_FUNDAMENTALS)
-        self.assertNotIn('tiingo', valuation.BASE_SOURCE_ORDER)
+    def test_tiingo_defaults_to_disabled_without_environment_flag(self):
+        project_root = Path(__file__).resolve().parents[1]
+        env = {
+            **os.environ,
+            'FMP_KEY': 'test',
+            'FINMIND_KEY': 'test',
+            'FINNHUB_API_KEY': 'test',
+            'MASSIVE_API_KEY': 'test',
+            'EODHD_API_KEY': 'test',
+            'FROM_COINGECKO': '',
+            'FROM_YAHOO': '',
+            'ENABLE_MASSIVE_FUNDAMENTALS': 'false',
+            'ENABLE_EODHD_FUNDAMENTALS': 'false',
+        }
+        env.pop('ENABLE_TIINGO_FUNDAMENTALS', None)
+        code = '''\
+import sys
+import types
+
+dotenv = types.ModuleType('dotenv')
+dotenv.load_dotenv = lambda: False
+sys.modules['dotenv'] = dotenv
+
+from backend import shared, valuation
+
+assert not shared.ENABLE_TIINGO_FUNDAMENTALS
+assert 'tiingo' not in valuation.BASE_SOURCE_ORDER
+assert 'tiingo' not in valuation.SOURCE_ORDER
+'''
+        result = subprocess.run(
+            [sys.executable, '-c', code],
+            cwd=project_root,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, f'{result.stdout}\n{result.stderr}')
 
     def test_disabled_tiingo_is_not_fetched(self):
         with (
+            patch.object(valuation.shared, 'ENABLE_MASSIVE_FUNDAMENTALS', True),
+            patch.object(valuation.shared, 'ENABLE_EODHD_FUNDAMENTALS', True),
+            patch.object(valuation.shared, 'ENABLE_TIINGO_FUNDAMENTALS', False),
             patch.object(
                 valuation,
                 'fetch_fmp_income_statements',
@@ -101,12 +140,14 @@ assert '{source}' not in valuation.SOURCE_ORDER
                 valuation.fetch_us_income_statement_sources('HOOD', 8, True)
             )
 
-        self.assertEqual(len(source_rows), 4)
+        self.assertEqual(set(source_rows), {'fmp', 'massive', 'eodhd', 'finnhub'})
         tiingo_fetch.assert_not_awaited()
 
     def test_disabled_massive_is_not_fetched(self):
         with (
             patch.object(valuation.shared, 'ENABLE_MASSIVE_FUNDAMENTALS', False),
+            patch.object(valuation.shared, 'ENABLE_EODHD_FUNDAMENTALS', True),
+            patch.object(valuation.shared, 'ENABLE_TIINGO_FUNDAMENTALS', False),
             patch.object(
                 valuation,
                 'fetch_fmp_income_statements',
@@ -137,7 +178,9 @@ assert '{source}' not in valuation.SOURCE_ORDER
 
     def test_disabled_eodhd_is_not_fetched(self):
         with (
+            patch.object(valuation.shared, 'ENABLE_MASSIVE_FUNDAMENTALS', True),
             patch.object(valuation.shared, 'ENABLE_EODHD_FUNDAMENTALS', False),
+            patch.object(valuation.shared, 'ENABLE_TIINGO_FUNDAMENTALS', False),
             patch.object(
                 valuation,
                 'fetch_fmp_income_statements',
