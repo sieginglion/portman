@@ -375,7 +375,7 @@ def normalize_finmind_taiwan_income_statement_rows(
 ) -> dict[str, dict]:
     financial_statement = pivot_finmind_taiwan_rows(financial_statement_rows)
     balance_sheet = pivot_finmind_taiwan_rows(balance_sheet_rows)
-    if financial_statement.empty or balance_sheet.empty:
+    if financial_statement.empty:
         return {}
 
     required_financial_statement_fields = ['Revenue']
@@ -394,7 +394,8 @@ def normalize_finmind_taiwan_income_statement_rows(
         return {}
     if 'OrdinaryShare' not in balance_sheet:
         logger.warning(
-            'FinMind Taiwan balance sheet data missing OrdinaryShare; skipping rows'
+            'FinMind Taiwan balance sheet data missing OrdinaryShare; '
+            'leaving share counts empty'
         )
         balance_sheet = pd.DataFrame(index=financial_statement.index)
         balance_sheet['OrdinaryShare'] = None
@@ -406,11 +407,16 @@ def normalize_finmind_taiwan_income_statement_rows(
 
     normalized_rows = {}
     for date, row in df.iterrows():
+        ordinary_shares = row['OrdinaryShare']
         normalized_row = {
             'revenue': sanitize_source_field_value('revenue', row['Revenue']),
             'weightedAverageShsOutDil': sanitize_source_field_value(
                 'weightedAverageShsOutDil',
-                row['OrdinaryShare'] / FINMIND_TAIWAN_SHARE_PAR_VALUE,
+                (
+                    ordinary_shares / FINMIND_TAIWAN_SHARE_PAR_VALUE
+                    if pd.notna(ordinary_shares)
+                    else None
+                ),
             ),
         }
         if include_eps:
