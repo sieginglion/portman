@@ -33,7 +33,7 @@ class USIncomeStatementSource:
     name: str
     label: str
     enabled: bool
-    fetch: Callable[[str, int, bool], Awaitable[dict[str, dict]]]
+    fetch: Callable[[str, int], Awaitable[dict[str, dict]]]
 
 
 US_INCOME_STATEMENT_SOURCES = (
@@ -41,41 +41,31 @@ US_INCOME_STATEMENT_SOURCES = (
         'fmp',
         'FMP',
         True,
-        lambda symbol, limit, include_eps: fetch_fmp_income_statements(
-            'u', symbol, limit, include_eps=include_eps
-        ),
+        lambda symbol, limit: fetch_fmp_income_statements('u', symbol, limit),
     ),
     USIncomeStatementSource(
         'massive',
         'Massive',
         shared.ENABLE_MASSIVE_FUNDAMENTALS,
-        lambda symbol, limit, include_eps: fetch_massive_income_statements(
-            symbol, limit, include_eps=include_eps
-        ),
+        lambda symbol, limit: fetch_massive_income_statements(symbol, limit),
     ),
     USIncomeStatementSource(
         'eodhd',
         'EODHD',
         shared.ENABLE_EODHD_FUNDAMENTALS,
-        lambda symbol, limit, include_eps: fetch_eodhd_income_statements(
-            symbol, limit, include_eps=include_eps
-        ),
+        lambda symbol, limit: fetch_eodhd_income_statements(symbol, limit),
     ),
     USIncomeStatementSource(
         'finnhub',
         'Finnhub',
         True,
-        lambda symbol, limit, include_eps: fetch_finnhub_income_statements(
-            symbol, limit, include_eps=include_eps
-        ),
+        lambda symbol, limit: fetch_finnhub_income_statements(symbol, limit),
     ),
     USIncomeStatementSource(
         'tiingo',
         'Tiingo',
         shared.ENABLE_TIINGO_FUNDAMENTALS,
-        lambda symbol, limit, include_eps: fetch_tiingo_income_statements(
-            symbol, limit, include_eps=include_eps
-        ),
+        lambda symbol, limit: fetch_tiingo_income_statements(symbol, limit),
     ),
 )
 ENABLED_US_INCOME_STATEMENT_SOURCES = tuple(
@@ -145,6 +135,7 @@ FINMIND_TAIWAN_SHARE_PAR_VALUE = 10
 SEC_DEDUPE_COLS = ['filed', 'val', 'start', 'end']
 SEC_ALLOWED_FORMS = {'10-Q', '10-K', '10-Q/A', '10-K/A'}
 SEC_REFERENCE_FIELDS = ('weightedAverageShsOutDil', EPS_XPS_FIELD)
+SEC_METADATA_SOURCES = ('fmp', 'massive')
 SEC_FIELD_CONCEPTS = {
     'weightedAverageShsOutDil': (
         ('WeightedAverageNumberOfDilutedSharesOutstanding', 'shares'),
@@ -294,7 +285,6 @@ def sanitize_source_field_value(
 def normalize_source_row(
     row: dict,
     field_map: dict[str, str],
-    include_eps: bool,
     value_transform=lambda field, value: value,
 ) -> dict[str, int | float | None]:
     return {
@@ -303,7 +293,6 @@ def normalize_source_row(
             value_transform(field, row.get(source_field)),
         )
         for field, source_field in field_map.items()
-        if include_eps or field != EPS_XPS_FIELD
     }
 
 
@@ -312,7 +301,6 @@ def normalize_income_statement_rows(
     *,
     field_map: dict[str, str],
     date_field: str,
-    include_eps: bool,
     metadata_fields: dict[str, str] | None = None,
     value_transform=lambda field, value: value,
 ) -> dict[str, dict]:
@@ -321,7 +309,6 @@ def normalize_income_statement_rows(
         normalized_row = normalize_source_row(
             row,
             field_map,
-            include_eps,
             value_transform=value_transform,
         )
         if metadata_fields is not None:
@@ -405,8 +392,6 @@ def pivot_finmind_taiwan_rows(rows: list[dict]) -> pd.DataFrame:
 def normalize_finmind_taiwan_income_statement_rows(
     financial_statement_rows: list[dict],
     balance_sheet_rows: list[dict],
-    *,
-    include_eps: bool,
 ) -> dict[str, dict]:
     financial_statement = pivot_finmind_taiwan_rows(financial_statement_rows)
     balance_sheet = pivot_finmind_taiwan_rows(balance_sheet_rows)
@@ -414,8 +399,6 @@ def normalize_finmind_taiwan_income_statement_rows(
         return {}
 
     required_financial_statement_fields = ['Revenue']
-    if include_eps:
-        required_financial_statement_fields.append('EPS')
     missing_financial_statement_fields = [
         field
         for field in required_financial_statement_fields
@@ -435,7 +418,7 @@ def normalize_finmind_taiwan_income_statement_rows(
         balance_sheet = pd.DataFrame(index=financial_statement.index)
         balance_sheet['OrdinaryShare'] = None
 
-    df = financial_statement[required_financial_statement_fields].join(
+    df = financial_statement.reindex(columns=['Revenue', 'EPS']).join(
         balance_sheet[['OrdinaryShare']], how='outer'
     )
     df = df.dropna(subset=required_financial_statement_fields, how='all')
@@ -454,10 +437,9 @@ def normalize_finmind_taiwan_income_statement_rows(
                 ),
             ),
         }
-        if include_eps:
-            normalized_row[EPS_XPS_FIELD] = sanitize_source_field_value(
-                EPS_XPS_FIELD, row['EPS']
-            )
+        normalized_row[EPS_XPS_FIELD] = sanitize_source_field_value(
+            EPS_XPS_FIELD, row['EPS']
+        )
         normalized_rows[date] = normalized_row
     return normalized_rows
 
@@ -542,13 +524,11 @@ async def fetch_finmind_taiwan_income_statements(
             't',
             symbol,
             limit + FMP_TAIWAN_QUARTER_BUFFER,
-            include_eps=require_eps,
         ),
     )
     finmind_rows = normalize_finmind_taiwan_income_statement_rows(
         financial_statement_rows,
         balance_sheet_rows,
-        include_eps=require_eps,
     )
     merge_preferred_xps_rows(rows, finmind_rows)
     rows = drop_incomplete_latest_quarter(rows, required_fields)
@@ -862,7 +842,6 @@ async def fetch_fmp_income_statements(
     market: Literal['j', 't', 'u'],
     symbol: str,
     limit: int,
-    include_eps: bool = True,
 ) -> dict[str, dict]:
     params = {
         'apikey': FMP_KEY,
@@ -889,7 +868,6 @@ async def fetch_fmp_income_statements(
         json.loads(text),
         field_map=field_map,
         date_field='date',
-        include_eps=include_eps,
         metadata_fields={
             'cik': 'cik',
             'quarter': 'period',
@@ -897,9 +875,7 @@ async def fetch_fmp_income_statements(
     )
 
 
-async def fetch_massive_income_statements(
-    symbol: str, limit: int, include_eps: bool = True
-) -> dict[str, dict]:
+async def fetch_massive_income_statements(symbol: str, limit: int) -> dict[str, dict]:
     params = {
         'tickers': symbol,
         'timeframe': 'quarterly',
@@ -919,7 +895,6 @@ async def fetch_massive_income_statements(
         json.loads(text)['results'] or [],
         field_map=field_map,
         date_field='period_end',
-        include_eps=include_eps,
         metadata_fields={
             'cik': 'cik',
             'quarter': 'fiscal_quarter',
@@ -927,9 +902,7 @@ async def fetch_massive_income_statements(
     )
 
 
-async def fetch_finnhub_income_statements(
-    symbol: str, limit: int, include_eps: bool = True
-) -> dict[str, dict]:
+async def fetch_finnhub_income_statements(symbol: str, limit: int) -> dict[str, dict]:
     params = {
         'symbol': symbol,
         'statement': 'ic',
@@ -954,7 +927,6 @@ async def fetch_finnhub_income_statements(
         financials,
         field_map=field_map,
         date_field='period',
-        include_eps=include_eps,
         value_transform=normalize_finnhub_field_value,
     )
 
@@ -968,9 +940,7 @@ def tiingo_fundamentals_start_date(
     return date_str(start.tz_localize(None))
 
 
-def normalize_tiingo_income_statement_rows(
-    statements: list[dict], *, include_eps: bool
-) -> dict[str, dict]:
+def normalize_tiingo_income_statement_rows(statements: list[dict]) -> dict[str, dict]:
     """Normalize Tiingo's nested quarterly income-statement response."""
     rows = {}
     field_map = {
@@ -993,13 +963,11 @@ def normalize_tiingo_income_statement_rows(
             if isinstance(entry, dict) and entry.get('dataCode') is not None
         }
         date = date_str(pd.Timestamp(statement['date']))
-        rows[date] = normalize_source_row(values, field_map, include_eps)
+        rows[date] = normalize_source_row(values, field_map)
     return rows
 
 
-async def fetch_tiingo_income_statements(
-    symbol: str, limit: int, include_eps: bool = True
-) -> dict[str, dict]:
+async def fetch_tiingo_income_statements(symbol: str, limit: int) -> dict[str, dict]:
     params = {
         # Use Tiingo's latest restated values, whose dates are fiscal period ends.
         'asReported': 'false',
@@ -1010,9 +978,7 @@ async def fetch_tiingo_income_statements(
         params,
         headers={'Authorization': f'Token {TIINGO_API_KEY}'},
     )
-    return normalize_tiingo_income_statement_rows(
-        json.loads(text), include_eps=include_eps
-    )
+    return normalize_tiingo_income_statement_rows(json.loads(text))
 
 
 def diluted_eps_from_reported_income(
@@ -1054,9 +1020,7 @@ async def fetch_eodhd_fundamentals(symbol: str) -> dict:
     return json.loads(text)
 
 
-async def fetch_eodhd_income_statements(
-    symbol: str, limit: int, include_eps: bool = True
-) -> dict[str, dict]:
+async def fetch_eodhd_income_statements(symbol: str, limit: int) -> dict[str, dict]:
     data = await fetch_eodhd_fundamentals(symbol)
     income_statement = data.get('Financials::Income_Statement::quarterly', {})
     balance_sheet = data.get('Financials::Balance_Sheet::quarterly', {})
@@ -1078,11 +1042,10 @@ async def fetch_eodhd_income_statements(
                 'weightedAverageShsOutDil', diluted_shares
             ),
         }
-        if include_eps:
-            normalized_row[EPS_XPS_FIELD] = sanitize_source_field_value(
-                EPS_XPS_FIELD,
-                diluted_eps_from_reported_income(income_row, diluted_shares),
-            )
+        normalized_row[EPS_XPS_FIELD] = sanitize_source_field_value(
+            EPS_XPS_FIELD,
+            diluted_eps_from_reported_income(income_row, diluted_shares),
+        )
         rows[date] = normalized_row
         if len(rows) >= limit:
             break
@@ -1231,10 +1194,9 @@ async def fetch_us_income_statement_source(
     source: USIncomeStatementSource,
     symbol: str,
     limit: int,
-    include_eps: bool,
 ) -> tuple[str, dict[str, dict] | None]:
     try:
-        return source.name, await source.fetch(symbol, limit, include_eps)
+        return source.name, await source.fetch(symbol, limit)
     except Exception as error:
         logger.warning(
             '{} income statements unavailable for {}: {}; skipping source',
@@ -1246,11 +1208,11 @@ async def fetch_us_income_statement_source(
 
 
 async def fetch_us_income_statement_sources(
-    symbol: str, limit: int, include_eps: bool
+    symbol: str, limit: int
 ) -> IncomeStatementFetch:
     results = await asyncio.gather(
         *(
-            fetch_us_income_statement_source(source, symbol, limit, include_eps)
+            fetch_us_income_statement_source(source, symbol, limit)
             for source in ENABLED_US_INCOME_STATEMENT_SOURCES
         )
     )
@@ -1260,11 +1222,9 @@ async def fetch_us_income_statement_sources(
     )
 
 
-def select_sec_cik(
-    fmp_rows: dict[str, dict], massive_rows: dict[str, dict]
-) -> str | None:
-    for source_rows in (fmp_rows, massive_rows):
-        for row in source_rows.values():
+def select_sec_cik(source_rows: dict[str, dict[str, dict]]) -> str | None:
+    for source_name in SEC_METADATA_SOURCES:
+        for row in source_rows.get(source_name, {}).values():
             cik = format_sec_cik(row.get('cik'))
             if cik is not None:
                 return cik
@@ -1273,16 +1233,15 @@ def select_sec_cik(
 
 def build_sec_quarter_metadata(
     aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
-    fmp_rows: dict[str, dict],
-    massive_rows: dict[str, dict],
+    source_rows: dict[str, dict[str, dict]],
     cik: str | None,
 ) -> dict[str, dict[str, str]]:
     if cik is None:
         return {}
     metadata = {}
     quarter_keys = list(aligned_quarters)
-    for source_rows in (fmp_rows, massive_rows):
-        for source_date, row in sorted(source_rows.items()):
+    for source_name in SEC_METADATA_SOURCES:
+        for source_date, row in sorted(source_rows.get(source_name, {}).items()):
             quarter_key = select_closest_aligned_quarter_key(source_date, quarter_keys)
             if quarter_key is None or quarter_key in metadata:
                 continue
@@ -1329,19 +1288,16 @@ async def fetch_sec_values_for_quarters(
 async def add_sec_reference_values(
     symbol: str,
     aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
-    fmp_rows: dict[str, dict],
-    massive_rows: dict[str, dict],
+    source_rows: dict[str, dict[str, dict]],
     fields: list[str],
 ) -> None:
     """Add usable SEC facts to aligned US quarters as reference-source values."""
-    cik = select_sec_cik(fmp_rows, massive_rows)
+    cik = select_sec_cik(source_rows)
     if cik is None:
         logger.warning('SEC reference unavailable for {}: no FMP/Massive CIK', symbol)
         return
 
-    metadata_by_quarter = build_sec_quarter_metadata(
-        aligned_quarters, fmp_rows, massive_rows, cik
-    )
+    metadata_by_quarter = build_sec_quarter_metadata(aligned_quarters, source_rows, cik)
     if not metadata_by_quarter:
         logger.warning(
             'SEC reference unavailable for {}: no FMP/Massive quarter metadata',
@@ -1438,8 +1394,7 @@ async def resolve_us_income_statement_quarters(
     await add_sec_reference_values(
         symbol,
         aligned_quarters,
-        source_rows['fmp'],
-        source_rows.get('massive', {}),
+        source_rows,
         required_fields,
     )
 
@@ -1480,12 +1435,10 @@ async def fetch_resolved_income_statement_quarters(
         )
 
     if market != 'u':
-        fmp_rows = await fetch_fmp_income_statements(
-            market, symbol, limit, include_eps=include_eps
-        )
+        fmp_rows = await fetch_fmp_income_statements(market, symbol, limit)
         return select_latest_required_quarters(fmp_rows, limit, symbol=symbol)
 
-    fetched = await fetch_us_income_statement_sources(symbol, limit + 1, include_eps)
+    fetched = await fetch_us_income_statement_sources(symbol, limit + 1)
     return await resolve_us_income_statement_quarters(
         symbol,
         fetched.rows,

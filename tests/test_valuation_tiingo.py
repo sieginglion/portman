@@ -187,7 +187,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
             ) as tiingo_fetch,
         ):
             fetched = asyncio.run(
-                valuation.fetch_us_income_statement_sources('HOOD', 8, True)
+                valuation.fetch_us_income_statement_sources('HOOD', 8)
             )
 
         self.assertEqual(
@@ -195,7 +195,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
         )
         tiingo_fetch.assert_not_awaited()
 
-    def test_enabled_sources_are_fetched_in_registry_order_with_requested_eps(self):
+    def test_enabled_sources_are_fetched_in_registry_order(self):
         with (
             patch.object(
                 valuation,
@@ -228,41 +228,19 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
                 new=AsyncMock(return_value={}),
             ) as tiingo_fetch,
         ):
-            for include_eps in (True, False):
-                with self.subTest(include_eps=include_eps):
-                    fetched = asyncio.run(
-                        valuation.fetch_us_income_statement_sources(
-                            'HOOD', 8, include_eps
-                        )
-                    )
+            fetched = asyncio.run(
+                valuation.fetch_us_income_statement_sources('HOOD', 8)
+            )
 
-                    self.assertEqual(
-                        list(fetched.rows),
-                        ['fmp', 'massive', 'eodhd', 'finnhub', 'tiingo'],
-                    )
-                    fmp_fetch.assert_awaited_once_with(
-                        'u', 'HOOD', 8, include_eps=include_eps
-                    )
-                    massive_fetch.assert_awaited_once_with(
-                        'HOOD', 8, include_eps=include_eps
-                    )
-                    eodhd_fetch.assert_awaited_once_with(
-                        'HOOD', 8, include_eps=include_eps
-                    )
-                    finnhub_fetch.assert_awaited_once_with(
-                        'HOOD', 8, include_eps=include_eps
-                    )
-                    tiingo_fetch.assert_awaited_once_with(
-                        'HOOD', 8, include_eps=include_eps
-                    )
-                    for fetch in (
-                        fmp_fetch,
-                        massive_fetch,
-                        eodhd_fetch,
-                        finnhub_fetch,
-                        tiingo_fetch,
-                    ):
-                        fetch.reset_mock()
+        self.assertEqual(
+            list(fetched.rows),
+            ['fmp', 'massive', 'eodhd', 'finnhub', 'tiingo'],
+        )
+        fmp_fetch.assert_awaited_once_with('u', 'HOOD', 8)
+        massive_fetch.assert_awaited_once_with('HOOD', 8)
+        eodhd_fetch.assert_awaited_once_with('HOOD', 8)
+        finnhub_fetch.assert_awaited_once_with('HOOD', 8)
+        tiingo_fetch.assert_awaited_once_with('HOOD', 8)
 
     def test_failed_source_is_empty_and_marked_unavailable(self):
         fmp_rows = {'2025-03-31': {'revenue': 100}}
@@ -284,7 +262,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
             ),
         ):
             fetched = asyncio.run(
-                valuation.fetch_us_income_statement_sources('HOOD', 8, True)
+                valuation.fetch_us_income_statement_sources('HOOD', 8)
             )
 
         self.assertEqual(fetched.rows, {'fmp': fmp_rows, 'massive': {}})
@@ -305,7 +283,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
         ):
             with self.assertRaises(asyncio.CancelledError):
                 asyncio.run(
-                    valuation.fetch_us_income_statement_sources('HOOD', 8, True)
+                    valuation.fetch_us_income_statement_sources('HOOD', 8)
                 )
 
     def test_us_resolution_receives_fetched_rows_and_availability(self):
@@ -333,13 +311,39 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
             )
 
         self.assertEqual(result, resolved)
-        fetch_sources.assert_awaited_once_with('HOOD', 9, True)
+        fetch_sources.assert_awaited_once_with('HOOD', 9)
         resolve_quarters.assert_awaited_once_with(
             'HOOD',
             rows,
             8,
             True,
             unavailable_sources=frozenset({'massive'}),
+        )
+
+    def test_us_resolution_preserves_disabled_eps_after_fetch(self):
+        rows = {'fmp': {'2025-03-31': {'revenue': 100}}}
+        fetched = valuation.IncomeStatementFetch(rows, frozenset())
+        with (
+            patch.object(
+                valuation,
+                'fetch_us_income_statement_sources',
+                new=AsyncMock(return_value=fetched),
+            ) as fetch_sources,
+            patch.object(
+                valuation,
+                'resolve_us_income_statement_quarters',
+                new=AsyncMock(return_value={}),
+            ) as resolve_quarters,
+        ):
+            asyncio.run(
+                valuation.fetch_resolved_income_statement_quarters(
+                    'u', 'HOOD', 8, False
+                )
+            )
+
+        fetch_sources.assert_awaited_once_with('HOOD', 9)
+        resolve_quarters.assert_awaited_once_with(
+            'HOOD', rows, 8, False, unavailable_sources=frozenset()
         )
 
     def test_disabled_massive_is_not_fetched(self):
@@ -371,7 +375,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
             ),
         ):
             fetched = asyncio.run(
-                valuation.fetch_us_income_statement_sources('HOOD', 8, True)
+                valuation.fetch_us_income_statement_sources('HOOD', 8)
             )
 
         self.assertNotIn('massive', fetched.rows)
@@ -406,7 +410,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
             ),
         ):
             fetched = asyncio.run(
-                valuation.fetch_us_income_statement_sources('HOOD', 8, True)
+                valuation.fetch_us_income_statement_sources('HOOD', 8)
             )
 
         self.assertNotIn('eodhd', fetched.rows)
@@ -455,9 +459,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
             },
         ]
 
-        rows = valuation.normalize_tiingo_income_statement_rows(
-            statements, include_eps=True
-        )
+        rows = valuation.normalize_tiingo_income_statement_rows(statements)
 
         self.assertEqual(
             rows,
@@ -470,7 +472,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
             },
         )
 
-    def test_normalize_tiingo_income_statement_rows_skips_eps_when_unneeded(self):
+    def test_normalize_tiingo_income_statement_rows_keeps_eps(self):
         rows = valuation.normalize_tiingo_income_statement_rows(
             [
                 {
@@ -488,10 +490,9 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
                     },
                 }
             ],
-            include_eps=False,
         )
 
         self.assertEqual(
             rows['2025-09-30'],
-            {'revenue': 100, 'weightedAverageShsOutDil': 20},
+            {'revenue': 100, 'weightedAverageShsOutDil': 20, 'epsDiluted': 1.5},
         )

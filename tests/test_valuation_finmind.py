@@ -69,7 +69,6 @@ class FinMindValuationTests(unittest.TestCase):
                 {'date': '2025-03-31', 'type': 'EPS', 'value': 1.5},
             ],
             [],
-            include_eps=True,
         )
 
         self.assertEqual(
@@ -120,6 +119,47 @@ class FinMindValuationTests(unittest.TestCase):
                     'revenue': 100,
                     'weightedAverageShsOutDil': 20,
                     'epsDiluted': 1.5,
+                }
+            },
+        )
+
+    def test_fetch_without_eps_accepts_finmind_rows_missing_eps(self):
+        finmind_financial_rows = [
+            {'date': '2025-03-31', 'type': 'Revenue', 'value': 100},
+        ]
+        fmp_rows = {
+            '2025-03-31': {
+                'revenue': 90,
+                'weightedAverageShsOutDil': 20,
+                'epsDiluted': None,
+            }
+        }
+        with (
+            patch.object(
+                valuation,
+                'fetch_finmind_taiwan_rows',
+                new=AsyncMock(side_effect=[finmind_financial_rows, []]),
+            ),
+            patch.object(
+                valuation,
+                'fetch_fmp_income_statements',
+                new=AsyncMock(return_value=fmp_rows),
+            ) as fmp_fetch,
+        ):
+            rows = asyncio.run(
+                valuation.fetch_finmind_taiwan_income_statements(
+                    '2330', limit=1, require_eps=False
+                )
+            )
+
+        fmp_fetch.assert_awaited_once_with('t', '2330', 2)
+        self.assertEqual(
+            rows,
+            {
+                '2025-03-31': {
+                    'revenue': 100,
+                    'weightedAverageShsOutDil': 20,
+                    'epsDiluted': None,
                 }
             },
         )

@@ -387,8 +387,7 @@ class SecValuationTests(unittest.TestCase):
         add_sec_values.assert_awaited_once_with(
             'AAPL',
             ANY,
-            source_rows['fmp'],
-            {},
+            source_rows,
             ['revenue', 'weightedAverageShsOutDil'],
         )
         diagnostics.assert_not_called()
@@ -463,11 +462,10 @@ class SecValuationTests(unittest.TestCase):
         }
 
         async def add_sec_fields(
-            symbol, aligned_quarters, fmp_rows, massive_rows, required_fields
+            symbol, aligned_quarters, fetched_source_rows, required_fields
         ):
             self.assertEqual(symbol, 'AAPL')
-            self.assertIs(fmp_rows, source_rows['fmp'])
-            self.assertEqual(massive_rows, {})
+            self.assertIs(fetched_source_rows, source_rows)
             self.assertEqual(
                 required_fields,
                 ['revenue', 'weightedAverageShsOutDil', 'epsDiluted'],
@@ -820,11 +818,17 @@ class SecValuationTests(unittest.TestCase):
     def test_select_sec_cik_prefers_fmp_and_falls_back_to_massive(self):
         fmp_rows = {'2025-03-31': {'cik': '320193'}}
         massive_rows = {'2025-03-31': {'cik': '789019'}}
-        self.assertEqual(valuation.select_sec_cik(fmp_rows, massive_rows), '0000320193')
         self.assertEqual(
-            valuation.select_sec_cik({'x': {}}, massive_rows), '0000789019'
+            valuation.select_sec_cik({'fmp': fmp_rows, 'massive': massive_rows}),
+            '0000320193',
         )
-        self.assertIsNone(valuation.select_sec_cik({'x': {}}, {'y': {}}))
+        self.assertEqual(
+            valuation.select_sec_cik({'fmp': {'x': {}}, 'massive': massive_rows}),
+            '0000789019',
+        )
+        self.assertIsNone(
+            valuation.select_sec_cik({'fmp': {'x': {}}, 'massive': {'y': {}}})
+        )
 
     def test_build_sec_quarter_metadata_uses_fmp_then_massive_priority(self):
         aligned_quarters = {
@@ -844,8 +848,7 @@ class SecValuationTests(unittest.TestCase):
 
         metadata = valuation.build_sec_quarter_metadata(
             aligned_quarters,
-            fmp_rows,
-            massive_rows,
+            {'fmp': fmp_rows, 'massive': massive_rows},
             '0000320193',
         )
 
@@ -999,8 +1002,7 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
             await valuation.add_sec_reference_values(
                 'AAPL',
                 aligned_quarters,
-                fmp_rows,
-                {},
+                {'fmp': fmp_rows},
                 ['revenue', 'weightedAverageShsOutDil', 'revenue'],
             )
 
@@ -1020,13 +1022,12 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
             valuation, 'fetch_sec_field_rows', side_effect=fail_if_called
         ):
             await valuation.add_sec_reference_values(
-                'AAPL', aligned_quarters, {}, {}, ['revenue']
+                'AAPL', aligned_quarters, {}, ['revenue']
             )
             await valuation.add_sec_reference_values(
                 'AAPL',
                 aligned_quarters,
-                {'2025-03-31': {'cik': '320193'}},
-                {},
+                {'fmp': {'2025-03-31': {'cik': '320193'}}},
                 ['revenue'],
             )
 
