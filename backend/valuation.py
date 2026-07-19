@@ -27,13 +27,25 @@ SOURCE_DATE_DIFF_TOLERANCE_DAYS = 7
 EPS_ABS_TOLERANCE = 0.02
 FINNHUB_MILLION_SCALE = 1_000_000
 
+# A provider row can also contain metadata such as CIK and fiscal quarter.
+type IncomeStatementRow = dict[str, object]
+type SourceIncomeStatementRows = dict[str, IncomeStatementRow]
+type IncomeStatementSources = dict[str, SourceIncomeStatementRows]
+
+type XpsValue = int | float | None
+type SourceFieldValues = dict[str, XpsValue]
+type AlignedQuarter = dict[str, SourceFieldValues]
+type AlignedQuarters = dict[str, AlignedQuarter]
+type ResolvedQuarter = dict[str, XpsValue]
+type ResolvedQuarters = dict[str, ResolvedQuarter]
+
 
 @dataclass(frozen=True)
 class USIncomeStatementSource:
     name: str
     label: str
     enabled: bool
-    fetch: Callable[[str, int], Awaitable[dict[str, dict]]]
+    fetch: Callable[[str, int], Awaitable[SourceIncomeStatementRows]]
 
 
 US_INCOME_STATEMENT_SOURCES = (
@@ -87,10 +99,6 @@ def us_income_statement_source_order(
 BASE_XPS_FIELDS = ('revenue', 'weightedAverageShsOutDil')
 EPS_XPS_FIELD = 'epsDiluted'
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
-# Diagnostics are intentionally process-local. Restarting the backend starts a new
-# screener run with clean counts. SEC is a reference source, not a peer
-# provider, so it is excluded.
-_xps_diagnostics_seen: set[tuple[str, str]] = set()
 
 
 def new_xps_missing_counts() -> dict[str, dict[str, int]]:
@@ -98,9 +106,6 @@ def new_xps_missing_counts() -> dict[str, dict[str, int]]:
         field: {source: 0 for source in us_income_statement_source_order()}
         for field in ALL_XPS_FIELDS
     }
-
-
-_xps_missing_counts = new_xps_missing_counts()
 
 
 def new_xps_consensus_pair_counts() -> dict[str, dict[str, int]]:
@@ -115,7 +120,25 @@ def new_xps_consensus_pair_counts() -> dict[str, dict[str, int]]:
     }
 
 
-_xps_consensus_pair_counts = new_xps_consensus_pair_counts()
+@dataclass
+class XpsDiagnostics:
+    seen: set[tuple[str, str]]
+    missing: dict[str, dict[str, int]]
+    consensus_pairs: dict[str, dict[str, int]]
+
+
+def new_xps_diagnostics() -> XpsDiagnostics:
+    return XpsDiagnostics(
+        seen=set(),
+        missing=new_xps_missing_counts(),
+        consensus_pairs=new_xps_consensus_pair_counts(),
+    )
+
+
+# Diagnostics are intentionally process-local. Restarting the backend starts a new
+# screener run with clean counts. SEC is a reference source, not a peer
+# provider, so it is excluded.
+_xps_diagnostics = new_xps_diagnostics()
 SEC_USER_AGENT = (
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
     'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
@@ -148,7 +171,7 @@ SEC_FIELD_CONCEPTS = {
 class IncomeStatementFetch:
     """Fetched source rows together with provider-level availability metadata."""
 
-    rows: dict[str, dict[str, dict]]
+    rows: IncomeStatementSources
     unavailable_sources: frozenset[str]
 
 
@@ -184,7 +207,7 @@ def has_source_field_value(value: int | float | None) -> bool:
 
 
 def missing_xps_sources(
-    quarter: dict[str, dict[str, int | float | None]],
+    quarter: AlignedQuarter,
     field: str,
     unavailable_sources: frozenset[str],
 ) -> list[str]:
@@ -198,19 +221,20 @@ def missing_xps_sources(
 
 def record_xps_diagnostics(
     symbol: str,
-    aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
+    aligned_quarters: AlignedQuarters,
     *,
     unavailable_sources: frozenset[str] = frozenset(),
 ) -> None:
     """Record missing values and pairwise consensus for selected quarters."""
+    diagnostics = _xps_diagnostics
     for quarter, data in aligned_quarters.items():
         key = (symbol, quarter)
-        if key in _xps_diagnostics_seen:
+        if key in diagnostics.seen:
             continue
 
-        _xps_diagnostics_seen.add(key)
+        diagnostics.seen.add(key)
         for field in ALL_XPS_FIELDS:
-            counts = _xps_missing_counts[field]
+            counts = diagnostics.missing[field]
             for source in missing_xps_sources(data, field, unavailable_sources):
                 counts[source] += 1
 
@@ -218,7 +242,7 @@ def record_xps_diagnostics(
             peer_values = usable_source_values(
                 source_values, us_income_statement_source_order()
             )
-            pair_counts = _xps_consensus_pair_counts[field]
+            pair_counts = diagnostics.consensus_pairs[field]
             for (left_source, left_value), (right_source, right_value) in combinations(
                 peer_values, 2
             ):
@@ -229,9 +253,9 @@ def record_xps_diagnostics(
 def get_xps_diagnostics() -> dict:
     """Return missing-value and pairwise-consensus counts."""
     return {
-        'total_quarters': len(_xps_diagnostics_seen),
-        'missing': _xps_missing_counts,
-        'consensus_pairs': _xps_consensus_pair_counts,
+        'total_quarters': len(_xps_diagnostics.seen),
+        'missing': _xps_diagnostics.missing,
+        'consensus_pairs': _xps_diagnostics.consensus_pairs,
     }
 
 
@@ -254,9 +278,9 @@ def select_closest_aligned_quarter_key(
 
 
 def align_source_rows(
-    aligned_quarters: dict[str, dict[str, dict[str, float]]],
+    aligned_quarters: AlignedQuarters,
     source_name: str,
-    source_rows: dict[str, dict],
+    source_rows: SourceIncomeStatementRows,
 ) -> None:
     for source_date, row in sorted(source_rows.items()):
         quarter_key = select_closest_aligned_quarter_key(
@@ -538,8 +562,8 @@ async def fetch_finmind_taiwan_income_statements(
 
 
 def build_aligned_source_quarters(
-    source_rows: dict[str, dict[str, dict]],
-) -> dict[str, dict[str, dict[str, int | float | None]]]:
+    source_rows: IncomeStatementSources,
+) -> AlignedQuarters:
     aligned_quarters = {}
     for source_name in us_income_statement_source_order():
         align_source_rows(
@@ -1194,7 +1218,7 @@ async def fetch_us_income_statement_source(
     source: USIncomeStatementSource,
     symbol: str,
     limit: int,
-) -> tuple[str, dict[str, dict] | None]:
+) -> tuple[str, SourceIncomeStatementRows | None]:
     try:
         return source.name, await source.fetch(symbol, limit)
     except Exception as error:
@@ -1222,7 +1246,7 @@ async def fetch_us_income_statement_sources(
     )
 
 
-def select_sec_cik(source_rows: dict[str, dict[str, dict]]) -> str | None:
+def select_sec_cik(source_rows: IncomeStatementSources) -> str | None:
     for source_name in SEC_METADATA_SOURCES:
         for row in source_rows.get(source_name, {}).values():
             cik = format_sec_cik(row.get('cik'))
@@ -1232,8 +1256,8 @@ def select_sec_cik(source_rows: dict[str, dict[str, dict]]) -> str | None:
 
 
 def build_sec_quarter_metadata(
-    aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
-    source_rows: dict[str, dict[str, dict]],
+    aligned_quarters: AlignedQuarters,
+    source_rows: IncomeStatementSources,
     cik: str | None,
 ) -> dict[str, dict[str, str]]:
     if cik is None:
@@ -1287,8 +1311,8 @@ async def fetch_sec_values_for_quarters(
 
 async def add_sec_reference_values(
     symbol: str,
-    aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
-    source_rows: dict[str, dict[str, dict]],
+    aligned_quarters: AlignedQuarters,
+    source_rows: IncomeStatementSources,
     fields: list[str],
 ) -> None:
     """Add usable SEC facts to aligned US quarters as reference-source values."""
@@ -1319,9 +1343,9 @@ async def add_sec_reference_values(
 
 def drop_incomplete_latest_us_quarter(
     symbol: str,
-    aligned_quarters: dict[str, dict[str, dict[str, int | float | None]]],
+    aligned_quarters: AlignedQuarters,
     required_fields: list[str],
-) -> dict[str, dict[str, dict[str, int | float | None]]]:
+) -> AlignedQuarters:
     quarter_dates = list(aligned_quarters)
     if not quarter_dates:
         return aligned_quarters
@@ -1354,9 +1378,9 @@ def drop_incomplete_latest_us_quarter(
 def resolve_us_quarter_consensus(
     symbol: str,
     anchor_date: str,
-    quarter: dict[str, dict[str, int | float | None]],
+    quarter: AlignedQuarter,
     required_fields: list[str],
-) -> dict[str, int | float | None]:
+) -> ResolvedQuarter:
     resolved_quarter = {}
     for field in required_fields:
         source_values = quarter.get(field, {})
@@ -1378,12 +1402,12 @@ def resolve_us_quarter_consensus(
 
 async def resolve_us_income_statement_quarters(
     symbol: str,
-    source_rows: dict[str, dict[str, dict]],
+    source_rows: IncomeStatementSources,
     limit: int,
     include_eps: bool,
     *,
     unavailable_sources: frozenset[str] = frozenset(),
-) -> dict[str, dict[str, int | float | None]]:
+) -> ResolvedQuarters:
     """Align US provider data, add SEC references, then resolve consensus values."""
     required_fields = required_xps_fields(include_eps)
 
@@ -1428,7 +1452,7 @@ async def fetch_resolved_income_statement_quarters(
     symbol: str,
     limit: int,
     include_eps: bool,
-) -> dict[str, dict[str, int | float | None]]:
+) -> ResolvedQuarters:
     if market == 't':
         return await fetch_finmind_taiwan_income_statements(
             symbol, limit, require_eps=include_eps
@@ -1449,7 +1473,7 @@ async def fetch_resolved_income_statement_quarters(
 
 
 def build_xps_frame(
-    resolved_quarters: dict[str, dict[str, int | float | None]], include_eps: bool
+    resolved_quarters: ResolvedQuarters, include_eps: bool
 ) -> pd.DataFrame:
     df = pd.DataFrame.from_dict(resolved_quarters, orient='index')
     df.index = pd.to_datetime(df.index) + pd.Timedelta(days=1)

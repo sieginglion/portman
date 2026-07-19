@@ -17,6 +17,12 @@ def selected_sources(*names: str):
     return tuple(source_by_name[name] for name in names)
 
 
+def patch_xps_diagnostics():
+    return patch.object(
+        valuation, '_xps_diagnostics', valuation.new_xps_diagnostics()
+    )
+
+
 class SecValuationTests(unittest.TestCase):
     def test_consensus_helpers_select_and_average_agreeing_sources(self):
         source_values = {'fmp': 100, 'finnhub': 102, 'sec': None}
@@ -113,19 +119,7 @@ class SecValuationTests(unittest.TestCase):
             '2025-09-30': row(None, 100),
             '2025-12-31': row(None, None),
         }
-        with (
-            patch.object(valuation, '_xps_diagnostics_seen', set()),
-            patch.object(
-                valuation,
-                '_xps_missing_counts',
-                valuation.new_xps_missing_counts(),
-            ),
-            patch.object(
-                valuation,
-                '_xps_consensus_pair_counts',
-                valuation.new_xps_consensus_pair_counts(),
-            ),
-        ):
+        with patch_xps_diagnostics():
             valuation.record_xps_diagnostics('MISSINGNESS-TEST', rows)
             diagnostics = valuation.get_xps_diagnostics()
 
@@ -144,19 +138,7 @@ class SecValuationTests(unittest.TestCase):
         self.assertEqual(diagnostics['consensus_pairs']['epsDiluted']['fmp:finnhub'], 1)
 
     def test_missing_counts_exclude_unavailable_sources(self):
-        with (
-            patch.object(valuation, '_xps_diagnostics_seen', set()),
-            patch.object(
-                valuation,
-                '_xps_missing_counts',
-                valuation.new_xps_missing_counts(),
-            ),
-            patch.object(
-                valuation,
-                '_xps_consensus_pair_counts',
-                valuation.new_xps_consensus_pair_counts(),
-            ),
-        ):
+        with patch_xps_diagnostics():
             valuation.record_xps_diagnostics(
                 'UNAVAILABLE-SOURCE-TEST',
                 {'2025-03-31': {'revenue': {'fmp': None, 'finnhub': None}}},
@@ -183,17 +165,7 @@ class SecValuationTests(unittest.TestCase):
                 'ENABLED_US_INCOME_STATEMENT_SOURCES',
                 selected_sources('fmp', 'massive', 'finnhub'),
             ),
-            patch.object(valuation, '_xps_diagnostics_seen', set()),
-            patch.object(
-                valuation,
-                '_xps_missing_counts',
-                valuation.new_xps_missing_counts(),
-            ),
-            patch.object(
-                valuation,
-                '_xps_consensus_pair_counts',
-                valuation.new_xps_consensus_pair_counts(),
-            ),
+            patch_xps_diagnostics(),
         ):
             valuation.record_xps_diagnostics('PAIR-TEST', rows)
             diagnostics = valuation.get_xps_diagnostics()
@@ -220,17 +192,7 @@ class SecValuationTests(unittest.TestCase):
                 'ENABLED_US_INCOME_STATEMENT_SOURCES',
                 selected_sources('fmp', 'finnhub'),
             ),
-            patch.object(valuation, '_xps_diagnostics_seen', set()),
-            patch.object(
-                valuation,
-                '_xps_missing_counts',
-                valuation.new_xps_missing_counts(),
-            ),
-            patch.object(
-                valuation,
-                '_xps_consensus_pair_counts',
-                valuation.new_xps_consensus_pair_counts(),
-            ),
+            patch_xps_diagnostics(),
         ):
             valuation.record_xps_diagnostics('SEC-EXCLUSION-TEST', rows)
             diagnostics = valuation.get_xps_diagnostics()
@@ -251,17 +213,7 @@ class SecValuationTests(unittest.TestCase):
                 'ENABLED_US_INCOME_STATEMENT_SOURCES',
                 selected_sources('fmp', 'finnhub'),
             ),
-            patch.object(valuation, '_xps_diagnostics_seen', set()),
-            patch.object(
-                valuation,
-                '_xps_missing_counts',
-                valuation.new_xps_missing_counts(),
-            ),
-            patch.object(
-                valuation,
-                '_xps_consensus_pair_counts',
-                valuation.new_xps_consensus_pair_counts(),
-            ),
+            patch_xps_diagnostics(),
         ):
             valuation.record_xps_diagnostics('DEDUP-TEST', rows)
             valuation.record_xps_diagnostics('DEDUP-TEST', rows)
@@ -292,19 +244,9 @@ class SecValuationTests(unittest.TestCase):
                 '2025-09-30': row(120),
             },
         }
-        seen = set()
+        diagnostics_state = valuation.new_xps_diagnostics()
         with (
-            patch.object(valuation, '_xps_diagnostics_seen', seen),
-            patch.object(
-                valuation,
-                '_xps_missing_counts',
-                valuation.new_xps_missing_counts(),
-            ),
-            patch.object(
-                valuation,
-                '_xps_consensus_pair_counts',
-                valuation.new_xps_consensus_pair_counts(),
-            ),
+            patch.object(valuation, '_xps_diagnostics', diagnostics_state),
             patch.object(valuation, 'add_sec_reference_values', new=AsyncMock()),
             self.assertRaises(ValueError),
         ):
@@ -314,10 +256,8 @@ class SecValuationTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(seen, set())
-        diagnostics = valuation.get_xps_diagnostics()
-        self.assertEqual(diagnostics['total_quarters'], 0)
-        self.assertEqual(diagnostics['missing']['revenue']['finnhub'], 0)
+        self.assertEqual(diagnostics_state.seen, set())
+        self.assertEqual(diagnostics_state.missing['revenue']['finnhub'], 0)
 
     def test_resolve_us_income_statement_quarters_accepts_source_rows(self):
         source_rows = {
@@ -517,19 +457,9 @@ class SecValuationTests(unittest.TestCase):
                 '2025-06-30': row(110),
             },
         }
-        seen = set()
+        diagnostics_state = valuation.new_xps_diagnostics()
         with (
-            patch.object(valuation, '_xps_diagnostics_seen', seen),
-            patch.object(
-                valuation,
-                '_xps_missing_counts',
-                valuation.new_xps_missing_counts(),
-            ),
-            patch.object(
-                valuation,
-                '_xps_consensus_pair_counts',
-                valuation.new_xps_consensus_pair_counts(),
-            ),
+            patch.object(valuation, '_xps_diagnostics', diagnostics_state),
             patch.object(valuation, 'add_sec_reference_values', new=AsyncMock()),
         ):
             resolved = asyncio.run(
@@ -539,7 +469,7 @@ class SecValuationTests(unittest.TestCase):
             )
 
         self.assertEqual(list(resolved), ['2025-06-30'])
-        self.assertEqual(seen, {('AAPL', '2025-06-30')})
+        self.assertEqual(diagnostics_state.seen, {('AAPL', '2025-06-30')})
 
     def test_select_latest_required_quarters_reports_symbol_and_available_dates(self):
         with self.assertRaisesRegex(
