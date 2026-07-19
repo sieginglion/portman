@@ -29,44 +29,34 @@ def daily_values(start, end, historical, value_key):
     return date_to_value
 
 
-async def get_unadjusted(
+async def get_fmp_series(
+    sess: AsyncClient, symbol: str, start, end, n: int, limited: bool = False
+):
+    res = await sess.get(
+        f'https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}',
+        params={
+            'from': start.format('YYYY-MM-DD'),
+            'serietype': 'line',
+        },
+    )
+    date_to_value = daily_values(start, end, res.json()['historical'], 'close')
+    return post_process(get_sorted_values(date_to_value), n, limited)
+
+
+async def get_fmp_unadjusted(
     sess: AsyncClient, market: Literal['j', 't', 'u'], symbol: str, n: int
 ):
     now = arrow.now(MARKET_TO_TIMEZONE[market])
     start = now.shift(days=-(n + 13))
-    # historical, quote = map(
-    #     lambda x: x.json(),
-    #     await asyncio.gather(
-    #         sess.get(
-    #             f'https://financialmodelingprep.com/api/v3/historical-price-full/{ add_suffix(market, symbol) }',
-    #             params={
-    #                 'from': min(date_to_price),
-    #                 'serietype': 'line',
-    #             },
-    #         ),
-    #         sess.get(
-    #             f'https://financialmodelingprep.com/api/v3/quote-short/{ add_suffix(market, symbol) }'
-    #         ),
-    #     ),
-    # )
-    historical = (
-        await sess.get(
-            f'https://financialmodelingprep.com/api/v3/historical-price-full/{ add_suffix(market, symbol) }',
-            params={
-                'from': start.format('YYYY-MM-DD'),
-                'serietype': 'line',
-            },
-        )
-    ).json()
-    date_to_price = daily_values(start, now, historical['historical'], 'close')
-    # date_to_price[max(date_to_price)] = quote[0]['price']
     try:
-        return post_process(get_sorted_values(date_to_price), n, market == 't')
+        return await get_fmp_series(
+            sess, add_suffix(market, symbol), start, now, n, market == 't'
+        )
     except AssertionError:
         raise AssertionError(symbol)
 
 
-async def get_dividends(
+async def get_fmp_dividends(
     sess: AsyncClient, market: Literal['j', 't', 'u'], symbol: str, n: int
 ):
     now = arrow.now(MARKET_TO_TIMEZONE[market])
@@ -100,29 +90,22 @@ def calc_adjusted(unadjusted: Array[f8], dividends: Array[f8]):
 async def get_adjusted(
     sess: AsyncClient, market: Literal['j', 't', 'u'], symbol: str, n: int
 ):
-    args = (sess, market, symbol, n)
-    funcs = (
-        (yahoo.get_unadjusted(*args), yahoo.get_dividends(*args))
+    get_unadjusted, get_dividends = (
+        (yahoo.get_unadjusted, yahoo.get_dividends)
         if symbol in FROM_YAHOO
-        else (get_unadjusted(*args), get_dividends(*args))
+        else (get_fmp_unadjusted, get_fmp_dividends)
     )
-    unadjusted, dividends = await asyncio.gather(*funcs)
+    unadjusted, dividends = await asyncio.gather(
+        get_unadjusted(sess, market, symbol, n),
+        get_dividends(sess, market, symbol, n),
+    )
     return calc_adjusted(unadjusted, dividends)
 
 
 async def get_rates(sess: AsyncClient, n: int):
     now = arrow.now(MARKET_TO_TIMEZONE['t'])
     start = now.shift(days=-(n + 13))
-    res = await sess.get(
-        'https://financialmodelingprep.com/api/v3/historical-price-full/USDTWD',
-        params={
-            'apikey': FMP_KEY,
-            'from': start.format('YYYY-MM-DD'),
-            'serietype': 'line',
-        },
-    )
-    date_to_rate = daily_values(start, now, res.json()['historical'], 'close')
-    return post_process(get_sorted_values(date_to_rate), n)
+    return await get_fmp_series(sess, 'USDTWD', start, now, n)
 
 
 async def get_prices(market: Literal['j', 't', 'u'], symbol: str, n: int, to_usd: bool):
