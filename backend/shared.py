@@ -36,7 +36,6 @@ ENABLE_TIINGO_FUNDAMENTALS = (
     os.getenv('ENABLE_TIINGO_FUNDAMENTALS', '').lower() == 'true'
 )
 FROM_COINGECKO = set(os.environ['FROM_COINGECKO'].split(','))
-FROM_YAHOO = set(os.environ['FROM_YAHOO'].split(','))
 MARKET_TO_TIMEZONE = {
     'c': 'UTC',
     'j': 'Asia/Tokyo',

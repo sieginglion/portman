@@ -145,57 +145,22 @@ class StockTests(unittest.TestCase):
 
         np.testing.assert_allclose(adjusted, prices)
 
-    def test_get_adjusted_uses_fmp_for_default_symbols(self):
+    def test_get_adjusted_uses_fmp(self):
         client = object()
         prices = np.array([100.0, 101.0])
         dividends = np.zeros(2)
         get_fmp_unadjusted = AsyncMock(return_value=prices)
         get_fmp_dividends = AsyncMock(return_value=dividends)
-        get_yahoo_unadjusted = AsyncMock()
-        get_yahoo_dividends = AsyncMock()
 
         with (
-            patch.object(stock, 'FROM_YAHOO', set()),
             patch.object(stock, 'get_fmp_unadjusted', new=get_fmp_unadjusted),
             patch.object(stock, 'get_fmp_dividends', new=get_fmp_dividends),
-            patch.object(
-                stock.yahoo, 'get_unadjusted', new=get_yahoo_unadjusted
-            ),
-            patch.object(stock.yahoo, 'get_dividends', new=get_yahoo_dividends),
         ):
             result = asyncio.run(stock.get_adjusted(client, 'u', 'AAPL', 2))
 
         np.testing.assert_allclose(result, prices)
         get_fmp_unadjusted.assert_awaited_once_with(client, 'u', 'AAPL', 2)
         get_fmp_dividends.assert_awaited_once_with(client, 'u', 'AAPL', 2)
-        get_yahoo_unadjusted.assert_not_awaited()
-        get_yahoo_dividends.assert_not_awaited()
-
-    def test_get_adjusted_uses_yahoo_for_configured_symbols(self):
-        client = object()
-        prices = np.array([100.0, 101.0])
-        dividends = np.zeros(2)
-        get_fmp_unadjusted = AsyncMock()
-        get_fmp_dividends = AsyncMock()
-        get_yahoo_unadjusted = AsyncMock(return_value=prices)
-        get_yahoo_dividends = AsyncMock(return_value=dividends)
-
-        with (
-            patch.object(stock, 'FROM_YAHOO', {'AAPL'}),
-            patch.object(stock, 'get_fmp_unadjusted', new=get_fmp_unadjusted),
-            patch.object(stock, 'get_fmp_dividends', new=get_fmp_dividends),
-            patch.object(
-                stock.yahoo, 'get_unadjusted', new=get_yahoo_unadjusted
-            ),
-            patch.object(stock.yahoo, 'get_dividends', new=get_yahoo_dividends),
-        ):
-            result = asyncio.run(stock.get_adjusted(client, 'u', 'AAPL', 2))
-
-        np.testing.assert_allclose(result, prices)
-        get_yahoo_unadjusted.assert_awaited_once_with(client, 'u', 'AAPL', 2)
-        get_yahoo_dividends.assert_awaited_once_with(client, 'u', 'AAPL', 2)
-        get_fmp_unadjusted.assert_not_awaited()
-        get_fmp_dividends.assert_not_awaited()
 
     def test_get_prices_converts_taiwan_prices_to_usd(self):
         client = AsyncClientStub()

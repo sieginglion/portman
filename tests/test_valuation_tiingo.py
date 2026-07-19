@@ -28,7 +28,6 @@ class TiingoValuationTests(unittest.TestCase):
             'MASSIVE_API_KEY': 'test',
             'EODHD_API_KEY': 'test',
             'FROM_COINGECKO': '',
-            'FROM_YAHOO': '',
             'ENABLE_TIINGO_FUNDAMENTALS': 'false',
         }
         for flag, api_key, source in (
@@ -82,7 +81,6 @@ assert '{source}' not in valuation.us_income_statement_source_order(include_sec=
             'MASSIVE_API_KEY': 'test',
             'EODHD_API_KEY': 'test',
             'FROM_COINGECKO': '',
-            'FROM_YAHOO': '',
             'ENABLE_MASSIVE_FUNDAMENTALS': 'false',
             'ENABLE_EODHD_FUNDAMENTALS': 'false',
         }
@@ -122,7 +120,6 @@ assert 'tiingo' not in valuation.us_income_statement_source_order(include_sec=Tr
             'MASSIVE_API_KEY': 'test',
             'EODHD_API_KEY': 'test',
             'FROM_COINGECKO': '',
-            'FROM_YAHOO': '',
             'ENABLE_MASSIVE_FUNDAMENTALS': 'true',
             'ENABLE_EODHD_FUNDAMENTALS': 'true',
             'ENABLE_TIINGO_FUNDAMENTALS': 'true',

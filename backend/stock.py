@@ -8,10 +8,8 @@ from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
-from . import yahoo
 from .shared import (
     FMP_KEY,
-    FROM_YAHOO,
     MARKET_TO_TIMEZONE,
     add_suffix,
     gen_dates,
@@ -90,14 +88,9 @@ def calc_adjusted(unadjusted: Array[f8], dividends: Array[f8]):
 async def get_adjusted(
     sess: AsyncClient, market: Literal['j', 't', 'u'], symbol: str, n: int
 ):
-    get_unadjusted, get_dividends = (
-        (yahoo.get_unadjusted, yahoo.get_dividends)
-        if symbol in FROM_YAHOO
-        else (get_fmp_unadjusted, get_fmp_dividends)
-    )
     unadjusted, dividends = await asyncio.gather(
-        get_unadjusted(sess, market, symbol, n),
-        get_dividends(sess, market, symbol, n),
+        get_fmp_unadjusted(sess, market, symbol, n),
+        get_fmp_dividends(sess, market, symbol, n),
     )
     return calc_adjusted(unadjusted, dividends)
 
