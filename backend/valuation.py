@@ -32,7 +32,7 @@ FINNHUB_MILLION_SCALE = 1_000_000
 class USIncomeStatementSource:
     name: str
     label: str
-    enable_flag: str | None
+    enabled: bool
     fetch: Callable[[str, int, bool], Awaitable[dict[str, dict]]]
 
 
@@ -40,7 +40,7 @@ US_INCOME_STATEMENT_SOURCES = (
     USIncomeStatementSource(
         'fmp',
         'FMP',
-        None,
+        True,
         lambda symbol, limit, include_eps: fetch_fmp_income_statements(
             'u', symbol, limit, include_eps=include_eps
         ),
@@ -48,7 +48,7 @@ US_INCOME_STATEMENT_SOURCES = (
     USIncomeStatementSource(
         'massive',
         'Massive',
-        'ENABLE_MASSIVE_FUNDAMENTALS',
+        shared.ENABLE_MASSIVE_FUNDAMENTALS,
         lambda symbol, limit, include_eps: fetch_massive_income_statements(
             symbol, limit, include_eps=include_eps
         ),
@@ -56,7 +56,7 @@ US_INCOME_STATEMENT_SOURCES = (
     USIncomeStatementSource(
         'eodhd',
         'EODHD',
-        'ENABLE_EODHD_FUNDAMENTALS',
+        shared.ENABLE_EODHD_FUNDAMENTALS,
         lambda symbol, limit, include_eps: fetch_eodhd_income_statements(
             symbol, limit, include_eps=include_eps
         ),
@@ -64,7 +64,7 @@ US_INCOME_STATEMENT_SOURCES = (
     USIncomeStatementSource(
         'finnhub',
         'Finnhub',
-        None,
+        True,
         lambda symbol, limit, include_eps: fetch_finnhub_income_statements(
             symbol, limit, include_eps=include_eps
         ),
@@ -72,16 +72,14 @@ US_INCOME_STATEMENT_SOURCES = (
     USIncomeStatementSource(
         'tiingo',
         'Tiingo',
-        'ENABLE_TIINGO_FUNDAMENTALS',
+        shared.ENABLE_TIINGO_FUNDAMENTALS,
         lambda symbol, limit, include_eps: fetch_tiingo_income_statements(
             symbol, limit, include_eps=include_eps
         ),
     ),
 )
 ENABLED_US_INCOME_STATEMENT_SOURCES = tuple(
-    source
-    for source in US_INCOME_STATEMENT_SOURCES
-    if source.enable_flag is None or getattr(shared, source.enable_flag)
+    source for source in US_INCOME_STATEMENT_SOURCES if source.enabled
 )
 SOURCE_LABELS = {
     **{source.name: source.label for source in US_INCOME_STATEMENT_SOURCES},
@@ -1234,9 +1232,9 @@ async def fetch_us_income_statement_source(
     symbol: str,
     limit: int,
     include_eps: bool,
-) -> tuple[str, dict[str, dict], bool]:
+) -> tuple[str, dict[str, dict] | None]:
     try:
-        return source.name, await source.fetch(symbol, limit, include_eps), False
+        return source.name, await source.fetch(symbol, limit, include_eps)
     except Exception as error:
         logger.warning(
             '{} income statements unavailable for {}: {}; skipping source',
@@ -1244,7 +1242,7 @@ async def fetch_us_income_statement_source(
             symbol,
             format_source_fetch_error(error),
         )
-        return source.name, {}, True
+        return source.name, None
 
 
 async def fetch_us_income_statement_sources(
@@ -1257,10 +1255,8 @@ async def fetch_us_income_statement_sources(
         )
     )
     return IncomeStatementFetch(
-        rows={name: rows for name, rows, _ in results},
-        unavailable_sources=frozenset(
-            name for name, _, unavailable in results if unavailable
-        ),
+        rows={name: rows if rows is not None else {} for name, rows in results},
+        unavailable_sources=frozenset(name for name, rows in results if rows is None),
     )
 
 
