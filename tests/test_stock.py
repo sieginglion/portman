@@ -111,6 +111,22 @@ class StockTests(unittest.TestCase):
         ):
             asyncio.run(stock.get_fmp_unadjusted(object(), 't', '2330', 2))
 
+    def test_market_window_uses_market_timezone_and_lookback(self):
+        now = arrow.get('2026-01-15T12:00:00+08:00')
+
+        for market, timezone in (
+            ('j', 'Asia/Tokyo'),
+            ('t', 'Asia/Taipei'),
+            ('u', 'America/New_York'),
+        ):
+            with self.subTest(market=market):
+                with patch.object(stock.arrow, 'now', return_value=now) as get_now:
+                    start, end = stock._market_window(market, 2)
+
+                get_now.assert_called_once_with(timezone)
+                self.assertEqual(end, now)
+                self.assertEqual(start, now.shift(days=-15))
+
     def test_get_rates_uses_usdtwd_series(self):
         client = object()
         rates = np.array([31.0, 32.0])

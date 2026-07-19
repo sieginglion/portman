@@ -27,9 +27,7 @@ def daily_values(start, end, historical, value_key):
     return date_to_value
 
 
-async def get_fmp_series(
-    sess: AsyncClient, symbol: str, start, end, n: int, limited: bool = False
-):
+async def _fetch_fmp_price_history(sess: AsyncClient, symbol: str, start):
     res = await sess.get(
         f'https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}',
         params={
@@ -37,15 +35,30 @@ async def get_fmp_series(
             'serietype': 'line',
         },
     )
-    date_to_value = daily_values(start, end, res.json()['historical'], 'close')
+    return res.json()['historical']
+
+
+def _normalize_fmp_price_history(historical, start, end, n: int, limited: bool):
+    date_to_value = daily_values(start, end, historical, 'close')
     return post_process(get_sorted_values(date_to_value), n, limited)
+
+
+async def get_fmp_series(
+    sess: AsyncClient, symbol: str, start, end, n: int, limited: bool = False
+):
+    historical = await _fetch_fmp_price_history(sess, symbol, start)
+    return _normalize_fmp_price_history(historical, start, end, n, limited)
+
+
+def _market_window(market: Literal['j', 't', 'u'], n: int):
+    now = arrow.now(MARKET_TO_TIMEZONE[market])
+    return now.shift(days=-(n + 13)), now
 
 
 async def get_fmp_unadjusted(
     sess: AsyncClient, market: Literal['j', 't', 'u'], symbol: str, n: int
 ):
-    now = arrow.now(MARKET_TO_TIMEZONE[market])
-    start = now.shift(days=-(n + 13))
+    start, now = _market_window(market, n)
     try:
         return await get_fmp_series(
             sess, add_suffix(market, symbol), start, now, n, market == 't'
@@ -96,8 +109,7 @@ async def get_adjusted(
 
 
 async def get_rates(sess: AsyncClient, n: int):
-    now = arrow.now(MARKET_TO_TIMEZONE['t'])
-    start = now.shift(days=-(n + 13))
+    start, now = _market_window('t', n)
     return await get_fmp_series(sess, 'USDTWD', start, now, n)
 
 
