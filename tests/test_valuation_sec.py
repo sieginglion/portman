@@ -24,7 +24,7 @@ def patch_xps_diagnostics():
 
 
 class SecValuationTests(unittest.TestCase):
-    def test_consensus_helpers_select_and_average_agreeing_sources(self):
+    def test_consensus_helpers_resolve_agreeing_sources(self):
         source_values = {'fmp': 100, 'finnhub': 102, 'sec': None}
 
         values = valuation.usable_source_values(source_values)
@@ -33,10 +33,9 @@ class SecValuationTests(unittest.TestCase):
 
         self.assertEqual(values, [('fmp', 100), ('finnhub', 102)])
         self.assertEqual(group, (('fmp', 100), ('finnhub', 102)))
-        self.assertEqual(valuation.average_consensus_group(group), 101)
         self.assertEqual(
-            valuation.select_consensus_source_value('revenue', source_values),
-            (101, ('fmp', 'finnhub')),
+            valuation.resolve_source_consensus('revenue', source_values),
+            valuation.Consensus(101, ('fmp', 'finnhub')),
         )
 
     def test_configured_source_order_drives_alignment_and_consensus(self):
@@ -50,12 +49,12 @@ class SecValuationTests(unittest.TestCase):
             selected_sources('finnhub', 'fmp'),
         ):
             aligned_quarters = valuation.build_aligned_source_quarters(source_rows)
-            consensus = valuation.select_consensus_source_value(
+            consensus = valuation.resolve_source_consensus(
                 'revenue', {'fmp': 100, 'finnhub': 102}
             )
 
         self.assertEqual(list(aligned_quarters), ['2025-04-05'])
-        self.assertEqual(consensus, (101, ('finnhub', 'fmp')))
+        self.assertEqual(consensus, valuation.Consensus(101, ('finnhub', 'fmp')))
 
     def test_consensus_helpers_reject_disagreeing_sources(self):
         source_values = {'fmp': 100, 'finnhub': 120}
@@ -64,17 +63,14 @@ class SecValuationTests(unittest.TestCase):
 
         self.assertEqual(valuation.build_consensus_groups('revenue', values), [])
         self.assertIsNone(valuation.choose_consensus_group([]))
-        self.assertEqual(
-            valuation.select_consensus_source_value('revenue', source_values),
-            (None, None),
-        )
+        self.assertIsNone(valuation.resolve_source_consensus('revenue', source_values))
 
     def test_consensus_helpers_keep_transitive_consensus_groups(self):
         source_values = {'fmp': 100, 'finnhub': 106, 'sec': 112}
 
         self.assertEqual(
-            valuation.select_consensus_source_value('revenue', source_values),
-            (106, ('fmp', 'finnhub', 'sec')),
+            valuation.resolve_source_consensus('revenue', source_values),
+            valuation.Consensus(106, ('fmp', 'finnhub', 'sec')),
         )
 
     def test_choose_consensus_group_prefers_sec_in_a_tie(self):
@@ -99,12 +95,13 @@ class SecValuationTests(unittest.TestCase):
     def test_consensus_helpers_apply_eps_absolute_tolerance(self):
         source_values = {'fmp': 0.001, 'finnhub': -0.01}
 
-        value, sources = valuation.select_consensus_source_value(
+        consensus = valuation.resolve_source_consensus(
             'epsDiluted', source_values
         )
 
-        self.assertAlmostEqual(value, -0.0045)
-        self.assertEqual(sources, ('fmp', 'finnhub'))
+        self.assertIsNotNone(consensus)
+        self.assertAlmostEqual(consensus.value, -0.0045)
+        self.assertEqual(consensus.sources, ('fmp', 'finnhub'))
 
     def test_diagnostics_reports_per_vendor_missing_counts(self):
         def row(fmp, finnhub):
@@ -327,7 +324,6 @@ class SecValuationTests(unittest.TestCase):
         add_sec_values.assert_awaited_once_with(
             'AAPL',
             ANY,
-            source_rows,
             ['revenue', 'weightedAverageShsOutDil'],
         )
         diagnostics.assert_not_called()
@@ -402,10 +398,9 @@ class SecValuationTests(unittest.TestCase):
         }
 
         async def add_sec_fields(
-            symbol, aligned_quarters, fetched_source_rows, required_fields
+            symbol, aligned_quarters, required_fields
         ):
             self.assertEqual(symbol, 'AAPL')
-            self.assertIs(fetched_source_rows, source_rows)
             self.assertEqual(
                 required_fields,
                 ['revenue', 'weightedAverageShsOutDil', 'epsDiluted'],
@@ -748,37 +743,114 @@ class SecValuationTests(unittest.TestCase):
     def test_select_sec_cik_prefers_fmp_and_falls_back_to_massive(self):
         fmp_rows = {'2025-03-31': {'cik': '320193'}}
         massive_rows = {'2025-03-31': {'cik': '789019'}}
+        with patch.object(
+            valuation,
+            'ENABLED_US_INCOME_STATEMENT_SOURCES',
+            selected_sources('fmp', 'massive'),
+        ):
+            self.assertEqual(
+                valuation.select_sec_cik(
+                    valuation.build_aligned_source_quarters(
+                        {'fmp': fmp_rows, 'massive': massive_rows}
+                    )
+                ),
+                '0000320193',
+            )
+            self.assertEqual(
+                valuation.select_sec_cik(
+                    valuation.build_aligned_source_quarters(
+                        {
+                            'fmp': {'2025-03-31': {}},
+                            'massive': massive_rows,
+                        }
+                    )
+                ),
+                '0000789019',
+            )
+            self.assertIsNone(
+                valuation.select_sec_cik(
+                    valuation.build_aligned_source_quarters(
+                        {
+                            'fmp': {'2025-03-31': {}},
+                            'massive': {'2025-03-31': {}},
+                        }
+                    )
+                )
+            )
+
+    def test_alignment_retains_provider_date_for_sec_metadata(self):
+        source_rows = {
+            'finnhub': {'2025-06-30': {'revenue': 100}},
+            'fmp': {
+                '2025-06-29': {
+                    'revenue': 100,
+                    'cik': '320193',
+                    'quarter': 'Q2',
+                }
+            },
+        }
+
+        with patch.object(
+            valuation,
+            'ENABLED_US_INCOME_STATEMENT_SOURCES',
+            selected_sources('finnhub', 'fmp'),
+        ):
+            aligned_quarters = valuation.build_aligned_source_quarters(source_rows)
+
+        self.assertEqual(list(aligned_quarters), ['2025-06-30'])
         self.assertEqual(
-            valuation.select_sec_cik({'fmp': fmp_rows, 'massive': massive_rows}),
-            '0000320193',
+            valuation.build_sec_quarter_metadata(aligned_quarters, '0000320193'),
+            {
+                '2025-06-30': {
+                    'cik': '0000320193',
+                    'date': '2025-06-29',
+                    'period': 'Q2',
+                }
+            },
         )
+
+    def test_sec_cik_uses_later_source_row_while_metadata_uses_first(self):
+        source_rows = {
+            'fmp': {
+                '2025-03-31': {'quarter': 'Q1'},
+                '2025-04-05': {'cik': '320193', 'quarter': 'Q1'},
+            }
+        }
+        aligned_quarters = valuation.build_aligned_source_quarters(source_rows)
+
+        self.assertEqual(valuation.select_sec_cik(aligned_quarters), '0000320193')
         self.assertEqual(
-            valuation.select_sec_cik({'fmp': {'x': {}}, 'massive': massive_rows}),
-            '0000789019',
-        )
-        self.assertIsNone(
-            valuation.select_sec_cik({'fmp': {'x': {}}, 'massive': {'y': {}}})
+            valuation.build_sec_quarter_metadata(aligned_quarters, '0000320193'),
+            {
+                '2025-03-31': {
+                    'cik': '0000320193',
+                    'date': '2025-03-31',
+                    'period': 'Q1',
+                }
+            },
         )
 
     def test_build_sec_quarter_metadata_uses_fmp_then_massive_priority(self):
         aligned_quarters = {
-            '2025-03-31': {},
-            '2025-06-30': {},
-            '2025-09-30': {},
+            '2025-03-31': valuation.AlignedQuarter(),
+            '2025-06-30': valuation.AlignedQuarter(),
+            '2025-09-30': valuation.AlignedQuarter(),
         }
-        fmp_rows = {
-            '2025-03-31': {'quarter': 'Q1'},
-            '2025-06-29': {'quarter': 'Q2'},
-        }
-        massive_rows = {
-            '2025-06-30': {'quarter': 3},
-            '2025-09-30': {'quarter': 3},
-            '2025-10-08': {'quarter': 4},
-        }
+        aligned_quarters['2025-03-31'].source_periods['fmp'] = [
+            ('2025-03-31', {'quarter': 'Q1'}),
+        ]
+        aligned_quarters['2025-06-30'].source_periods.update(
+            {
+                'fmp': [('2025-06-29', {'quarter': 'Q2'})],
+                'massive': [('2025-06-30', {'quarter': 3})],
+            }
+        )
+        aligned_quarters['2025-09-30'].source_periods['massive'] = [
+            ('2025-09-30', {'quarter': 3}),
+        ]
 
         metadata = valuation.build_sec_quarter_metadata(
             aligned_quarters,
-            {'fmp': fmp_rows, 'massive': massive_rows},
             '0000320193',
         )
 
@@ -895,13 +967,17 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
 
 class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
     async def test_add_sec_reference_values_adds_supported_repair_fields(self):
-        aligned_quarters = {
-            '2025-03-31': {
-                'revenue': {'fmp': 100},
-                'weightedAverageShsOutDil': {'fmp': 10},
+        source_rows = {
+            'fmp': {
+                '2025-03-31': {
+                    'revenue': 100,
+                    'weightedAverageShsOutDil': 10,
+                    'cik': '320193',
+                    'quarter': 'Q1',
+                }
             }
         }
-        fmp_rows = {'2025-03-31': {'cik': '320193', 'quarter': 'Q1'}}
+        aligned_quarters = valuation.build_aligned_source_quarters(source_rows)
         frames_by_field = {
             'weightedAverageShsOutDil': [
                 sec_frame(
@@ -932,7 +1008,6 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
             await valuation.add_sec_reference_values(
                 'AAPL',
                 aligned_quarters,
-                {'fmp': fmp_rows},
                 ['revenue', 'weightedAverageShsOutDil', 'revenue'],
             )
 
@@ -943,7 +1018,12 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_add_sec_reference_values_skips_without_cik_or_metadata(self):
-        aligned_quarters = {'2025-03-31': {'revenue': {'fmp': 100}}}
+        without_cik = valuation.build_aligned_source_quarters(
+            {'fmp': {'2025-03-31': {'revenue': 100}}}
+        )
+        without_metadata = valuation.build_aligned_source_quarters(
+            {'fmp': {'2025-03-31': {'revenue': 100, 'cik': '320193'}}}
+        )
 
         async def fail_if_called(cik, field):
             raise AssertionError('SEC fetch should not run')
@@ -952,16 +1032,19 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
             valuation, 'fetch_sec_field_rows', side_effect=fail_if_called
         ):
             await valuation.add_sec_reference_values(
-                'AAPL', aligned_quarters, {}, ['revenue']
+                'AAPL', without_cik, ['revenue']
             )
             await valuation.add_sec_reference_values(
                 'AAPL',
-                aligned_quarters,
-                {'fmp': {'2025-03-31': {'cik': '320193'}}},
+                without_metadata,
                 ['revenue'],
             )
 
-        self.assertEqual(aligned_quarters, {'2025-03-31': {'revenue': {'fmp': 100}}})
+        self.assertEqual(without_cik, {'2025-03-31': {'revenue': {'fmp': 100}}})
+        self.assertEqual(
+            without_metadata,
+            {'2025-03-31': {'revenue': {'fmp': 100}}},
+        )
 
 
 if __name__ == '__main__':

@@ -34,10 +34,25 @@ type IncomeStatementSources = dict[str, SourceIncomeStatementRows]
 
 type XpsValue = int | float | None
 type SourceFieldValues = dict[str, XpsValue]
-type AlignedQuarter = dict[str, SourceFieldValues]
+
+
+class AlignedQuarter(dict[str, SourceFieldValues]):
+    """Aligned field values plus source-period metadata for SEC lookup."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.source_periods: dict[str, list[tuple[str, IncomeStatementRow]]] = {}
+
+
 type AlignedQuarters = dict[str, AlignedQuarter]
 type ResolvedQuarter = dict[str, XpsValue]
 type ResolvedQuarters = dict[str, ResolvedQuarter]
+
+
+@dataclass(frozen=True)
+class Consensus:
+    value: float
+    sources: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -288,8 +303,11 @@ def align_source_rows(
         )
         if quarter_key is None:
             quarter_key = source_date
-            aligned_quarters[quarter_key] = {}
+            aligned_quarters[quarter_key] = AlignedQuarter()
         quarter = aligned_quarters[quarter_key]
+        # Retain every matching row: SEC metadata uses the first one, while CIK
+        # lookup may need a later row with a usable CIK.
+        quarter.source_periods.setdefault(source_name, []).append((source_date, row))
         for field in ALL_XPS_FIELDS:
             if field not in row:
                 continue
@@ -1163,22 +1181,18 @@ def choose_consensus_group(
     return None
 
 
-def average_consensus_group(group: tuple[tuple[str, int | float], ...]) -> float:
-    return sum(value for _, value in group) / len(group)
-
-
-def select_consensus_source_value(
+def resolve_source_consensus(
     field: str,
     source_values: dict[str, int | float | None],
-) -> tuple[int | float | None, tuple[str, ...] | None]:
+) -> Consensus | None:
     values = usable_source_values(source_values)
     consensus_group = choose_consensus_group(build_consensus_groups(field, values))
     if consensus_group is None:
-        return None, None
+        return None
 
-    return (
-        average_consensus_group(consensus_group),
-        tuple(name for name, _ in consensus_group),
+    return Consensus(
+        value=sum(value for _, value in consensus_group) / len(consensus_group),
+        sources=tuple(name for name, _ in consensus_group),
     )
 
 
@@ -1246,29 +1260,31 @@ async def fetch_us_income_statement_sources(
     )
 
 
-def select_sec_cik(source_rows: IncomeStatementSources) -> str | None:
+def select_sec_cik(aligned_quarters: AlignedQuarters) -> str | None:
     for source_name in SEC_METADATA_SOURCES:
-        for row in source_rows.get(source_name, {}).values():
-            cik = format_sec_cik(row.get('cik'))
-            if cik is not None:
-                return cik
+        for quarter in aligned_quarters.values():
+            for _, row in quarter.source_periods.get(source_name, []):
+                cik = format_sec_cik(row.get('cik'))
+                if cik is not None:
+                    return cik
     return None
 
 
 def build_sec_quarter_metadata(
     aligned_quarters: AlignedQuarters,
-    source_rows: IncomeStatementSources,
     cik: str | None,
 ) -> dict[str, dict[str, str]]:
     if cik is None:
         return {}
     metadata = {}
-    quarter_keys = list(aligned_quarters)
     for source_name in SEC_METADATA_SOURCES:
-        for source_date, row in sorted(source_rows.get(source_name, {}).items()):
-            quarter_key = select_closest_aligned_quarter_key(source_date, quarter_keys)
-            if quarter_key is None or quarter_key in metadata:
+        for quarter_key, quarter in aligned_quarters.items():
+            if quarter_key in metadata:
                 continue
+            source_periods = quarter.source_periods.get(source_name, [])
+            if not source_periods:
+                continue
+            source_date, row = source_periods[0]
             period = normalize_massive_fiscal_quarter(row.get('quarter'))
             if period in {'Q1', 'Q2', 'Q3', 'Q4'}:
                 metadata[quarter_key] = {
@@ -1312,16 +1328,15 @@ async def fetch_sec_values_for_quarters(
 async def add_sec_reference_values(
     symbol: str,
     aligned_quarters: AlignedQuarters,
-    source_rows: IncomeStatementSources,
     fields: list[str],
 ) -> None:
     """Add usable SEC facts to aligned US quarters as reference-source values."""
-    cik = select_sec_cik(source_rows)
+    cik = select_sec_cik(aligned_quarters)
     if cik is None:
         logger.warning('SEC reference unavailable for {}: no FMP/Massive CIK', symbol)
         return
 
-    metadata_by_quarter = build_sec_quarter_metadata(aligned_quarters, source_rows, cik)
+    metadata_by_quarter = build_sec_quarter_metadata(aligned_quarters, cik)
     if not metadata_by_quarter:
         logger.warning(
             'SEC reference unavailable for {}: no FMP/Massive quarter metadata',
@@ -1384,11 +1399,9 @@ def resolve_us_quarter_consensus(
     resolved_quarter = {}
     for field in required_fields:
         source_values = quarter.get(field, {})
-        accepted_value, consensus_sources = select_consensus_source_value(
-            field, source_values
-        )
-        if consensus_sources is not None:
-            resolved_quarter[field] = accepted_value
+        consensus = resolve_source_consensus(field, source_values)
+        if consensus is not None:
+            resolved_quarter[field] = consensus.value
             continue
         logger.warning(
             'Aborting {} quarter {}: no consensus\n{}',
@@ -1418,7 +1431,6 @@ async def resolve_us_income_statement_quarters(
     await add_sec_reference_values(
         symbol,
         aligned_quarters,
-        source_rows,
         required_fields,
     )
 
