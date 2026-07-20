@@ -3,6 +3,8 @@ import unittest
 from unittest.mock import ANY, AsyncMock, patch
 
 import pandas as pd
+from httpx import HTTPStatusError, Request, Response
+
 from backend import valuation
 
 
@@ -933,6 +935,23 @@ class FetchSecFieldRowsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(result, pd.DataFrame)
         self.assertTrue(result.empty)
 
+    async def test_returns_empty_dataframe_when_concept_is_not_found(self):
+        request = Request('GET', 'https://data.sec.gov/api/xbrl/companyconcept')
+        error = HTTPStatusError(
+            'Not found', request=request, response=Response(404, request=request)
+        )
+
+        with patch.object(
+            valuation,
+            'fetch_sec_company_concept_raw',
+            side_effect=error,
+        ):
+            result = await valuation.fetch_sec_field_rows(
+                '0000320193', 'weightedAverageShsOutDil'
+            )
+
+        self.assertTrue(result.empty)
+
 
 class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
     async def test_fetches_required_repair_fields_and_returns_only_usable_values(self):
@@ -951,13 +970,17 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
             ('epsDiluted', '2025-06-30'): float('nan'),
         }
         fetched_fields = []
+        q4_value_kinds = []
 
         async def fake_fetch_sec_field_rows(cik, field):
             self.assertEqual(cik, '0000320193')
             fetched_fields.append(field)
             return frames_by_field[field]
 
-        def fake_lookup_sec_field_value(field, cik, metadata, sec_rows):
+        def fake_lookup_sec_field_value(
+            field, cik, metadata, sec_rows, *, q4_value_kind
+        ):
+            q4_value_kinds.append((field, q4_value_kind))
             return values_by_field_and_date[(field, metadata.date)]
 
         with (
@@ -973,7 +996,6 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             values = await valuation.fetch_sec_values_for_quarters(
-                'AAPL',
                 '0000320193',
                 metadata_by_quarter,
                 [
@@ -985,6 +1007,15 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(fetched_fields, ['weightedAverageShsOutDil', 'epsDiluted'])
+        self.assertEqual(
+            q4_value_kinds,
+            [
+                ('weightedAverageShsOutDil', 'average'),
+                ('weightedAverageShsOutDil', 'average'),
+                ('epsDiluted', 'flow'),
+                ('epsDiluted', 'flow'),
+            ],
+        )
         self.assertEqual(
             values,
             {
@@ -1013,7 +1044,6 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             values = await valuation.fetch_sec_values_for_quarters(
-                'AAPL',
                 '0000320193',
                 metadata_by_quarter,
                 ['weightedAverageShsOutDil'],
@@ -1021,14 +1051,14 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(values, {})
 
-    async def test_continues_when_a_field_fetch_fails(self):
+    async def test_continues_when_a_field_has_no_sec_data(self):
         metadata_by_quarter = {
             '2025-03-31': valuation.SecQuarterMetadata('2025-03-31', 'Q1'),
         }
 
         async def fake_fetch_sec_field_rows(cik, field):
             if field == 'weightedAverageShsOutDil':
-                raise RuntimeError('temporary SEC error')
+                return sec_frame([])
             return sec_frame([{}])
 
         with (
@@ -1040,7 +1070,6 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
             patch.object(valuation, 'lookup_sec_field_value', return_value=1.2),
         ):
             values = await valuation.fetch_sec_values_for_quarters(
-                'AAPL',
                 '0000320193',
                 metadata_by_quarter,
                 ['weightedAverageShsOutDil', 'epsDiluted'],

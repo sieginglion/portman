@@ -807,10 +807,9 @@ def lookup_sec_field_value(
     metadata: SecQuarterMetadata,
     sec_rows: pd.DataFrame,
     *,
+    q4_value_kind: SecQ4ValueKind = 'flow',
     log_errors: bool = False,
 ) -> int | float | None:
-    spec = SEC_FIELD_SPECS.get(field)
-    q4_value_kind = spec.q4_value_kind if spec is not None else 'flow'
     end = pd.Timestamp(metadata.date)
     period = metadata.period
     datum = select_sec_quarter_fact(
@@ -842,29 +841,7 @@ async def fetch_sec_company_concept_raw(cik: str, concept: str) -> dict:
 
 
 async def fetch_sec_concept_rows(cik: str, concept: str, unit: str) -> pd.DataFrame:
-    try:
-        data = await fetch_sec_company_concept_raw(cik, concept)
-    except HTTPStatusError as exc:
-        if exc.response.status_code == 404:
-            logger.warning(
-                'SEC concept {} not found for CIK {}; skipping', concept, cik
-            )
-            return empty_sec_rows()
-        logger.warning(
-            'SEC concept {} fetch failed for CIK {} status={}; skipping',
-            concept,
-            cik,
-            exc.response.status_code,
-        )
-        return empty_sec_rows()
-    except Exception as exc:
-        logger.warning(
-            'SEC concept {} fetch failed for CIK {}: {}; skipping',
-            concept,
-            cik,
-            exc,
-        )
-        return empty_sec_rows()
+    data = await fetch_sec_company_concept_raw(cik, concept)
     unit_rows = data.get('units', {}).get(unit, [])
     if len(unit_rows) == 0:
         logger.warning(
@@ -880,16 +857,27 @@ async def fetch_sec_concept_rows(cik: str, concept: str, unit: str) -> pd.DataFr
 async def fetch_sec_field_rows(cik: str, field: str) -> pd.DataFrame:
     spec = SEC_FIELD_SPECS[field]
     try:
-        frame = await fetch_sec_concept_rows(cik, spec.concept, spec.unit)
+        return await fetch_sec_concept_rows(cik, spec.concept, spec.unit)
+    except HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            logger.warning(
+                'SEC concept {} not found for CIK {}; skipping', spec.concept, cik
+            )
+        else:
+            logger.warning(
+                'SEC concept {} fetch failed for CIK {} status={}; skipping',
+                spec.concept,
+                cik,
+                exc.response.status_code,
+            )
     except Exception as exc:
         logger.warning(
-            'SEC concept {} processing failed for CIK {}: {}; skipping',
+            'SEC concept {} fetch/processing failed for CIK {}: {}; skipping',
             spec.concept,
             cik,
             exc,
         )
-        return empty_sec_rows()
-    return frame
+    return empty_sec_rows()
 
 
 async def fetch_fmp_income_statements(
@@ -1309,7 +1297,6 @@ def build_sec_quarter_metadata(
 
 
 async def fetch_sec_values_for_quarters(
-    symbol: str,
     cik: str,
     metadata_by_quarter: dict[str, SecQuarterMetadata],
     fields: list[str],
@@ -1317,21 +1304,19 @@ async def fetch_sec_values_for_quarters(
     """Fetch usable SEC field values keyed by aligned quarter."""
     values_by_quarter = {}
     for field in (field for field in SEC_FIELD_SPECS if field in fields):
-        try:
-            sec_rows = await fetch_sec_field_rows(cik, field)
-        except Exception as exc:
-            logger.warning(
-                'SEC reference unavailable for {} field={}: {}; continuing without SEC',
-                symbol,
-                field,
-                exc,
-            )
-            continue
+        spec = SEC_FIELD_SPECS[field]
+        sec_rows = await fetch_sec_field_rows(cik, field)
         if sec_rows.empty:
             continue
 
         for quarter_key, metadata in metadata_by_quarter.items():
-            value = lookup_sec_field_value(field, cik, metadata, sec_rows)
+            value = lookup_sec_field_value(
+                field,
+                cik,
+                metadata,
+                sec_rows,
+                q4_value_kind=spec.q4_value_kind,
+            )
             value = sanitize_source_field_value(field, value)
             if value is not None:
                 values_by_quarter.setdefault(quarter_key, {})[field] = value
@@ -1358,7 +1343,6 @@ async def add_sec_reference_values(
         return
 
     values_by_quarter = await fetch_sec_values_for_quarters(
-        symbol,
         cik,
         metadata_by_quarter,
         fields,
