@@ -82,6 +82,40 @@ class FinMindValuationTests(unittest.TestCase):
             },
         )
 
+    def test_merge_preferred_xps_rows_uses_nearby_dates_only(self):
+        baseline_rows = {
+            '2025-03-31': {
+                'revenue': 100,
+                'weightedAverageShsOutDil': 20,
+                'epsDiluted': 1.0,
+            }
+        }
+        preferred_rows = {
+            '2025-04-06': {
+                'revenue': 101,
+                'weightedAverageShsOutDil': None,
+                'epsDiluted': 1.1,
+            },
+            '2025-04-07': {
+                'revenue': 999,
+                'weightedAverageShsOutDil': 30,
+                'epsDiluted': 9.9,
+            },
+        }
+
+        valuation.merge_preferred_xps_rows(baseline_rows, preferred_rows)
+
+        self.assertEqual(
+            baseline_rows,
+            {
+                '2025-03-31': {
+                    'revenue': 101,
+                    'weightedAverageShsOutDil': 20,
+                    'epsDiluted': 1.1,
+                }
+            },
+        )
+
     def test_fetch_keeps_fmp_shares_when_finmind_balance_sheet_is_empty(self):
         finmind_financial_rows = [
             {'date': '2025-03-31', 'type': 'Revenue', 'value': 100},

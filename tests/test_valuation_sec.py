@@ -23,6 +23,43 @@ def patch_xps_diagnostics():
     )
 
 
+def aligned_quarter(fields):
+    return valuation.AlignedQuarter(fields=fields)
+
+
+class DateMatchingTests(unittest.TestCase):
+    def test_select_closest_date_key_uses_six_day_limit_and_stable_tiebreaking(self):
+        cases = (
+            ('2025-03-31', ['2025-03-31'], '2025-03-31'),
+            ('2025-04-06', ['2025-03-31'], '2025-03-31'),
+            ('2025-04-07', ['2025-03-31'], None),
+            ('2025-04-04', ['2025-03-31', '2025-04-05'], '2025-04-05'),
+            ('2025-04-03', ['2025-04-05', '2025-04-01'], '2025-04-01'),
+        )
+
+        for target_date, date_keys, expected in cases:
+            with self.subTest(target_date=target_date, date_keys=date_keys):
+                self.assertEqual(
+                    valuation.select_closest_date_key(target_date, date_keys),
+                    expected,
+                )
+
+    def test_eodhd_balance_sheet_lookup_uses_nearby_dates_only(self):
+        row = {'commonStockSharesOutstanding': '123'}
+
+        self.assertIs(
+            valuation.select_eodhd_balance_sheet_row(
+                '2025-03-31', {'2025-04-06': row}
+            ),
+            row,
+        )
+        self.assertIsNone(
+            valuation.select_eodhd_balance_sheet_row(
+                '2025-03-31', {'2025-04-07': row}
+            )
+        )
+
+
 class SecValuationTests(unittest.TestCase):
     def test_consensus_helpers_resolve_agreeing_sources(self):
         source_values = {'fmp': 100, 'finnhub': 102, 'sec': None}
@@ -54,6 +91,10 @@ class SecValuationTests(unittest.TestCase):
             )
 
         self.assertEqual(list(aligned_quarters), ['2025-04-05'])
+        self.assertEqual(
+            aligned_quarters['2025-04-05'].fields,
+            {'revenue': {'finnhub': 102, 'fmp': 100}},
+        )
         self.assertEqual(consensus, valuation.Consensus(101, ('finnhub', 'fmp')))
 
     def test_consensus_helpers_reject_disagreeing_sources(self):
@@ -105,10 +146,12 @@ class SecValuationTests(unittest.TestCase):
 
     def test_diagnostics_reports_per_vendor_missing_counts(self):
         def row(fmp, finnhub):
-            return {
-                field: {'fmp': fmp, 'finnhub': finnhub}
-                for field in valuation.ALL_XPS_FIELDS
-            }
+            return aligned_quarter(
+                {
+                    field: {'fmp': fmp, 'finnhub': finnhub}
+                    for field in valuation.ALL_XPS_FIELDS
+                }
+            )
 
         rows = {
             '2025-03-31': row(100, 100),
@@ -138,7 +181,11 @@ class SecValuationTests(unittest.TestCase):
         with patch_xps_diagnostics():
             valuation.record_xps_diagnostics(
                 'UNAVAILABLE-SOURCE-TEST',
-                {'2025-03-31': {'revenue': {'fmp': None, 'finnhub': None}}},
+                {
+                    '2025-03-31': aligned_quarter(
+                        {'revenue': {'fmp': None, 'finnhub': None}}
+                    )
+                },
                 unavailable_sources=frozenset({'fmp'}),
             )
             diagnostics = valuation.get_xps_diagnostics()
@@ -155,7 +202,11 @@ class SecValuationTests(unittest.TestCase):
         )
 
     def test_diagnostics_counts_each_directly_agreeing_pair_once(self):
-        rows = {'2025-03-31': {'revenue': {'fmp': 100, 'massive': 104, 'finnhub': 108}}}
+        rows = {
+            '2025-03-31': aligned_quarter(
+                {'revenue': {'fmp': 100, 'massive': 104, 'finnhub': 108}}
+            )
+        }
         with (
             patch.object(
                 valuation,
@@ -179,9 +230,9 @@ class SecValuationTests(unittest.TestCase):
 
     def test_diagnostics_excludes_present_sec_values_from_peer_pairs(self):
         rows = {
-            '2025-03-31': {
-                'revenue': {'fmp': 100, 'finnhub': 100, 'sec': 100},
-            }
+            '2025-03-31': aligned_quarter(
+                {'revenue': {'fmp': 100, 'finnhub': 100, 'sec': 100}}
+            )
         }
         with (
             patch.object(
@@ -200,9 +251,9 @@ class SecValuationTests(unittest.TestCase):
 
     def test_diagnostics_deduplicates_missing_and_pair_counts(self):
         rows = {
-            '2025-03-31': {
-                'revenue': {'fmp': 100, 'finnhub': 100},
-            }
+            '2025-03-31': aligned_quarter(
+                {'revenue': {'fmp': 100, 'finnhub': 100}}
+            )
         }
         with (
             patch.object(
@@ -406,8 +457,8 @@ class SecValuationTests(unittest.TestCase):
                 ['revenue', 'weightedAverageShsOutDil', 'epsDiluted'],
             )
             latest_quarter = aligned_quarters['2025-06-30']
-            latest_quarter['weightedAverageShsOutDil']['sec'] = 10
-            latest_quarter['epsDiluted']['sec'] = 1.2
+            latest_quarter.fields['weightedAverageShsOutDil']['sec'] = 10
+            latest_quarter.fields['epsDiluted']['sec'] = 1.2
 
         with patch.object(
             valuation,
@@ -1012,9 +1063,13 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(fetched_fields, ['weightedAverageShsOutDil'])
-        self.assertNotIn('sec', aligned_quarters['2025-03-31']['revenue'])
+        self.assertNotIn(
+            'sec', aligned_quarters['2025-03-31'].fields['revenue']
+        )
         self.assertEqual(
-            aligned_quarters['2025-03-31']['weightedAverageShsOutDil']['sec'], 12
+            aligned_quarters['2025-03-31']
+            .fields['weightedAverageShsOutDil']['sec'],
+            12,
         )
 
     async def test_add_sec_reference_values_skips_without_cik_or_metadata(self):
@@ -1040,10 +1095,13 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
                 ['revenue'],
             )
 
-        self.assertEqual(without_cik, {'2025-03-31': {'revenue': {'fmp': 100}}})
         self.assertEqual(
-            without_metadata,
-            {'2025-03-31': {'revenue': {'fmp': 100}}},
+            without_cik['2025-03-31'].fields,
+            {'revenue': {'fmp': 100}},
+        )
+        self.assertEqual(
+            without_metadata['2025-03-31'].fields,
+            {'revenue': {'fmp': 100}},
         )
 
 

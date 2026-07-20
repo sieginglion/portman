@@ -2,7 +2,7 @@ import asyncio
 import json
 import math
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Literal
 
@@ -23,7 +23,7 @@ from .shared import (
 
 EXTRA_Q = 1
 SOURCE_DIFF_THRESHOLD = 0.065
-SOURCE_DATE_DIFF_TOLERANCE_DAYS = 7
+MAX_DATE_MATCH_DIFFERENCE_DAYS = 6
 EPS_ABS_TOLERANCE = 0.02
 FINNHUB_MILLION_SCALE = 1_000_000
 
@@ -36,12 +36,14 @@ type XpsValue = int | float | None
 type SourceFieldValues = dict[str, XpsValue]
 
 
-class AlignedQuarter(dict[str, SourceFieldValues]):
+@dataclass
+class AlignedQuarter:
     """Aligned field values plus source-period metadata for SEC lookup."""
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.source_periods: dict[str, list[tuple[str, IncomeStatementRow]]] = {}
+    fields: dict[str, SourceFieldValues] = field(default_factory=dict)
+    source_periods: dict[str, list[tuple[str, IncomeStatementRow]]] = field(
+        default_factory=dict
+    )
 
 
 type AlignedQuarters = dict[str, AlignedQuarter]
@@ -230,7 +232,7 @@ def missing_xps_sources(
         source
         for source in us_income_statement_source_order()
         if source not in unavailable_sources
-        and not has_source_field_value(quarter.get(field, {}).get(source))
+        and not has_source_field_value(quarter.fields.get(field, {}).get(source))
     ]
 
 
@@ -253,7 +255,7 @@ def record_xps_diagnostics(
             for source in missing_xps_sources(data, field, unavailable_sources):
                 counts[source] += 1
 
-            source_values = data.get(field, {})
+            source_values = data.fields.get(field, {})
             peer_values = usable_source_values(
                 source_values, us_income_statement_source_order()
             )
@@ -274,16 +276,14 @@ def get_xps_diagnostics() -> dict:
     }
 
 
-def select_closest_aligned_quarter_key(
-    source_date: str, quarter_keys: list[str]
-) -> str | None:
-    source_ts = pd.Timestamp(source_date)
+def select_closest_date_key(target_date: str, date_keys: list[str]) -> str | None:
+    target_ts = pd.Timestamp(target_date)
     matches = []
-    for quarter_key in quarter_keys:
-        delta_days = abs((pd.Timestamp(quarter_key) - source_ts).days)
-        if delta_days >= SOURCE_DATE_DIFF_TOLERANCE_DAYS:
+    for date_key in date_keys:
+        delta_days = abs((pd.Timestamp(date_key) - target_ts).days)
+        if delta_days > MAX_DATE_MATCH_DIFFERENCE_DAYS:
             continue
-        matches.append((delta_days, quarter_key))
+        matches.append((delta_days, date_key))
 
     if not matches:
         return None
@@ -298,9 +298,7 @@ def align_source_rows(
     source_rows: SourceIncomeStatementRows,
 ) -> None:
     for source_date, row in sorted(source_rows.items()):
-        quarter_key = select_closest_aligned_quarter_key(
-            source_date, list(aligned_quarters)
-        )
+        quarter_key = select_closest_date_key(source_date, list(aligned_quarters))
         if quarter_key is None:
             quarter_key = source_date
             aligned_quarters[quarter_key] = AlignedQuarter()
@@ -311,7 +309,7 @@ def align_source_rows(
         for field in ALL_XPS_FIELDS:
             if field not in row:
                 continue
-            quarter.setdefault(field, {})[source_name] = row[field]
+            quarter.fields.setdefault(field, {})[source_name] = row[field]
 
 
 def sanitize_source_field_value(
@@ -397,7 +395,7 @@ def select_eodhd_balance_sheet_row(
     if isinstance(row, dict):
         return row
 
-    aligned_date = select_closest_aligned_quarter_key(income_date, list(balance_sheet))
+    aligned_date = select_closest_date_key(income_date, list(balance_sheet))
     if aligned_date is None:
         return None
     row = balance_sheet.get(aligned_date)
@@ -491,9 +489,7 @@ def merge_preferred_xps_rows(
     preferred_rows: dict[str, dict],
 ) -> None:
     for preferred_date, preferred_row in preferred_rows.items():
-        baseline_date = select_closest_aligned_quarter_key(
-            preferred_date, list(baseline_rows)
-        )
+        baseline_date = select_closest_date_key(preferred_date, list(baseline_rows))
         if baseline_date is None:
             continue
         baseline_row = baseline_rows[baseline_date]
@@ -1353,7 +1349,7 @@ async def add_sec_reference_values(
     for quarter_key, field_values in values_by_quarter.items():
         quarter = aligned_quarters[quarter_key]
         for field, value in field_values.items():
-            quarter.setdefault(field, {})['sec'] = value
+            quarter.fields.setdefault(field, {})['sec'] = value
 
 
 def drop_incomplete_latest_us_quarter(
@@ -1370,14 +1366,16 @@ def drop_incomplete_latest_us_quarter(
     insufficient_fields = [
         field
         for field in required_fields
-        if len(usable_source_values(latest_quarter.get(field, {}))) < 2
+        if len(usable_source_values(latest_quarter.fields.get(field, {}))) < 2
     ]
 
     if not insufficient_fields:
         return aligned_quarters
 
     mismatch_blocks = [
-        format_source_field_block(field, latest_quarter.get(field, {}), latest_date)
+        format_source_field_block(
+            field, latest_quarter.fields.get(field, {}), latest_date
+        )
         for field in required_fields
         if field in insufficient_fields
     ]
@@ -1398,7 +1396,7 @@ def resolve_us_quarter_consensus(
 ) -> ResolvedQuarter:
     resolved_quarter = {}
     for field in required_fields:
-        source_values = quarter.get(field, {})
+        source_values = quarter.fields.get(field, {})
         consensus = resolve_source_consensus(field, source_values)
         if consensus is not None:
             resolved_quarter[field] = consensus.value
