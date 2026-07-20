@@ -142,6 +142,57 @@ class CallTreeLineScriptTests(unittest.TestCase):
         self.assertIn('sample.entry.helper (own: 2 lines; cumulative: 2 lines)', result)
         self.assertNotIn('sample.helper (own:', result)
 
+    def test_rejects_missing_source_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            source = root / 'missing.py'
+            result = self._run_script(str(source), 'entry', '--root', str(root))
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
+        self.assertEqual(
+            result.stderr, f'source file does not exist: {source}\n'
+        )
+
+    def test_rejects_source_outside_root(self):
+        with (
+            tempfile.TemporaryDirectory() as root_directory,
+            tempfile.TemporaryDirectory() as external_directory,
+        ):
+            root = Path(root_directory).resolve()
+            source = Path(external_directory).resolve() / 'sample.py'
+            source.write_text('def entry() -> None:\n    pass\n', encoding='utf-8')
+            result = self._run_script(str(source), 'entry', '--root', str(root))
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
+        self.assertEqual(
+            result.stderr, f'source file must be below --root: {source}\n'
+        )
+
+    def test_reports_available_functions_for_unknown_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            source = root / 'sample.py'
+            source.write_text('def entry() -> None:\n    pass\n', encoding='utf-8')
+            result = self._run_script(str(source), 'missing', '--root', str(root))
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
+        self.assertEqual(
+            result.stderr,
+            f"function 'missing' was not found in {source}; available functions: entry\n",
+        )
+
+    @staticmethod
+    def _run_script(*arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), *arguments],
+            cwd=REPOSITORY_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
     @staticmethod
     def _run_source(source_text: str, function: str) -> str:
         with tempfile.TemporaryDirectory() as directory:

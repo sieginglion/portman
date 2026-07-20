@@ -143,27 +143,48 @@ def local_name_candidates(function: FunctionInfo, name: str) -> Iterable[str]:
         )
 
 
+def resolve_bare_call(
+    name: str,
+    function: FunctionInfo,
+    functions: dict[str, FunctionInfo],
+) -> str | None:
+    """Resolve an unqualified call through enclosing local scopes."""
+    return next(
+        (
+            candidate
+            for candidate in local_name_candidates(function, name)
+            if candidate in functions
+        ),
+        None,
+    )
+
+
+def resolve_bound_method_call(
+    name: str,
+    function: FunctionInfo,
+    functions: dict[str, FunctionInfo],
+) -> str | None:
+    """Resolve a ``self`` or ``cls`` method call in the enclosing class."""
+    root_name, suffix = name.split('.', 1)
+    if root_name not in {'self', 'cls'} or not function.class_qualname:
+        return None
+
+    candidate = f'{function.module}.{function.class_qualname}.{suffix}'
+    return candidate if candidate in functions else None
+
+
 def resolve_call(
     expression: ast.expr,
     function: FunctionInfo,
     functions: dict[str, FunctionInfo],
 ) -> str | None:
+    """Resolve a supported local call expression to a function key."""
     name = dotted_name(expression)
     if name is None:
         return None
-
     if '.' not in name:
-        for candidate in local_name_candidates(function, name):
-            if candidate in functions:
-                return candidate
-        return None
-
-    root_name, suffix = name.split('.', 1)
-    if root_name in {'self', 'cls'} and function.class_qualname:
-        candidate = f'{function.module}.{function.class_qualname}.{suffix}'
-    else:
-        return None
-    return candidate if candidate in functions else None
+        return resolve_bare_call(name, function, functions)
+    return resolve_bound_method_call(name, function, functions)
 
 
 def collect_calls(functions: dict[str, FunctionInfo]) -> dict[str, tuple[str, ...]]:
@@ -274,10 +295,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
-    root = args.root.resolve()
-    source = args.source if args.source.is_absolute() else root / args.source
+def resolve_source_path(root: Path, source: Path) -> tuple[Path, Path]:
+    """Resolve and validate a source file beneath the repository root."""
+    root = root.resolve()
+    source = source if source.is_absolute() else root / source
     source = source.resolve()
     if not source.is_file():
         raise SystemExit(f'source file does not exist: {source}')
@@ -285,22 +306,39 @@ def main() -> None:
         source.relative_to(root)
     except ValueError:
         raise SystemExit(f'source file must be below --root: {source}') from None
+    return root, source
 
+
+def find_root_key(
+    functions: dict[str, FunctionInfo],
+    source_module: str,
+    function_name: str,
+    source: Path,
+) -> str:
+    """Return the requested root key or explain which functions are available."""
+    root_key = f'{source_module}.{function_name}'
+    if root_key in functions:
+        return root_key
+
+    available = sorted(
+        function.qualname
+        for function in functions.values()
+        if function.module == source_module
+    )
+    choices = ', '.join(available)
+    raise SystemExit(
+        f'function {function_name!r} was not found in {source}; '
+        f'available functions: {choices}'
+    )
+
+
+def main() -> None:
+    args = parse_args()
+    root, source = resolve_source_path(args.root, args.source)
     functions = scan_file(root, source)
     calls_by_function = collect_calls(functions)
     source_module = module_name_for(source, root)
-    root_key = f'{source_module}.{args.function}'
-    if root_key not in functions:
-        available = sorted(
-            function.qualname
-            for function in functions.values()
-            if function.module == source_module
-        )
-        choices = ', '.join(available)
-        raise SystemExit(
-            f'function {args.function!r} was not found in {source}; '
-            f'available functions: {choices}'
-        )
+    root_key = find_root_key(functions, source_module, args.function, source)
 
     cumulative = cumulative_line_counts(functions, calls_by_function)
     print('Line metric: physical source lines from `def` through its final body line.')
