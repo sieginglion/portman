@@ -27,11 +27,10 @@ class CallTreeLineScriptTests(unittest.TestCase):
             line for line in result.stdout.splitlines() if line.startswith('backend.')
         )
         expected_own_lines = self._function_lines(SOURCE, TARGET)
-        match = re.search(r'own: (\d+) lines; cumulative: (\d+) lines', root_line)
+        match = re.search(r'cumulative: (\d+) lines', root_line)
 
         self.assertIsNotNone(match)
-        self.assertEqual(int(match.group(1)), expected_own_lines)
-        self.assertGreater(int(match.group(2)), expected_own_lines)
+        self.assertGreater(int(match.group(1)), expected_own_lines)
         self.assertIn('backend.valuation.required_xps_fields', result.stdout)
         self.assertIn('backend.valuation.add_sec_reference_values', result.stdout)
         self.assertIn('backend.valuation.resolve_us_quarter_consensus', result.stdout)
@@ -89,9 +88,34 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'entry',
         )
 
-        self.assertIn('sample.entry (own: 2 lines; cumulative: 8 lines)', result)
-        self.assertIn('sample.shared (own: 2 lines; cumulative: 2 lines)', result)
+        self.assertIn('sample.entry (cumulative: 8 lines)', result)
+        self.assertIn('sample.shared (cumulative: 2 lines)', result)
         self.assertIn('[shared helper; shown above]', result)
+
+    def test_lists_all_reachable_functions_by_cumulative_lines(self):
+        result = self._run_source(
+            'def leaf() -> int:\n'
+            '    first = 1\n'
+            '    second = 2\n'
+            '    return first + second\n\n'
+            'def wrapper() -> int:\n'
+            '    return leaf()\n\n'
+            'def own_longest() -> int:\n'
+            '    first = 1\n'
+            '    second = 2\n'
+            '    return first + second\n\n'
+            'def entry() -> int:\n'
+            '    return wrapper() + own_longest()\n',
+            'entry',
+        )
+
+        self.assertIn(
+            'Reachable local functions by cumulative lines, excluding the root:\n'
+            '  sample.wrapper (cumulative: 6 lines)\n'
+            '  sample.leaf (cumulative: 4 lines)\n'
+            '  sample.own_longest (cumulative: 4 lines)',
+            result,
+        )
 
     def test_cycle_is_marked_without_repeating_its_subtree(self):
         result = self._run_source(
@@ -102,8 +126,8 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'first',
         )
 
-        self.assertIn('sample.first (own: 2 lines; cumulative: 4 lines)', result)
-        self.assertIn('sample.second (own: 2 lines; cumulative: 4 lines)', result)
+        self.assertIn('sample.first (cumulative: 4 lines)', result)
+        self.assertIn('sample.second (cumulative: 4 lines)', result)
         self.assertIn('[cycle]', result)
 
     def test_resolves_self_and_cls_method_calls(self):
@@ -122,7 +146,7 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'Helpers.entry',
         )
 
-        self.assertIn('sample.Helpers.entry (own: 2 lines; cumulative: 8 lines)', result)
+        self.assertIn('sample.Helpers.entry (cumulative: 8 lines)', result)
         self.assertIn('sample.Helpers.instance_helper', result)
         self.assertIn('sample.Helpers.class_entry', result)
         self.assertIn('sample.Helpers.class_helper', result)
@@ -138,9 +162,9 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'entry',
         )
 
-        self.assertIn('sample.entry (own: 4 lines; cumulative: 6 lines)', result)
-        self.assertIn('sample.entry.helper (own: 2 lines; cumulative: 2 lines)', result)
-        self.assertNotIn('sample.helper (own:', result)
+        self.assertIn('sample.entry (cumulative: 6 lines)', result)
+        self.assertIn('sample.entry.helper (cumulative: 2 lines)', result)
+        self.assertNotIn('sample.helper (cumulative:', result)
 
     def test_rejects_missing_source_file(self):
         with tempfile.TemporaryDirectory() as directory:

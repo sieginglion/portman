@@ -230,11 +230,18 @@ def cumulative_line_counts(
     }
 
 
+def reachable_callees_by_cumulative_lines(
+    root: str,
+    calls_by_function: dict[str, tuple[str, ...]],
+    cumulative: dict[str, int],
+) -> list[str]:
+    """Return root's reachable local callees, ordered by cumulative lines."""
+    callees = reachable_functions(root, calls_by_function) - {root}
+    return sorted(callees, key=lambda key: (-cumulative[key], key))
+
+
 def function_label(function: FunctionInfo, cumulative_lines: int) -> str:
-    return (
-        f'{function.key} '
-        f'(own: {function.own_lines} lines; cumulative: {cumulative_lines} lines)'
-    )
+    return f'{function.key} (cumulative: {cumulative_lines} lines)'
 
 
 def render_tree(
@@ -341,8 +348,16 @@ def main() -> None:
     root_key = find_root_key(functions, source_module, args.function, source)
 
     cumulative = cumulative_line_counts(functions, calls_by_function)
-    print('Line metric: physical source lines from `def` through its final body line.')
+    callees = reachable_callees_by_cumulative_lines(
+        root_key, calls_by_function, cumulative
+    )
     print('Cumulative totals count each reachable function in this file once.')
+    print('Reachable local functions by cumulative lines, excluding the root:')
+    if callees:
+        for key in callees:
+            print(f'  {function_label(functions[key], cumulative[key])}')
+    else:
+        print('  none')
     print()
     print('\n'.join(render_tree(root_key, functions, calls_by_function, cumulative)))
 
