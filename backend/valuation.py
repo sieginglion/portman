@@ -34,6 +34,8 @@ type IncomeStatementSources = dict[str, SourceIncomeStatementRows]
 
 type XpsValue = int | float | None
 type SourceFieldValues = dict[str, XpsValue]
+type SecQ4ValueKind = Literal['flow', 'average']
+type SecFiscalQuarter = Literal['Q1', 'Q2', 'Q3', 'Q4']
 
 
 @dataclass
@@ -44,6 +46,19 @@ class AlignedQuarter:
     source_periods: dict[str, list[tuple[str, IncomeStatementRow]]] = field(
         default_factory=dict
     )
+
+
+@dataclass(frozen=True)
+class SecFieldSpec:
+    concept: str
+    unit: str
+    q4_value_kind: SecQ4ValueKind
+
+
+@dataclass(frozen=True)
+class SecQuarterMetadata:
+    date: str
+    period: SecFiscalQuarter
 
 
 type AlignedQuarters = dict[str, AlignedQuarter]
@@ -174,13 +189,18 @@ TIINGO_QUARTER_BUFFER = 1
 FINMIND_TAIWAN_SHARE_PAR_VALUE = 10
 SEC_DEDUPE_COLS = ['filed', 'val', 'start', 'end']
 SEC_ALLOWED_FORMS = {'10-Q', '10-K', '10-Q/A', '10-K/A'}
-SEC_REFERENCE_FIELDS = ('weightedAverageShsOutDil', EPS_XPS_FIELD)
 SEC_METADATA_SOURCES = ('fmp', 'massive')
-SEC_FIELD_CONCEPTS = {
-    'weightedAverageShsOutDil': (
-        ('WeightedAverageNumberOfDilutedSharesOutstanding', 'shares'),
+SEC_FIELD_SPECS = {
+    'weightedAverageShsOutDil': SecFieldSpec(
+        concept='WeightedAverageNumberOfDilutedSharesOutstanding',
+        unit='shares',
+        q4_value_kind='average',
     ),
-    EPS_XPS_FIELD: (('EarningsPerShareDiluted', 'USD/shares'),),
+    EPS_XPS_FIELD: SecFieldSpec(
+        concept='EarningsPerShareDiluted',
+        unit='USD/shares',
+        q4_value_kind='flow',
+    ),
 }
 
 
@@ -629,7 +649,7 @@ def format_sec_cik(cik: int | str | None) -> str | None:
     return digits.zfill(10)
 
 
-def normalize_massive_fiscal_quarter(value: object) -> str | None:
+def normalize_massive_fiscal_quarter(value: object) -> SecFiscalQuarter | None:
     if value is None:
         return None
     try:
@@ -745,7 +765,7 @@ def select_sec_quarter_fact(
 
 
 def derive_sec_q4_value(
-    field: str,
+    value_kind: SecQ4ValueKind,
     df: pd.DataFrame,
     description_prefix: str,
     end: pd.Timestamp,
@@ -776,24 +796,27 @@ def derive_sec_q4_value(
     )
     if q1_to_q3 is None:
         return None
-    if field == 'weightedAverageShsOutDil':
+    if value_kind == 'average':
         return round(annual['val'] * 4 - q1_to_q3['val'] * 3)
     return annual['val'] - q1_to_q3['val']
 
 
 def lookup_sec_field_value(
     field: str,
-    metadata: dict[str, str],
+    cik: str,
+    metadata: SecQuarterMetadata,
     sec_frames: list[pd.DataFrame],
     *,
     log_errors: bool = False,
 ) -> int | float | None:
-    end = pd.Timestamp(metadata['date'])
-    period = metadata.get('period')
+    spec = SEC_FIELD_SPECS.get(field)
+    q4_value_kind = spec.q4_value_kind if spec is not None else 'flow'
+    end = pd.Timestamp(metadata.date)
+    period = metadata.period
     for df in sec_frames:
         datum = select_sec_quarter_fact(
             df,
-            description=f'CIK{metadata["cik"]} {field} {date_str(end)}',
+            description=f'CIK{cik} {field} {date_str(end)}',
             end=end,
             log_errors=log_errors and period != 'Q4',
         )
@@ -803,9 +826,9 @@ def lookup_sec_field_value(
             continue
 
         value = derive_sec_q4_value(
-            field,
+            q4_value_kind,
             df,
-            f'CIK{metadata["cik"]} {field}',
+            f'CIK{cik} {field}',
             end,
             log_errors=log_errors,
         )
@@ -859,21 +882,18 @@ async def fetch_sec_concept_rows(cik: str, concept: str, unit: str) -> pd.DataFr
 
 
 async def fetch_sec_field_rows(cik: str, field: str) -> list[pd.DataFrame]:
-    frames = []
-    for concept, unit in SEC_FIELD_CONCEPTS[field]:
-        try:
-            frame = await fetch_sec_concept_rows(cik, concept, unit)
-        except Exception as exc:
-            logger.warning(
-                'SEC concept {} processing failed for CIK {}: {}; skipping',
-                concept,
-                cik,
-                exc,
-            )
-            continue
-        if not frame.empty:
-            frames.append(frame)
-    return frames
+    spec = SEC_FIELD_SPECS[field]
+    try:
+        frame = await fetch_sec_concept_rows(cik, spec.concept, spec.unit)
+    except Exception as exc:
+        logger.warning(
+            'SEC concept {} processing failed for CIK {}: {}; skipping',
+            spec.concept,
+            cik,
+            exc,
+        )
+        return []
+    return [frame] if not frame.empty else []
 
 
 async def fetch_fmp_income_statements(
@@ -1268,10 +1288,7 @@ def select_sec_cik(aligned_quarters: AlignedQuarters) -> str | None:
 
 def build_sec_quarter_metadata(
     aligned_quarters: AlignedQuarters,
-    cik: str | None,
-) -> dict[str, dict[str, str]]:
-    if cik is None:
-        return {}
+) -> dict[str, SecQuarterMetadata]:
     metadata = {}
     for source_name in SEC_METADATA_SOURCES:
         for quarter_key, quarter in aligned_quarters.items():
@@ -1282,24 +1299,23 @@ def build_sec_quarter_metadata(
                 continue
             source_date, row = source_periods[0]
             period = normalize_massive_fiscal_quarter(row.get('quarter'))
-            if period in {'Q1', 'Q2', 'Q3', 'Q4'}:
-                metadata[quarter_key] = {
-                    'cik': cik,
-                    'date': source_date,
-                    'period': period,
-                }
+            if period is not None:
+                metadata[quarter_key] = SecQuarterMetadata(
+                    date=source_date,
+                    period=period,
+                )
     return metadata
 
 
 async def fetch_sec_values_for_quarters(
     symbol: str,
     cik: str,
-    metadata_by_quarter: dict[str, dict[str, str]],
+    metadata_by_quarter: dict[str, SecQuarterMetadata],
     fields: list[str],
 ) -> dict[str, dict[str, int | float]]:
     """Fetch usable SEC field values keyed by aligned quarter."""
     values_by_quarter = {}
-    for field in (field for field in SEC_REFERENCE_FIELDS if field in fields):
+    for field in (field for field in SEC_FIELD_SPECS if field in fields):
         try:
             frames = await fetch_sec_field_rows(cik, field)
         except Exception as exc:
@@ -1314,7 +1330,7 @@ async def fetch_sec_values_for_quarters(
             continue
 
         for quarter_key, metadata in metadata_by_quarter.items():
-            value = lookup_sec_field_value(field, metadata, frames)
+            value = lookup_sec_field_value(field, cik, metadata, frames)
             value = sanitize_source_field_value(field, value)
             if value is not None:
                 values_by_quarter.setdefault(quarter_key, {})[field] = value
@@ -1332,7 +1348,7 @@ async def add_sec_reference_values(
         logger.warning('SEC reference unavailable for {}: no FMP/Massive CIK', symbol)
         return
 
-    metadata_by_quarter = build_sec_quarter_metadata(aligned_quarters, cik)
+    metadata_by_quarter = build_sec_quarter_metadata(aligned_quarters)
     if not metadata_by_quarter:
         logger.warning(
             'SEC reference unavailable for {}: no FMP/Massive quarter metadata',

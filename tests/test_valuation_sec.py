@@ -704,7 +704,7 @@ class SecValuationTests(unittest.TestCase):
 
         self.assertEqual(
             valuation.derive_sec_q4_value(
-                'revenue', rows, 'q4 revenue', pd.Timestamp('2025-12-31')
+                'flow', rows, 'q4 EPS', pd.Timestamp('2025-12-31')
             ),
             40,
         )
@@ -729,7 +729,7 @@ class SecValuationTests(unittest.TestCase):
 
         self.assertEqual(
             valuation.derive_sec_q4_value(
-                'weightedAverageShsOutDil',
+                'average',
                 rows,
                 'q4 shares',
                 pd.Timestamp('2025-12-31'),
@@ -760,10 +760,10 @@ class SecValuationTests(unittest.TestCase):
                 },
             ]
         )
-        metadata = {'cik': '0000320193', 'date': '2025-12-31', 'period': 'Q4'}
+        metadata = valuation.SecQuarterMetadata('2025-12-31', 'Q4')
 
         self.assertEqual(
-            valuation.lookup_sec_field_value('revenue', metadata, [rows]),
+            valuation.lookup_sec_field_value('revenue', '0000320193', metadata, [rows]),
             25,
         )
 
@@ -784,10 +784,10 @@ class SecValuationTests(unittest.TestCase):
                 },
             ]
         )
-        metadata = {'cik': '0000320193', 'date': '2025-12-31', 'period': 'Q4'}
+        metadata = valuation.SecQuarterMetadata('2025-12-31', 'Q4')
 
         self.assertEqual(
-            valuation.lookup_sec_field_value('revenue', metadata, [rows]),
+            valuation.lookup_sec_field_value('revenue', '0000320193', metadata, [rows]),
             40,
         )
 
@@ -850,13 +850,9 @@ class SecValuationTests(unittest.TestCase):
 
         self.assertEqual(list(aligned_quarters), ['2025-06-30'])
         self.assertEqual(
-            valuation.build_sec_quarter_metadata(aligned_quarters, '0000320193'),
+            valuation.build_sec_quarter_metadata(aligned_quarters),
             {
-                '2025-06-30': {
-                    'cik': '0000320193',
-                    'date': '2025-06-29',
-                    'period': 'Q2',
-                }
+                '2025-06-30': valuation.SecQuarterMetadata('2025-06-29', 'Q2')
             },
         )
 
@@ -871,13 +867,9 @@ class SecValuationTests(unittest.TestCase):
 
         self.assertEqual(valuation.select_sec_cik(aligned_quarters), '0000320193')
         self.assertEqual(
-            valuation.build_sec_quarter_metadata(aligned_quarters, '0000320193'),
+            valuation.build_sec_quarter_metadata(aligned_quarters),
             {
-                '2025-03-31': {
-                    'cik': '0000320193',
-                    'date': '2025-03-31',
-                    'period': 'Q1',
-                }
+                '2025-03-31': valuation.SecQuarterMetadata('2025-03-31', 'Q1')
             },
         )
 
@@ -900,29 +892,14 @@ class SecValuationTests(unittest.TestCase):
             ('2025-09-30', {'quarter': 3}),
         ]
 
-        metadata = valuation.build_sec_quarter_metadata(
-            aligned_quarters,
-            '0000320193',
-        )
+        metadata = valuation.build_sec_quarter_metadata(aligned_quarters)
 
         self.assertEqual(
             metadata,
             {
-                '2025-03-31': {
-                    'cik': '0000320193',
-                    'date': '2025-03-31',
-                    'period': 'Q1',
-                },
-                '2025-06-30': {
-                    'cik': '0000320193',
-                    'date': '2025-06-29',
-                    'period': 'Q2',
-                },
-                '2025-09-30': {
-                    'cik': '0000320193',
-                    'date': '2025-09-30',
-                    'period': 'Q3',
-                },
+                '2025-03-31': valuation.SecQuarterMetadata('2025-03-31', 'Q1'),
+                '2025-06-30': valuation.SecQuarterMetadata('2025-06-29', 'Q2'),
+                '2025-09-30': valuation.SecQuarterMetadata('2025-09-30', 'Q3'),
             },
         )
 
@@ -930,8 +907,8 @@ class SecValuationTests(unittest.TestCase):
 class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
     async def test_fetches_required_repair_fields_and_returns_only_usable_values(self):
         metadata_by_quarter = {
-            '2025-03-31': {'date': '2025-03-31', 'period': 'Q1'},
-            '2025-06-30': {'date': '2025-06-30', 'period': 'Q2'},
+            '2025-03-31': valuation.SecQuarterMetadata('2025-03-31', 'Q1'),
+            '2025-06-30': valuation.SecQuarterMetadata('2025-06-30', 'Q2'),
         }
         frames_by_field = {
             'weightedAverageShsOutDil': [sec_frame([])],
@@ -950,8 +927,8 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
             fetched_fields.append(field)
             return frames_by_field[field]
 
-        def fake_lookup_sec_field_value(field, metadata, frames):
-            return values_by_field_and_date[(field, metadata['date'])]
+        def fake_lookup_sec_field_value(field, cik, metadata, frames):
+            return values_by_field_and_date[(field, metadata.date)]
 
         with (
             patch.object(
@@ -990,7 +967,7 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_continues_when_a_field_fetch_fails(self):
         metadata_by_quarter = {
-            '2025-03-31': {'date': '2025-03-31', 'period': 'Q1'},
+            '2025-03-31': valuation.SecQuarterMetadata('2025-03-31', 'Q1'),
         }
 
         async def fake_fetch_sec_field_rows(cik, field):
