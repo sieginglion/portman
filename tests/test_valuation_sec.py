@@ -763,7 +763,7 @@ class SecValuationTests(unittest.TestCase):
         metadata = valuation.SecQuarterMetadata('2025-12-31', 'Q4')
 
         self.assertEqual(
-            valuation.lookup_sec_field_value('revenue', '0000320193', metadata, [rows]),
+            valuation.lookup_sec_field_value('revenue', '0000320193', metadata, rows),
             25,
         )
 
@@ -787,7 +787,7 @@ class SecValuationTests(unittest.TestCase):
         metadata = valuation.SecQuarterMetadata('2025-12-31', 'Q4')
 
         self.assertEqual(
-            valuation.lookup_sec_field_value('revenue', '0000320193', metadata, [rows]),
+            valuation.lookup_sec_field_value('revenue', '0000320193', metadata, rows),
             40,
         )
 
@@ -904,6 +904,36 @@ class SecValuationTests(unittest.TestCase):
         )
 
 
+class FetchSecFieldRowsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_the_empty_concept_frame(self):
+        empty_rows = sec_frame([])
+
+        with patch.object(
+            valuation,
+            'fetch_sec_concept_rows',
+            return_value=empty_rows,
+        ):
+            result = await valuation.fetch_sec_field_rows(
+                '0000320193', 'weightedAverageShsOutDil'
+            )
+
+        self.assertIs(result, empty_rows)
+        self.assertTrue(result.empty)
+
+    async def test_returns_empty_dataframe_when_concept_processing_fails(self):
+        with patch.object(
+            valuation,
+            'fetch_sec_concept_rows',
+            side_effect=RuntimeError('bad SEC response'),
+        ):
+            result = await valuation.fetch_sec_field_rows(
+                '0000320193', 'weightedAverageShsOutDil'
+            )
+
+        self.assertIsInstance(result, pd.DataFrame)
+        self.assertTrue(result.empty)
+
+
 class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
     async def test_fetches_required_repair_fields_and_returns_only_usable_values(self):
         metadata_by_quarter = {
@@ -911,8 +941,8 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
             '2025-06-30': valuation.SecQuarterMetadata('2025-06-30', 'Q2'),
         }
         frames_by_field = {
-            'weightedAverageShsOutDil': [sec_frame([])],
-            'epsDiluted': [sec_frame([])],
+            'weightedAverageShsOutDil': sec_frame([{}]),
+            'epsDiluted': sec_frame([{}]),
         }
         values_by_field_and_date = {
             ('weightedAverageShsOutDil', '2025-03-31'): 12,
@@ -927,7 +957,7 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
             fetched_fields.append(field)
             return frames_by_field[field]
 
-        def fake_lookup_sec_field_value(field, cik, metadata, frames):
+        def fake_lookup_sec_field_value(field, cik, metadata, sec_rows):
             return values_by_field_and_date[(field, metadata.date)]
 
         with (
@@ -965,6 +995,32 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_skips_an_empty_field_frame(self):
+        metadata_by_quarter = {
+            '2025-03-31': valuation.SecQuarterMetadata('2025-03-31', 'Q1'),
+        }
+
+        with (
+            patch.object(
+                valuation,
+                'fetch_sec_field_rows',
+                return_value=sec_frame([]),
+            ),
+            patch.object(
+                valuation,
+                'lookup_sec_field_value',
+                side_effect=AssertionError('SEC lookup should not run'),
+            ),
+        ):
+            values = await valuation.fetch_sec_values_for_quarters(
+                'AAPL',
+                '0000320193',
+                metadata_by_quarter,
+                ['weightedAverageShsOutDil'],
+            )
+
+        self.assertEqual(values, {})
+
     async def test_continues_when_a_field_fetch_fails(self):
         metadata_by_quarter = {
             '2025-03-31': valuation.SecQuarterMetadata('2025-03-31', 'Q1'),
@@ -973,7 +1029,7 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
         async def fake_fetch_sec_field_rows(cik, field):
             if field == 'weightedAverageShsOutDil':
                 raise RuntimeError('temporary SEC error')
-            return [sec_frame([])]
+            return sec_frame([{}])
 
         with (
             patch.object(
@@ -1007,18 +1063,16 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
         }
         aligned_quarters = valuation.build_aligned_source_quarters(source_rows)
         frames_by_field = {
-            'weightedAverageShsOutDil': [
-                sec_frame(
-                    [
-                        {
-                            'filed': '2025-04-20',
-                            'val': 12,
-                            'start': '2025-01-01',
-                            'end': '2025-03-31',
-                        }
-                    ]
-                )
-            ],
+            'weightedAverageShsOutDil': sec_frame(
+                [
+                    {
+                        'filed': '2025-04-20',
+                        'val': 12,
+                        'start': '2025-01-01',
+                        'end': '2025-03-31',
+                    }
+                ]
+            ),
         }
 
         fetched_fields = []

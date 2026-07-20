@@ -1,7 +1,7 @@
 import asyncio
 import json
 import math
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Literal
@@ -805,7 +805,7 @@ def lookup_sec_field_value(
     field: str,
     cik: str,
     metadata: SecQuarterMetadata,
-    sec_frames: list[pd.DataFrame],
+    sec_rows: pd.DataFrame,
     *,
     log_errors: bool = False,
 ) -> int | float | None:
@@ -813,28 +813,24 @@ def lookup_sec_field_value(
     q4_value_kind = spec.q4_value_kind if spec is not None else 'flow'
     end = pd.Timestamp(metadata.date)
     period = metadata.period
-    for df in sec_frames:
-        datum = select_sec_quarter_fact(
-            df,
-            description=f'CIK{cik} {field} {date_str(end)}',
-            end=end,
-            log_errors=log_errors and period != 'Q4',
-        )
-        if datum is not None:
-            return datum['val']
-        if period != 'Q4':
-            continue
+    datum = select_sec_quarter_fact(
+        sec_rows,
+        description=f'CIK{cik} {field} {date_str(end)}',
+        end=end,
+        log_errors=log_errors and period != 'Q4',
+    )
+    if datum is not None:
+        return datum['val']
+    if period != 'Q4':
+        return None
 
-        value = derive_sec_q4_value(
-            q4_value_kind,
-            df,
-            f'CIK{cik} {field}',
-            end,
-            log_errors=log_errors,
-        )
-        if value is not None:
-            return value
-    return None
+    return derive_sec_q4_value(
+        q4_value_kind,
+        sec_rows,
+        f'CIK{cik} {field}',
+        end,
+        log_errors=log_errors,
+    )
 
 
 async def fetch_sec_company_concept_raw(cik: str, concept: str) -> dict:
@@ -881,7 +877,7 @@ async def fetch_sec_concept_rows(cik: str, concept: str, unit: str) -> pd.DataFr
     return dedupe_sec_rows(unit_rows)
 
 
-async def fetch_sec_field_rows(cik: str, field: str) -> list[pd.DataFrame]:
+async def fetch_sec_field_rows(cik: str, field: str) -> pd.DataFrame:
     spec = SEC_FIELD_SPECS[field]
     try:
         frame = await fetch_sec_concept_rows(cik, spec.concept, spec.unit)
@@ -892,8 +888,8 @@ async def fetch_sec_field_rows(cik: str, field: str) -> list[pd.DataFrame]:
             cik,
             exc,
         )
-        return []
-    return [frame] if not frame.empty else []
+        return empty_sec_rows()
+    return frame
 
 
 async def fetch_fmp_income_statements(
@@ -1276,13 +1272,22 @@ async def fetch_us_income_statement_sources(
     )
 
 
-def select_sec_cik(aligned_quarters: AlignedQuarters) -> str | None:
+def iter_sec_metadata_periods(
+    aligned_quarters: AlignedQuarters,
+) -> Iterator[tuple[str, list[tuple[str, IncomeStatementRow]]]]:
     for source_name in SEC_METADATA_SOURCES:
-        for quarter in aligned_quarters.values():
-            for _, row in quarter.source_periods.get(source_name, []):
-                cik = format_sec_cik(row.get('cik'))
-                if cik is not None:
-                    return cik
+        for quarter_key, quarter in aligned_quarters.items():
+            source_periods = quarter.source_periods.get(source_name, [])
+            if source_periods:
+                yield quarter_key, source_periods
+
+
+def select_sec_cik(aligned_quarters: AlignedQuarters) -> str | None:
+    for _, source_periods in iter_sec_metadata_periods(aligned_quarters):
+        for _, row in source_periods:
+            cik = format_sec_cik(row.get('cik'))
+            if cik is not None:
+                return cik
     return None
 
 
@@ -1290,20 +1295,16 @@ def build_sec_quarter_metadata(
     aligned_quarters: AlignedQuarters,
 ) -> dict[str, SecQuarterMetadata]:
     metadata = {}
-    for source_name in SEC_METADATA_SOURCES:
-        for quarter_key, quarter in aligned_quarters.items():
-            if quarter_key in metadata:
-                continue
-            source_periods = quarter.source_periods.get(source_name, [])
-            if not source_periods:
-                continue
-            source_date, row = source_periods[0]
-            period = normalize_massive_fiscal_quarter(row.get('quarter'))
-            if period is not None:
-                metadata[quarter_key] = SecQuarterMetadata(
-                    date=source_date,
-                    period=period,
-                )
+    for quarter_key, source_periods in iter_sec_metadata_periods(aligned_quarters):
+        if quarter_key in metadata:
+            continue
+        source_date, row = source_periods[0]
+        period = normalize_massive_fiscal_quarter(row.get('quarter'))
+        if period is not None:
+            metadata[quarter_key] = SecQuarterMetadata(
+                date=source_date,
+                period=period,
+            )
     return metadata
 
 
@@ -1317,7 +1318,7 @@ async def fetch_sec_values_for_quarters(
     values_by_quarter = {}
     for field in (field for field in SEC_FIELD_SPECS if field in fields):
         try:
-            frames = await fetch_sec_field_rows(cik, field)
+            sec_rows = await fetch_sec_field_rows(cik, field)
         except Exception as exc:
             logger.warning(
                 'SEC reference unavailable for {} field={}: {}; continuing without SEC',
@@ -1326,11 +1327,11 @@ async def fetch_sec_values_for_quarters(
                 exc,
             )
             continue
-        if not frames:
+        if sec_rows.empty:
             continue
 
         for quarter_key, metadata in metadata_by_quarter.items():
-            value = lookup_sec_field_value(field, cik, metadata, frames)
+            value = lookup_sec_field_value(field, cik, metadata, sec_rows)
             value = sanitize_source_field_value(field, value)
             if value is not None:
                 values_by_quarter.setdefault(quarter_key, {})[field] = value
