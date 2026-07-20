@@ -151,6 +151,40 @@ class CallTreeLineScriptTests(unittest.TestCase):
         self.assertIn('sample.Helpers.class_entry', result)
         self.assertIn('sample.Helpers.class_helper', result)
 
+    def test_ignores_calls_inside_nested_callable_bodies(self):
+        result = self._run_source(
+            'def hidden() -> int:\n'
+            '    return 1\n\n'
+            'def entry() -> int:\n'
+            '    def nested() -> int:\n'
+            '        return hidden()\n'
+            '    callback = lambda: hidden()\n'
+            '    class Deferred:\n'
+            '        def run(self) -> int:\n'
+            '            return hidden()\n'
+            '    return 0\n',
+            'entry',
+        )
+
+        self.assertIn('sample.entry (cumulative: 8 lines)', result)
+        self.assertNotIn('sample.hidden', result)
+
+    def test_restores_outer_class_context_after_nested_class(self):
+        result = self._run_source(
+            'class Outer:\n'
+            '    class Inner:\n'
+            '        def value(self) -> int:\n'
+            '            return 1\n\n'
+            '    def entry(self) -> int:\n'
+            '        return self.outer_helper()\n\n'
+            '    def outer_helper(self) -> int:\n'
+            '        return 2\n',
+            'Outer.entry',
+        )
+
+        self.assertIn('sample.Outer.entry (cumulative: 4 lines)', result)
+        self.assertIn('sample.Outer.outer_helper', result)
+
     def test_resolves_nested_helper_before_module_helper(self):
         result = self._run_source(
             'def helper() -> int:\n'

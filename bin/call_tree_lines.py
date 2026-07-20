@@ -43,13 +43,14 @@ class DefinitionCollector(ast.NodeVisitor):
         self.module = module
         self.functions: list[FunctionInfo] = []
         self._scope: list[str] = []
-        self._class_scopes: list[str] = []
+        self._class_qualname: str | None = None
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        previous_class_qualname = self._class_qualname
         self._scope.append(node.name)
-        self._class_scopes.append('.'.join(self._scope))
+        self._class_qualname = '.'.join(self._scope)
         self.generic_visit(node)
-        self._class_scopes.pop()
+        self._class_qualname = previous_class_qualname
         self._scope.pop()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -65,7 +66,7 @@ class DefinitionCollector(ast.NodeVisitor):
                 key=f'{self.module}.{qualname}',
                 module=self.module,
                 qualname=qualname,
-                class_qualname=self._class_scopes[-1] if self._class_scopes else None,
+                class_qualname=self._class_qualname,
                 node=node,
                 own_lines=node.end_lineno - node.lineno + 1,
             )
@@ -76,13 +77,21 @@ class DefinitionCollector(ast.NodeVisitor):
 
 
 class CallCollector(ast.NodeVisitor):
-    """Collect calls in one function body, excluding nested callable bodies."""
+    """Collect resolved local calls in one function body."""
 
-    def __init__(self) -> None:
-        self.called_expressions: list[ast.expr] = []
+    def __init__(
+        self,
+        function: FunctionInfo,
+        functions: dict[str, FunctionInfo],
+    ) -> None:
+        self.function = function
+        self.functions = functions
+        self.calls: list[str] = []
 
     def visit_Call(self, node: ast.Call) -> None:
-        self.called_expressions.append(node.func)
+        target = resolve_call(node.func, self.function, self.functions)
+        if target and target not in self.calls:
+            self.calls.append(target)
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -191,15 +200,10 @@ def collect_calls(functions: dict[str, FunctionInfo]) -> dict[str, tuple[str, ..
     """Return the resolved local calls made by each function."""
     calls_by_function: dict[str, tuple[str, ...]] = {}
     for key, function in functions.items():
-        collector = CallCollector()
+        collector = CallCollector(function, functions)
         for statement in function.node.body:
             collector.visit(statement)
-        calls: list[str] = []
-        for expression in collector.called_expressions:
-            target = resolve_call(expression, function, functions)
-            if target and target not in calls:
-                calls.append(target)
-        calls_by_function[key] = tuple(calls)
+        calls_by_function[key] = tuple(collector.calls)
     return calls_by_function
 
 
