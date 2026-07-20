@@ -1271,6 +1271,8 @@ def iter_sec_metadata_periods(
 
 
 def select_sec_cik(aligned_quarters: AlignedQuarters) -> str | None:
+    # TODO: Revisit CIK source/date ordering. This currently prefers any FMP CIK
+    # over Massive, independently of the source row chosen for quarter metadata.
     for _, source_periods in iter_sec_metadata_periods(aligned_quarters):
         for _, row in source_periods:
             cik = format_sec_cik(row.get('cik'))
