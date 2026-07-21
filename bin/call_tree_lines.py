@@ -216,6 +216,24 @@ def cumulative_line_count(
     )
 
 
+def rank_direct_callees(
+    root: str,
+    functions: dict[str, FunctionInfo],
+    calls_by_function: dict[str, tuple[str, ...]],
+) -> list[tuple[str, int]]:
+    """Return the root's direct local callees ordered by cumulative lines."""
+    return sorted(
+        (
+            (
+                callee,
+                cumulative_line_count(callee, functions, calls_by_function),
+            )
+            for callee in calls_by_function[root]
+        ),
+        key=lambda item: (-item[1], item[0]),
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -240,7 +258,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_source_path(root: Path, source: Path) -> tuple[Path, Path]:
+def validate_source_path(root: Path, source: Path) -> Path:
     """Resolve and validate a source file beneath the repository root."""
     root = root.resolve()
     source = source if source.is_absolute() else root / source
@@ -251,7 +269,7 @@ def resolve_source_path(root: Path, source: Path) -> tuple[Path, Path]:
         source.relative_to(root)
     except ValueError:
         raise SystemExit(f'source file must be below --root: {source}') from None
-    return root, source
+    return source
 
 
 def find_root_key(
@@ -273,21 +291,17 @@ def find_root_key(
 
 def main() -> None:
     args = parse_args()
-    _, source = resolve_source_path(args.root, args.source)
+    source = validate_source_path(args.root, args.source)
     functions = scan_file(source)
     calls_by_function = collect_calls(functions)
     root_key = find_root_key(functions, args.function, source)
 
-    callees = calls_by_function[root_key]
-    cumulative = {
-        key: cumulative_line_count(key, functions, calls_by_function) for key in callees
-    }
-    ranked_callees = sorted(callees, key=lambda key: (-cumulative[key], key))
+    ranked_callees = rank_direct_callees(root_key, functions, calls_by_function)
     print('Cumulative totals count each reachable function in this file once.')
     print('Direct local functions called by the root, by cumulative lines:')
     if ranked_callees:
-        for key in ranked_callees:
-            print(f'  {key} (cumulative: {cumulative[key]} lines)')
+        for key, cumulative in ranked_callees:
+            print(f'  {key} (cumulative: {cumulative} lines)')
     else:
         print('  none')
 
