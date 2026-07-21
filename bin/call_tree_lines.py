@@ -112,14 +112,6 @@ def dotted_name(node: ast.expr) -> str | None:
     return None
 
 
-def module_name_for(path: Path, root: Path) -> str:
-    relative = path.relative_to(root).with_suffix('')
-    parts = list(relative.parts)
-    if parts[-1] == '__init__':
-        parts.pop()
-    return '.'.join(parts)
-
-
 def scan_file(source: Path) -> dict[str, FunctionInfo]:
     """Collect function definitions from ``source`` only."""
     functions: dict[str, FunctionInfo] = {}
@@ -281,8 +273,7 @@ def find_root_key(
 
 def main() -> None:
     args = parse_args()
-    root, source = resolve_source_path(args.root, args.source)
-    source_module = module_name_for(source, root)
+    _, source = resolve_source_path(args.root, args.source)
     functions = scan_file(source)
     calls_by_function = collect_calls(functions)
     root_key = find_root_key(functions, args.function, source)
@@ -296,7 +287,7 @@ def main() -> None:
     print('Reachable local functions by cumulative lines, excluding the root:')
     if ranked_callees:
         for key in ranked_callees:
-            print(f'  {source_module}.{key} ' f'(cumulative: {cumulative[key]} lines)')
+            print(f'  {key} (cumulative: {cumulative[key]} lines)')
     else:
         print('  none')
 

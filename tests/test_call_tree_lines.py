@@ -25,10 +25,10 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'Reachable local functions by cumulative lines, excluding the root:',
             result.stdout,
         )
-        self.assertIn('backend.valuation.required_xps_fields', result.stdout)
-        self.assertIn('backend.valuation.add_sec_reference_values', result.stdout)
-        self.assertIn('backend.valuation.resolve_us_quarter_consensus', result.stdout)
-        self.assertNotIn('backend.shared.cached_get', result.stdout)
+        self.assertIn('required_xps_fields', result.stdout)
+        self.assertIn('add_sec_reference_values', result.stdout)
+        self.assertIn('resolve_us_quarter_consensus', result.stdout)
+        self.assertNotIn('cached_get', result.stdout)
 
     def test_omits_functions_imported_from_another_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -64,9 +64,9 @@ class CallTreeLineScriptTests(unittest.TestCase):
                 text=True,
             )
 
-        self.assertIn('sample.main.helper', result.stdout)
-        self.assertNotIn('sample.shared.external', result.stdout)
-        self.assertIn('sample.main.helper (cumulative: 2 lines)', result.stdout)
+        self.assertIn('helper', result.stdout)
+        self.assertNotIn('external', result.stdout)
+        self.assertIn('helper (cumulative: 2 lines)', result.stdout)
 
     def test_shared_helper_is_counted_once_and_listed_once(self):
         result = self._run_source(
@@ -81,8 +81,8 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'entry',
         )
 
-        self.assertIn('sample.shared (cumulative: 2 lines)', result)
-        self.assertEqual(result.count('sample.shared (cumulative: 2 lines)'), 1)
+        self.assertIn('shared (cumulative: 2 lines)', result)
+        self.assertEqual(result.count('shared (cumulative: 2 lines)'), 1)
         self.assertNotIn('[shared helper; shown above]', result)
 
     def test_lists_all_reachable_functions_by_cumulative_lines(self):
@@ -104,9 +104,9 @@ class CallTreeLineScriptTests(unittest.TestCase):
 
         self.assertIn(
             'Reachable local functions by cumulative lines, excluding the root:\n'
-            '  sample.wrapper (cumulative: 6 lines)\n'
-            '  sample.leaf (cumulative: 4 lines)\n'
-            '  sample.own_longest (cumulative: 4 lines)',
+            '  wrapper (cumulative: 6 lines)\n'
+            '  leaf (cumulative: 4 lines)\n'
+            '  own_longest (cumulative: 4 lines)',
             result,
         )
 
@@ -164,7 +164,7 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'first',
         )
 
-        self.assertIn('sample.second (cumulative: 4 lines)', result)
+        self.assertIn('second (cumulative: 4 lines)', result)
         self.assertNotIn('[cycle]', result)
 
     def test_resolves_self_and_cls_method_calls(self):
@@ -183,9 +183,9 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'Helpers.entry',
         )
 
-        self.assertIn('sample.Helpers.instance_helper', result)
-        self.assertIn('sample.Helpers.class_entry', result)
-        self.assertIn('sample.Helpers.class_helper', result)
+        self.assertIn('Helpers.instance_helper', result)
+        self.assertIn('Helpers.class_entry', result)
+        self.assertIn('Helpers.class_helper', result)
 
     def test_ignores_calls_inside_nested_callable_bodies(self):
         result = self._run_source(
@@ -202,7 +202,7 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'entry',
         )
 
-        self.assertNotIn('sample.hidden', result)
+        self.assertNotIn('hidden (cumulative:', result)
 
     def test_restores_outer_class_context_after_nested_class(self):
         result = self._run_source(
@@ -217,7 +217,7 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'Outer.entry',
         )
 
-        self.assertIn('sample.Outer.outer_helper', result)
+        self.assertIn('Outer.outer_helper', result)
 
     def test_resolves_nested_helper_before_module_helper(self):
         result = self._run_source(
@@ -230,8 +230,8 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'entry',
         )
 
-        self.assertIn('sample.entry.helper (cumulative: 2 lines)', result)
-        self.assertNotIn('sample.helper (cumulative:', result)
+        self.assertIn('entry.helper (cumulative: 2 lines)', result)
+        self.assertNotIn('\n  helper (cumulative:', result)
 
     def test_rejects_missing_source_file(self):
         with tempfile.TemporaryDirectory() as directory:
