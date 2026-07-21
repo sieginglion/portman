@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print a Python file's function call tree with cumulative source line counts.
+"""List a Python function's reachable local helpers by cumulative line count.
 
 By default this analyses ``resolve_us_income_statement_quarters`` in
 ``backend/valuation.py``. It follows calls that can be resolved statically to
@@ -248,40 +248,6 @@ def function_label(function: FunctionInfo, cumulative_lines: int) -> str:
     return f'{function.key} (cumulative: {cumulative_lines} lines)'
 
 
-def render_tree(
-    root: str,
-    functions: dict[str, FunctionInfo],
-    calls_by_function: dict[str, tuple[str, ...]],
-    cumulative: dict[str, int],
-) -> list[str]:
-    """Render a call DAG as a tree, marking repeated functions and cycles."""
-    lines = [function_label(functions[root], cumulative[root])]
-    expanded = {root}
-
-    def visit(key: str, prefix: str, ancestors: set[str]) -> None:
-        children = calls_by_function[key]
-        for index, child in enumerate(children):
-            last_child = index == len(children) - 1
-            branch = '└── ' if last_child else '├── '
-            label = function_label(functions[child], cumulative[child])
-            if child in ancestors:
-                lines.append(f'{prefix}{branch}{label} [cycle]')
-                continue
-            if child in expanded:
-                lines.append(f'{prefix}{branch}{label} [shared helper; shown above]')
-                continue
-            lines.append(f'{prefix}{branch}{label}')
-            expanded.add(child)
-            visit(
-                child,
-                prefix + ('    ' if last_child else '│   '),
-                ancestors | {child},
-            )
-
-    visit(root, '', {root})
-    return lines
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -362,8 +328,6 @@ def main() -> None:
             print(f'  {function_label(functions[key], cumulative[key])}')
     else:
         print('  none')
-    print()
-    print('\n'.join(render_tree(root_key, functions, calls_by_function, cumulative)))
 
 
 if __name__ == '__main__':

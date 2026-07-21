@@ -1,5 +1,3 @@
-import ast
-import re
 import subprocess
 import sys
 import tempfile
@@ -9,12 +7,8 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPOSITORY_ROOT / 'bin/call_tree_lines.py'
-SOURCE = REPOSITORY_ROOT / 'backend/valuation.py'
-TARGET = 'resolve_us_income_statement_quarters'
-
-
 class CallTreeLineScriptTests(unittest.TestCase):
-    def test_default_target_includes_file_local_helpers_and_cumulative_count(self):
+    def test_default_target_lists_file_local_helpers_by_cumulative_count(self):
         result = subprocess.run(
             [sys.executable, str(SCRIPT)],
             cwd=REPOSITORY_ROOT,
@@ -23,14 +17,10 @@ class CallTreeLineScriptTests(unittest.TestCase):
             text=True,
         )
 
-        root_line = next(
-            line for line in result.stdout.splitlines() if line.startswith('backend.')
+        self.assertIn(
+            'Reachable local functions by cumulative lines, excluding the root:',
+            result.stdout,
         )
-        expected_own_lines = self._function_lines(SOURCE, TARGET)
-        match = re.search(r'cumulative: (\d+) lines', root_line)
-
-        self.assertIsNotNone(match)
-        self.assertGreater(int(match.group(1)), expected_own_lines)
         self.assertIn('backend.valuation.required_xps_fields', result.stdout)
         self.assertIn('backend.valuation.add_sec_reference_values', result.stdout)
         self.assertIn('backend.valuation.resolve_us_quarter_consensus', result.stdout)
@@ -70,12 +60,11 @@ class CallTreeLineScriptTests(unittest.TestCase):
                 text=True,
             )
 
-        self.assertIn('sample.main.entry', result.stdout)
         self.assertIn('sample.main.helper', result.stdout)
         self.assertNotIn('sample.shared.external', result.stdout)
-        self.assertIn('cumulative: 4 lines', result.stdout)
+        self.assertIn('sample.main.helper (cumulative: 2 lines)', result.stdout)
 
-    def test_shared_helper_is_counted_once_and_rendered_once(self):
+    def test_shared_helper_is_counted_once_and_listed_once(self):
         result = self._run_source(
             'def shared() -> int:\n'
             '    return 1\n\n'
@@ -88,9 +77,9 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'entry',
         )
 
-        self.assertIn('sample.entry (cumulative: 8 lines)', result)
         self.assertIn('sample.shared (cumulative: 2 lines)', result)
-        self.assertIn('[shared helper; shown above]', result)
+        self.assertEqual(result.count('sample.shared (cumulative: 2 lines)'), 1)
+        self.assertNotIn('[shared helper; shown above]', result)
 
     def test_lists_all_reachable_functions_by_cumulative_lines(self):
         result = self._run_source(
@@ -117,7 +106,7 @@ class CallTreeLineScriptTests(unittest.TestCase):
             result,
         )
 
-    def test_cycle_is_marked_without_repeating_its_subtree(self):
+    def test_cycle_has_a_finite_cumulative_count(self):
         result = self._run_source(
             'def first() -> int:\n'
             '    return second()\n\n'
@@ -126,9 +115,8 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'first',
         )
 
-        self.assertIn('sample.first (cumulative: 4 lines)', result)
         self.assertIn('sample.second (cumulative: 4 lines)', result)
-        self.assertIn('[cycle]', result)
+        self.assertNotIn('[cycle]', result)
 
     def test_resolves_self_and_cls_method_calls(self):
         result = self._run_source(
@@ -146,7 +134,6 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'Helpers.entry',
         )
 
-        self.assertIn('sample.Helpers.entry (cumulative: 8 lines)', result)
         self.assertIn('sample.Helpers.instance_helper', result)
         self.assertIn('sample.Helpers.class_entry', result)
         self.assertIn('sample.Helpers.class_helper', result)
@@ -166,7 +153,6 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'entry',
         )
 
-        self.assertIn('sample.entry (cumulative: 8 lines)', result)
         self.assertNotIn('sample.hidden', result)
 
     def test_restores_outer_class_context_after_nested_class(self):
@@ -182,7 +168,6 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'Outer.entry',
         )
 
-        self.assertIn('sample.Outer.entry (cumulative: 4 lines)', result)
         self.assertIn('sample.Outer.outer_helper', result)
 
     def test_resolves_nested_helper_before_module_helper(self):
@@ -196,7 +181,6 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'entry',
         )
 
-        self.assertIn('sample.entry (cumulative: 6 lines)', result)
         self.assertIn('sample.entry.helper (cumulative: 2 lines)', result)
         self.assertNotIn('sample.helper (cumulative:', result)
 
@@ -272,14 +256,3 @@ class CallTreeLineScriptTests(unittest.TestCase):
                 text=True,
             )
         return result.stdout
-
-    @staticmethod
-    def _function_lines(path: Path, function_name: str) -> int:
-        tree = ast.parse(path.read_text(encoding='utf-8'))
-        function = next(
-            node
-            for node in tree.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == function_name
-        )
-        return function.end_lineno - function.lineno + 1
