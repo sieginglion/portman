@@ -1,8 +1,12 @@
+import contextlib
+import importlib.util
+import io
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -105,6 +109,51 @@ class CallTreeLineScriptTests(unittest.TestCase):
             '  sample.own_longest (cumulative: 4 lines)',
             result,
         )
+
+    def test_only_calculates_counts_for_root_reachable_callees(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'sample.py'
+            source.write_text(
+                'def leaf() -> int:\n'
+                '    return 1\n\n'
+                'def reachable() -> int:\n'
+                '    return leaf()\n\n'
+                'def unrelated_leaf() -> int:\n'
+                '    return 2\n\n'
+                'def unrelated() -> int:\n'
+                '    return unrelated_leaf()\n\n'
+                'def entry() -> int:\n'
+                '    return reachable()\n',
+                encoding='utf-8',
+            )
+            module_name = 'call_tree_lines_test_module'
+            spec = importlib.util.spec_from_file_location(module_name, SCRIPT)
+            self.assertIsNotNone(spec)
+            self.assertIsNotNone(spec.loader)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            try:
+                spec.loader.exec_module(module)
+                with (
+                    patch.object(
+                        module,
+                        'cumulative_line_count',
+                        wraps=module.cumulative_line_count,
+                    ) as count,
+                    patch.object(
+                        sys,
+                        'argv',
+                        [str(SCRIPT), str(source), 'entry', '--root', str(root)],
+                    ),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    module.main()
+            finally:
+                sys.modules.pop(module_name, None)
+
+        counted_functions = [call.args[0] for call in count.call_args_list]
+        self.assertCountEqual(counted_functions, ['reachable', 'leaf'])
 
     def test_cycle_has_a_finite_cumulative_count(self):
         result = self._run_source(

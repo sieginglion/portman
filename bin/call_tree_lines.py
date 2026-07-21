@@ -28,8 +28,6 @@ DEFAULT_FUNCTION = 'resolve_us_income_statement_quarters'
 class FunctionInfo:
     """Metadata for a function definition."""
 
-    key: str
-    module: str
     qualname: str
     class_qualname: str | None
     node: ast.FunctionDef | ast.AsyncFunctionDef
@@ -39,8 +37,7 @@ class FunctionInfo:
 class DefinitionCollector(ast.NodeVisitor):
     """Collect every function definition without treating classes as calls."""
 
-    def __init__(self, module: str) -> None:
-        self.module = module
+    def __init__(self) -> None:
         self.functions: list[FunctionInfo] = []
         self._scope: list[str] = []
         self._class_qualname: str | None = None
@@ -63,8 +60,6 @@ class DefinitionCollector(ast.NodeVisitor):
         qualname = '.'.join((*self._scope, node.name))
         self.functions.append(
             FunctionInfo(
-                key=f'{self.module}.{qualname}',
-                module=self.module,
                 qualname=qualname,
                 class_qualname=self._class_qualname,
                 node=node,
@@ -125,18 +120,17 @@ def module_name_for(path: Path, root: Path) -> str:
     return '.'.join(parts)
 
 
-def scan_file(root: Path, source: Path) -> dict[str, FunctionInfo]:
+def scan_file(source: Path) -> dict[str, FunctionInfo]:
     """Collect function definitions from ``source`` only."""
     functions: dict[str, FunctionInfo] = {}
-    module = module_name_for(source, root)
     tree = ast.parse(source.read_text(encoding='utf-8'), filename=str(source))
-    collector = DefinitionCollector(module)
+    collector = DefinitionCollector()
     collector.visit(tree)
 
     for function in collector.functions:
-        if function.key in functions:
-            raise ValueError(f'duplicate function definition: {function.key}')
-        functions[function.key] = function
+        if function.qualname in functions:
+            raise ValueError(f'duplicate function definition: {function.qualname}')
+        functions[function.qualname] = function
     return functions
 
 
@@ -145,11 +139,7 @@ def local_name_candidates(function: FunctionInfo, name: str) -> Iterable[str]:
     scope = function.qualname.split('.')
     for end in range(len(scope), -1, -1):
         prefix = '.'.join(scope[:end])
-        yield (
-            f'{function.module}.{prefix}.{name}'
-            if prefix
-            else f'{function.module}.{name}'
-        )
+        yield f'{prefix}.{name}' if prefix else name
 
 
 def resolve_bare_call(
@@ -178,7 +168,7 @@ def resolve_bound_method_call(
     if root_name not in {'self', 'cls'} or not function.class_qualname:
         return None
 
-    candidate = f'{function.module}.{function.class_qualname}.{suffix}'
+    candidate = f'{function.class_qualname}.{suffix}'
     return candidate if candidate in functions else None
 
 
@@ -222,30 +212,16 @@ def reachable_functions(
     return reachable
 
 
-def cumulative_line_counts(
-    functions: dict[str, FunctionInfo], calls_by_function: dict[str, tuple[str, ...]]
-) -> dict[str, int]:
-    return {
-        key: sum(
-            functions[target].own_lines
-            for target in reachable_functions(key, calls_by_function)
-        )
-        for key in functions
-    }
-
-
-def reachable_callees_by_cumulative_lines(
+def cumulative_line_count(
     root: str,
+    functions: dict[str, FunctionInfo],
     calls_by_function: dict[str, tuple[str, ...]],
-    cumulative: dict[str, int],
-) -> list[str]:
-    """Return root's reachable local callees, ordered by cumulative lines."""
-    callees = reachable_functions(root, calls_by_function) - {root}
-    return sorted(callees, key=lambda key: (-cumulative[key], key))
-
-
-def function_label(function: FunctionInfo, cumulative_lines: int) -> str:
-    return f'{function.key} (cumulative: {cumulative_lines} lines)'
+) -> int:
+    """Return the combined line count of root and its reachable functions."""
+    return sum(
+        functions[target].own_lines
+        for target in reachable_functions(root, calls_by_function)
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -288,20 +264,14 @@ def resolve_source_path(root: Path, source: Path) -> tuple[Path, Path]:
 
 def find_root_key(
     functions: dict[str, FunctionInfo],
-    source_module: str,
     function_name: str,
     source: Path,
 ) -> str:
     """Return the requested root key or explain which functions are available."""
-    root_key = f'{source_module}.{function_name}'
-    if root_key in functions:
-        return root_key
+    if function_name in functions:
+        return function_name
 
-    available = sorted(
-        function.qualname
-        for function in functions.values()
-        if function.module == source_module
-    )
+    available = sorted(function.qualname for function in functions.values())
     choices = ', '.join(available)
     raise SystemExit(
         f'function {function_name!r} was not found in {source}; '
@@ -312,20 +282,21 @@ def find_root_key(
 def main() -> None:
     args = parse_args()
     root, source = resolve_source_path(args.root, args.source)
-    functions = scan_file(root, source)
-    calls_by_function = collect_calls(functions)
     source_module = module_name_for(source, root)
-    root_key = find_root_key(functions, source_module, args.function, source)
+    functions = scan_file(source)
+    calls_by_function = collect_calls(functions)
+    root_key = find_root_key(functions, args.function, source)
 
-    cumulative = cumulative_line_counts(functions, calls_by_function)
-    callees = reachable_callees_by_cumulative_lines(
-        root_key, calls_by_function, cumulative
-    )
+    callees = reachable_functions(root_key, calls_by_function) - {root_key}
+    cumulative = {
+        key: cumulative_line_count(key, functions, calls_by_function) for key in callees
+    }
+    ranked_callees = sorted(callees, key=lambda key: (-cumulative[key], key))
     print('Cumulative totals count each reachable function in this file once.')
     print('Reachable local functions by cumulative lines, excluding the root:')
-    if callees:
-        for key in callees:
-            print(f'  {function_label(functions[key], cumulative[key])}')
+    if ranked_callees:
+        for key in ranked_callees:
+            print(f'  {source_module}.{key} ' f'(cumulative: {cumulative[key]} lines)')
     else:
         print('  none')
 
