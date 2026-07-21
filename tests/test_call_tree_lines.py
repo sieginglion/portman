@@ -12,7 +12,7 @@ from unittest.mock import patch
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPOSITORY_ROOT / 'bin/call_tree_lines.py'
 class CallTreeLineScriptTests(unittest.TestCase):
-    def test_default_target_lists_file_local_helpers_by_cumulative_count(self):
+    def test_default_target_lists_direct_file_local_helpers_by_cumulative_count(self):
         result = subprocess.run(
             [sys.executable, str(SCRIPT)],
             cwd=REPOSITORY_ROOT,
@@ -22,7 +22,7 @@ class CallTreeLineScriptTests(unittest.TestCase):
         )
 
         self.assertIn(
-            'Reachable local functions by cumulative lines, excluding the root:',
+            'Direct local functions called by the root, by cumulative lines:',
             result.stdout,
         )
         self.assertIn('required_xps_fields', result.stdout)
@@ -68,7 +68,7 @@ class CallTreeLineScriptTests(unittest.TestCase):
         self.assertNotIn('external', result.stdout)
         self.assertIn('helper (cumulative: 2 lines)', result.stdout)
 
-    def test_shared_helper_is_counted_once_and_listed_once(self):
+    def test_shared_helper_is_counted_once_per_direct_callee_total(self):
         result = self._run_source(
             'def shared() -> int:\n'
             '    return 1\n\n'
@@ -81,11 +81,11 @@ class CallTreeLineScriptTests(unittest.TestCase):
             'entry',
         )
 
-        self.assertIn('shared (cumulative: 2 lines)', result)
-        self.assertEqual(result.count('shared (cumulative: 2 lines)'), 1)
-        self.assertNotIn('[shared helper; shown above]', result)
+        self.assertIn('left (cumulative: 4 lines)', result)
+        self.assertIn('right (cumulative: 4 lines)', result)
+        self.assertNotIn('\n  shared (cumulative:', result)
 
-    def test_lists_all_reachable_functions_by_cumulative_lines(self):
+    def test_lists_only_direct_functions_by_cumulative_lines(self):
         result = self._run_source(
             'def leaf() -> int:\n'
             '    first = 1\n'
@@ -103,14 +103,14 @@ class CallTreeLineScriptTests(unittest.TestCase):
         )
 
         self.assertIn(
-            'Reachable local functions by cumulative lines, excluding the root:\n'
+            'Direct local functions called by the root, by cumulative lines:\n'
             '  wrapper (cumulative: 6 lines)\n'
-            '  leaf (cumulative: 4 lines)\n'
             '  own_longest (cumulative: 4 lines)',
             result,
         )
+        self.assertNotIn('\n  leaf (cumulative:', result)
 
-    def test_only_calculates_counts_for_root_reachable_callees(self):
+    def test_only_calculates_counts_for_root_direct_callees(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / 'sample.py'
@@ -153,7 +153,7 @@ class CallTreeLineScriptTests(unittest.TestCase):
                 sys.modules.pop(module_name, None)
 
         counted_functions = [call.args[0] for call in count.call_args_list]
-        self.assertCountEqual(counted_functions, ['reachable', 'leaf'])
+        self.assertCountEqual(counted_functions, ['reachable'])
 
     def test_cycle_has_a_finite_cumulative_count(self):
         result = self._run_source(
@@ -185,7 +185,7 @@ class CallTreeLineScriptTests(unittest.TestCase):
 
         self.assertIn('Helpers.instance_helper', result)
         self.assertIn('Helpers.class_entry', result)
-        self.assertIn('Helpers.class_helper', result)
+        self.assertNotIn('Helpers.class_helper', result)
 
     def test_ignores_calls_inside_nested_callable_bodies(self):
         result = self._run_source(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""List a Python function's reachable local helpers by cumulative line count.
+"""List a Python function's direct local helpers by cumulative line count.
 
 By default this analyses ``resolve_us_income_statement_quarters`` in
 ``backend/valuation.py``. It follows calls that can be resolved statically to
@@ -278,13 +278,13 @@ def main() -> None:
     calls_by_function = collect_calls(functions)
     root_key = find_root_key(functions, args.function, source)
 
-    callees = reachable_functions(root_key, calls_by_function) - {root_key}
+    callees = calls_by_function[root_key]
     cumulative = {
         key: cumulative_line_count(key, functions, calls_by_function) for key in callees
     }
     ranked_callees = sorted(callees, key=lambda key: (-cumulative[key], key))
     print('Cumulative totals count each reachable function in this file once.')
-    print('Reachable local functions by cumulative lines, excluding the root:')
+    print('Direct local functions called by the root, by cumulative lines:')
     if ranked_callees:
         for key in ranked_callees:
             print(f'  {key} (cumulative: {cumulative[key]} lines)')
