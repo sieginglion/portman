@@ -61,6 +61,14 @@ class SecQuarterMetadata:
     period: SecFiscalQuarter
 
 
+@dataclass(frozen=True)
+class SecFactWindow:
+    min_start: str
+    max_start: str
+    min_end: str
+    max_end: str
+
+
 type AlignedQuarters = dict[str, AlignedQuarter]
 type ResolvedQuarter = dict[str, XpsValue]
 type ResolvedQuarters = dict[str, ResolvedQuarter]
@@ -631,10 +639,30 @@ def date_str(date: pd.Timestamp) -> str:
     return date.strftime('%Y-%m-%d')
 
 
-def quarter_end_bounds(end: pd.Timestamp, months: int = 1) -> tuple[str, str]:
-    return (
-        date_str(end - pd.DateOffset(months=months)),
-        date_str(end + pd.DateOffset(months=months)),
+def sec_quarter_fact_window(end: pd.Timestamp) -> SecFactWindow:
+    return SecFactWindow(
+        min_start=date_str(end - pd.DateOffset(months=4)),
+        max_start=date_str(end - pd.DateOffset(months=2)),
+        min_end=date_str(end - pd.DateOffset(months=1)),
+        max_end=date_str(end + pd.DateOffset(months=1)),
+    )
+
+
+def sec_annual_fact_window(end: pd.Timestamp) -> SecFactWindow:
+    return SecFactWindow(
+        min_start=date_str(end - pd.DateOffset(months=13)),
+        max_start=date_str(end - pd.DateOffset(months=11)),
+        min_end=date_str(end - pd.DateOffset(months=1)),
+        max_end=date_str(end + pd.DateOffset(months=1)),
+    )
+
+
+def sec_q1_to_q3_fact_window(annual_start: pd.Timestamp) -> SecFactWindow:
+    return SecFactWindow(
+        min_start=date_str(annual_start - pd.DateOffset(months=1)),
+        max_start=date_str(annual_start + pd.DateOffset(months=1)),
+        min_end=date_str(annual_start + pd.DateOffset(months=8)),
+        max_end=date_str(annual_start + pd.DateOffset(months=10)),
     )
 
 
@@ -701,30 +729,27 @@ def format_sec_candidate_block(matches: pd.DataFrame) -> str:
 def select_sec_fact(
     df: pd.DataFrame,
     description: str,
+    window: SecFactWindow,
     *,
-    min_start: str,
-    max_start: str,
-    min_end: str,
-    max_end: str,
     log_errors: bool = True,
 ) -> pd.Series | None:
     if df.empty:
         return None
     matches = df[
-        df['start'].gt(min_start)
-        & df['start'].lt(max_start)
-        & df['end'].gt(min_end)
-        & df['end'].lt(max_end)
+        df['start'].gt(window.min_start)
+        & df['start'].lt(window.max_start)
+        & df['end'].gt(window.min_end)
+        & df['end'].lt(window.max_end)
     ]
     if matches.empty:
         if log_errors:
             logger.warning(
                 'SEC fact lookup returned no matches: {} start=({}, {}) end=({}, {})',
                 description,
-                min_start,
-                max_start,
-                min_end,
-                max_end,
+                window.min_start,
+                window.max_start,
+                window.min_end,
+                window.max_end,
             )
         return None
     if len(matches) > 1:
@@ -732,10 +757,10 @@ def select_sec_fact(
             logger.warning(
                 'SEC fact lookup returned multiple matches: {} start=({}, {}) end=({}, {}) matches={}\n{}',
                 description,
-                min_start,
-                max_start,
-                min_end,
-                max_end,
+                window.min_start,
+                window.max_start,
+                window.min_end,
+                window.max_end,
                 len(matches),
                 format_sec_candidate_block(matches),
             )
@@ -750,16 +775,10 @@ def select_sec_quarter_fact(
     *,
     log_errors: bool = True,
 ) -> pd.Series | None:
-    min_start = date_str(end - pd.DateOffset(months=4))
-    max_start = date_str(end - pd.DateOffset(months=2))
-    min_end, max_end = quarter_end_bounds(end)
     return select_sec_fact(
         df,
         description=description,
-        min_start=min_start,
-        max_start=max_start,
-        min_end=min_end,
-        max_end=max_end,
+        window=sec_quarter_fact_window(end),
         log_errors=log_errors,
     )
 
@@ -775,10 +794,7 @@ def derive_sec_q4_value(
     annual = select_sec_fact(
         df,
         description=f'{description_prefix} annual {date_str(end)}',
-        min_start=date_str(end - pd.DateOffset(months=13)),
-        max_start=date_str(end - pd.DateOffset(months=11)),
-        min_end=date_str(end - pd.DateOffset(months=1)),
-        max_end=date_str(end + pd.DateOffset(months=1)),
+        window=sec_annual_fact_window(end),
         log_errors=log_errors,
     )
     if annual is None:
@@ -788,10 +804,7 @@ def derive_sec_q4_value(
     q1_to_q3 = select_sec_fact(
         df,
         description=f'{description_prefix} Q1-Q3 from {annual["start"]}',
-        min_start=date_str(annual_start - pd.DateOffset(months=1)),
-        max_start=date_str(annual_start + pd.DateOffset(months=1)),
-        min_end=date_str(annual_start + pd.DateOffset(months=8)),
-        max_end=date_str(annual_start + pd.DateOffset(months=10)),
+        window=sec_q1_to_q3_fact_window(annual_start),
         log_errors=log_errors,
     )
     if q1_to_q3 is None:

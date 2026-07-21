@@ -604,6 +604,47 @@ class SecValuationTests(unittest.TestCase):
         )
         self.assertTrue(valuation.dedupe_sec_rows([{'form': '8-K'}]).empty)
 
+    def test_sec_fact_window_builders_use_expected_date_ranges(self):
+        cases = [
+            (
+                'quarter',
+                valuation.sec_quarter_fact_window,
+                pd.Timestamp('2025-03-31'),
+                valuation.SecFactWindow(
+                    min_start='2024-11-30',
+                    max_start='2025-01-31',
+                    min_end='2025-02-28',
+                    max_end='2025-04-30',
+                ),
+            ),
+            (
+                'annual',
+                valuation.sec_annual_fact_window,
+                pd.Timestamp('2025-12-31'),
+                valuation.SecFactWindow(
+                    min_start='2024-11-30',
+                    max_start='2025-01-31',
+                    min_end='2025-11-30',
+                    max_end='2026-01-31',
+                ),
+            ),
+            (
+                'Q1-Q3',
+                valuation.sec_q1_to_q3_fact_window,
+                pd.Timestamp('2025-01-01'),
+                valuation.SecFactWindow(
+                    min_start='2024-12-01',
+                    max_start='2025-02-01',
+                    min_end='2025-09-01',
+                    max_end='2025-11-01',
+                ),
+            ),
+        ]
+
+        for label, build_window, date, expected in cases:
+            with self.subTest(window=label):
+                self.assertEqual(build_window(date), expected)
+
     def test_select_sec_fact_requires_exactly_one_date_window_match(self):
         rows = sec_frame(
             [
@@ -619,10 +660,12 @@ class SecValuationTests(unittest.TestCase):
         match = valuation.select_sec_fact(
             rows,
             'single match',
-            min_start='2024-12-31',
-            max_start='2025-02-01',
-            min_end='2025-03-01',
-            max_end='2025-04-30',
+            valuation.SecFactWindow(
+                min_start='2024-12-31',
+                max_start='2025-02-01',
+                min_end='2025-03-01',
+                max_end='2025-04-30',
+            ),
         )
 
         self.assertEqual(match['val'], 10)
@@ -630,10 +673,12 @@ class SecValuationTests(unittest.TestCase):
             valuation.select_sec_fact(
                 rows,
                 'strict boundary',
-                min_start='2025-01-01',
-                max_start='2025-02-01',
-                min_end='2025-03-01',
-                max_end='2025-04-30',
+                valuation.SecFactWindow(
+                    min_start='2025-01-01',
+                    max_start='2025-02-01',
+                    min_end='2025-03-01',
+                    max_end='2025-04-30',
+                ),
                 log_errors=False,
             )
         )
@@ -660,10 +705,12 @@ class SecValuationTests(unittest.TestCase):
             valuation.select_sec_fact(
                 rows,
                 'ambiguous',
-                min_start='2024-12-31',
-                max_start='2025-02-01',
-                min_end='2025-03-01',
-                max_end='2025-04-30',
+                valuation.SecFactWindow(
+                    min_start='2024-12-31',
+                    max_start='2025-02-01',
+                    min_end='2025-03-01',
+                    max_end='2025-04-30',
+                ),
                 log_errors=False,
             )
         )
