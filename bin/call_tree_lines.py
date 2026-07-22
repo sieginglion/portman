@@ -23,7 +23,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EDGES = PROJECT_ROOT / "portman-valuation-call-edges.json"
 DEFAULT_SOURCE = PROJECT_ROOT / "backend/valuation.py"
-DEFAULT_CALLABLE = "fetch_resolved_income_statement_quarters"
+DEFAULT_ROOT = "fetch_resolved_income_statement_quarters"
 
 
 class CallableLineCollector(ast.NodeVisitor):
@@ -81,10 +81,10 @@ class CallableLineCollector(ast.NodeVisitor):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "callable",
+        "root",
         nargs="?",
-        default=DEFAULT_CALLABLE,
-        help=f"recorded root callable (default: {DEFAULT_CALLABLE})",
+        default=DEFAULT_ROOT,
+        help=f"recorded root callable (default: {DEFAULT_ROOT})",
     )
     parser.add_argument(
         "--edges",
@@ -126,17 +126,17 @@ def load_graph(path: Path) -> dict[str, set[str]]:
 
     graph: dict[str, set[str]] = defaultdict(set)
     for index, edge in enumerate(data, start=1):
-        if not isinstance(edge, list) or len(edge) != 2:
+        valid_pair = (
+            isinstance(edge, list)
+            and len(edge) == 2
+            and all(isinstance(name, str) for name in edge)
+        )
+        if not valid_pair:
             raise SystemExit(
                 f"invalid call-edge JSON in {path}: edge {index} is not a string pair"
             )
         caller, callee = edge
-        if not isinstance(caller, str) or not isinstance(callee, str):
-            raise SystemExit(
-                f"invalid call-edge JSON in {path}: edge {index} is not a string pair"
-            )
         graph[caller].add(callee)
-        graph.setdefault(callee, set())
     return graph
 
 
@@ -182,16 +182,16 @@ def main() -> None:
     graph = load_graph(edges_path)
 
     if args.all:
-        for callee in sorted(reachable_callables(args.callable, graph) - {args.callable}):
+        for callee in sorted(reachable_callables(args.root, graph) - {args.root}):
             print(callee)
         return
 
     source_path = require_file(args.source, "source file")
     line_counts = collect_line_counts(source_path)
-    if args.callable not in line_counts:
-        raise SystemExit(f"callable {args.callable!r} was not found in {source_path}")
+    if args.root not in line_counts:
+        raise SystemExit(f"callable {args.root!r} was not found in {source_path}")
 
-    callees = graph.get(args.callable, set())
+    callees = graph.get(args.root, set())
     ranked_callees = [
         (callee, cumulative_line_count(callee, graph, line_counts, source_path))
         for callee in callees
