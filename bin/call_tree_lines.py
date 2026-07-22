@@ -17,9 +17,7 @@ import argparse
 import ast
 import json
 from collections import defaultdict
-from dataclasses import dataclass
 from pathlib import Path
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EDGES = PROJECT_ROOT / "portman-valuation-call-edges.json"
@@ -27,23 +25,15 @@ DEFAULT_SOURCE = PROJECT_ROOT / "backend/valuation.py"
 DEFAULT_CALLABLE = "fetch_resolved_income_statement_quarters"
 
 
-@dataclass(frozen=True)
-class Scope:
-    """A lexical scope that contributes to a code object's qualified name."""
-
-    name: str
-    is_function: bool
-
-
 class CallableLineCollector(ast.NodeVisitor):
     """Map source-level code-object qualified names to their source lines."""
 
     def __init__(self) -> None:
         self.line_counts: dict[str, int] = defaultdict(int)
-        self._scopes: list[Scope] = []
+        self._qualname_parts: list[str] = []
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        self._visit_scoped(node, node.name, is_function=False)
+        self._visit_scoped(node, node.name)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._visit_callable(node, node.name)
@@ -68,21 +58,15 @@ class CallableLineCollector(ast.NodeVisitor):
 
     def _visit_callable(self, node: ast.AST, name: str) -> None:
         self.line_counts[self._qualname(name)] += self._line_count(node)
-        self._visit_scoped(node, name, is_function=True)
+        self._visit_scoped(node, name, "<locals>")
 
-    def _visit_scoped(self, node: ast.AST, name: str, *, is_function: bool) -> None:
-        self._scopes.append(Scope(name, is_function))
+    def _visit_scoped(self, node: ast.AST, *parts: str) -> None:
+        self._qualname_parts.extend(parts)
         self.generic_visit(node)
-        self._scopes.pop()
+        del self._qualname_parts[-len(parts) :]
 
     def _qualname(self, name: str) -> str:
-        parts: list[str] = []
-        for scope in self._scopes:
-            parts.append(scope.name)
-            if scope.is_function:
-                parts.append("<locals>")
-        parts.append(name)
-        return ".".join(parts)
+        return ".".join((*self._qualname_parts, name))
 
     @staticmethod
     def _line_count(node: ast.AST) -> int:
@@ -197,16 +181,11 @@ def main() -> None:
         raise SystemExit(f"callable {args.callable!r} was not found in {source_path}")
 
     direct_callees = graph.get(args.callable, set())
-    ranked_callees = sorted(
-        (
-            (
-                callee,
-                cumulative_line_count(callee, graph, line_counts, source_path),
-            )
-            for callee in direct_callees
-        ),
-        key=lambda item: (-item[1], item[0]),
-    )
+    ranked_callees = [
+        (callee, cumulative_line_count(callee, graph, line_counts, source_path))
+        for callee in direct_callees
+    ]
+    ranked_callees.sort(key=lambda item: (-item[1], item[0]))
 
     for callee, lines in ranked_callees:
         print(callee, lines)
