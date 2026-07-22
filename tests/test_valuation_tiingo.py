@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -423,6 +424,56 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
         )
 
         self.assertEqual(valuation.format_source_fetch_error(error), 'HTTP 400')
+
+    def test_finnhub_fetch_orders_stably_limits_and_normalizes_values(self):
+        payload = {
+            'financials': [
+                {
+                    'period': '2025-09-30',
+                    'revenue': 10,
+                    'dilutedAverageSharesOutstanding': 2,
+                    'dilutedEPS': 1.0,
+                },
+                {
+                    'period': '2025-09-30',
+                    'revenue': 20,
+                    'dilutedAverageSharesOutstanding': 3,
+                    'dilutedEPS': 2.0,
+                },
+                {
+                    'period': '2025-12-31',
+                    'revenue': 30,
+                    'dilutedAverageSharesOutstanding': 4,
+                    'dilutedEPS': 3.0,
+                },
+            ]
+        }
+        with patch.object(
+            valuation.shared,
+            'cached_get',
+            new=AsyncMock(return_value=json.dumps(payload)),
+        ) as cached_get:
+            rows = asyncio.run(
+                valuation.fetch_finnhub_income_statements('HOOD', 2)
+            )
+
+        self.assertEqual(list(rows), ['2025-12-31', '2025-09-30'])
+        self.assertEqual(
+            rows,
+            {
+                '2025-12-31': {
+                    'revenue': 30_000_000,
+                    'weightedAverageShsOutDil': 4_000_000,
+                    'epsDiluted': 3.0,
+                },
+                '2025-09-30': {
+                    'revenue': 10_000_000,
+                    'weightedAverageShsOutDil': 2_000_000,
+                    'epsDiluted': 1.0,
+                },
+            },
+        )
+        cached_get.assert_awaited_once()
 
     def test_normalize_tiingo_income_statement_rows_uses_quarterly_income_fields(self):
         statements = [

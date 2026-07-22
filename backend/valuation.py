@@ -1,7 +1,9 @@
+# WARNING: No indirect calls.
+
 import asyncio
 import json
 import math
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Literal
@@ -85,7 +87,6 @@ class USIncomeStatementSource:
     name: str
     label: str
     enabled: bool
-    fetch: Callable[[str, int], Awaitable[SourceIncomeStatementRows]]
 
 
 US_INCOME_STATEMENT_SOURCES = (
@@ -93,31 +94,26 @@ US_INCOME_STATEMENT_SOURCES = (
         'fmp',
         'FMP',
         True,
-        lambda symbol, limit: fetch_fmp_income_statements('u', symbol, limit),
     ),
     USIncomeStatementSource(
         'massive',
         'Massive',
         shared.ENABLE_MASSIVE_FUNDAMENTALS,
-        lambda symbol, limit: fetch_massive_income_statements(symbol, limit),
     ),
     USIncomeStatementSource(
         'eodhd',
         'EODHD',
         shared.ENABLE_EODHD_FUNDAMENTALS,
-        lambda symbol, limit: fetch_eodhd_income_statements(symbol, limit),
     ),
     USIncomeStatementSource(
         'finnhub',
         'Finnhub',
         True,
-        lambda symbol, limit: fetch_finnhub_income_statements(symbol, limit),
     ),
     USIncomeStatementSource(
         'tiingo',
         'Tiingo',
         shared.ENABLE_TIINGO_FUNDAMENTALS,
-        lambda symbol, limit: fetch_tiingo_income_statements(symbol, limit),
     ),
 )
 ENABLED_US_INCOME_STATEMENT_SOURCES = tuple(
@@ -227,7 +223,7 @@ def empty_sec_rows() -> pd.DataFrame:
 def source_log_diff(lhs: int | float, rhs: int | float) -> float:
     lhs = float(lhs)
     rhs = float(rhs)
-    if not all(map(math.isfinite, (lhs, rhs))):
+    if not (math.isfinite(lhs) and math.isfinite(rhs)):
         return math.inf
     if lhs == rhs:
         return 0.0
@@ -242,7 +238,7 @@ def source_log_diff(lhs: int | float, rhs: int | float) -> float:
 def source_abs_diff(lhs: int | float, rhs: int | float) -> float:
     lhs = float(lhs)
     rhs = float(rhs)
-    if not all(map(math.isfinite, (lhs, rhs))):
+    if not (math.isfinite(lhs) and math.isfinite(rhs)):
         return math.inf
     return abs(lhs - rhs)
 
@@ -316,7 +312,7 @@ def select_closest_date_key(target_date: str, date_keys: list[str]) -> str | Non
     if not matches:
         return None
 
-    matches.sort(key=lambda item: (item[0], item[1]))
+    matches.sort()
     return matches[0][1]
 
 
@@ -353,12 +349,17 @@ def sanitize_source_field_value(
 def normalize_source_row(
     row: dict,
     field_map: dict[str, str],
-    value_transform=lambda field, value: value,
+    *,
+    use_finnhub_field_values: bool = False,
 ) -> dict[str, int | float | None]:
     return {
         field: sanitize_source_field_value(
             field,
-            value_transform(field, row.get(source_field)),
+            (
+                normalize_finnhub_field_value(field, row.get(source_field))
+                if use_finnhub_field_values
+                else row.get(source_field)
+            ),
         )
         for field, source_field in field_map.items()
     }
@@ -370,14 +371,14 @@ def normalize_income_statement_rows(
     field_map: dict[str, str],
     date_field: str,
     metadata_fields: dict[str, str] | None = None,
-    value_transform=lambda field, value: value,
+    use_finnhub_field_values: bool = False,
 ) -> dict[str, dict]:
     normalized_rows = {}
     for row in rows:
         normalized_row = normalize_source_row(
             row,
             field_map,
-            value_transform=value_transform,
+            use_finnhub_field_values=use_finnhub_field_values,
         )
         if metadata_fields is not None:
             normalized_row.update(
@@ -972,17 +973,17 @@ async def fetch_finnhub_income_statements(symbol: str, limit: int) -> dict[str, 
         'weightedAverageShsOutDil': 'dilutedAverageSharesOutstanding',
         EPS_XPS_FIELD: 'dilutedEPS',
     }
-    financials = sorted(
-        json.loads(text)['financials'] or [],
-        key=lambda row: row['period'],
-        reverse=True,
-    )
-    financials = financials[:limit]
+    financials_by_period = [
+        (row['period'], -index, row)
+        for index, row in enumerate(json.loads(text)['financials'] or [])
+    ]
+    financials_by_period.sort(reverse=True)
+    financials = [row for _, _, row in financials_by_period[:limit]]
     return normalize_income_statement_rows(
         financials,
         field_map=field_map,
         date_field='period',
-        value_transform=normalize_finnhub_field_value,
+        use_finnhub_field_values=True,
     )
 
 
@@ -1247,7 +1248,20 @@ async def fetch_us_income_statement_source(
     limit: int,
 ) -> tuple[str, SourceIncomeStatementRows | None]:
     try:
-        return source.name, await source.fetch(symbol, limit)
+        match source.name:
+            case 'fmp':
+                rows = await fetch_fmp_income_statements('u', symbol, limit)
+            case 'massive':
+                rows = await fetch_massive_income_statements(symbol, limit)
+            case 'eodhd':
+                rows = await fetch_eodhd_income_statements(symbol, limit)
+            case 'finnhub':
+                rows = await fetch_finnhub_income_statements(symbol, limit)
+            case 'tiingo':
+                rows = await fetch_tiingo_income_statements(symbol, limit)
+            case _:
+                raise ValueError(f'unknown income statement source: {source.name}')
+        return source.name, rows
     except Exception as error:
         logger.warning(
             '{} income statements unavailable for {}: {}; skipping source',

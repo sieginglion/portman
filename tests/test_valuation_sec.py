@@ -1,4 +1,5 @@
 import asyncio
+import math
 import unittest
 from unittest.mock import ANY, AsyncMock, patch
 
@@ -63,6 +64,12 @@ class DateMatchingTests(unittest.TestCase):
 
 
 class SecValuationTests(unittest.TestCase):
+    def test_source_diffs_reject_nonfinite_values(self):
+        self.assertEqual(valuation.source_log_diff(math.inf, 1), math.inf)
+        self.assertEqual(valuation.source_log_diff(1, math.nan), math.inf)
+        self.assertEqual(valuation.source_abs_diff(math.inf, 1), math.inf)
+        self.assertEqual(valuation.source_abs_diff(1, math.nan), math.inf)
+
     def test_consensus_helpers_resolve_agreeing_sources(self):
         source_values = {'fmp': 100, 'finnhub': 102, 'sec': None}
 
