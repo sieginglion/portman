@@ -36,6 +36,6 @@ class CallRecorderLifecycleTests(unittest.TestCase):
 
         recorder.enable.assert_called_once_with()
         recorder.write.assert_called_once_with(
-            Path(f"/tmp/portman-valuation-call-edges-{os.getpid()}.json")
+            Path.cwd() / "portman-valuation-call-edges.json"
         )
         recorder.disable.assert_called_once_with()

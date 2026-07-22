@@ -1,8 +1,8 @@
 import asyncio
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 import io
 import os
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote
@@ -34,9 +34,7 @@ async def lifespan(_: fastapi.FastAPI) -> AsyncGenerator[None, None]:
     finally:
         if recorder is not None:
             try:
-                recorder.write(
-                    Path(f"/tmp/portman-valuation-call-edges-{os.getpid()}.json")
-                )
+                recorder.write(Path.cwd() / "portman-valuation-call-edges.json")
             finally:
                 recorder.disable()
 
