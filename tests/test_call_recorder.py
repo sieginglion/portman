@@ -10,6 +10,10 @@ from backend.call_recorder import ValuationCallRecorder
 
 
 class ValuationCallRecorderTests(unittest.TestCase):
+    def test_requires_a_module_source_file(self):
+        with self.assertRaisesRegex(ValueError, "source file"):
+            ValuationCallRecorder(ModuleType("dynamic_module"))
+
     def test_disabling_an_inactive_recorder_is_a_no_op(self):
         with patch.object(call_recorder.sys, "monitoring") as monitoring:
             recorder = ValuationCallRecorder(valuation)
@@ -34,6 +38,37 @@ class ValuationCallRecorderTests(unittest.TestCase):
         self.assertEqual(
             recorder.edges,
             {("field_has_consensus", "source_log_diff")},
+        )
+
+    def test_records_nested_function_calls(self):
+        module = ModuleType("test_valuation")
+        module.__file__ = "/tmp/test_valuation.py"
+        source = str(Path(module.__file__).resolve())
+        exec(
+            compile(
+                """
+def caller():
+    def helper():
+        return 1
+
+    return helper()
+""",
+                source,
+                "exec",
+            ),
+            vars(module),
+        )
+
+        recorder = ValuationCallRecorder(module)
+        recorder.enable()
+        try:
+            self.assertEqual(module.caller(), 1)
+        finally:
+            recorder.disable()
+
+        self.assertEqual(
+            recorder.edges,
+            {("caller", "caller.<locals>.helper")},
         )
 
     def test_records_enabled_instance_static_class_and_property_methods(self):
@@ -186,7 +221,7 @@ def caller():
 
         module = ModuleType("test_valuation")
         module.__file__ = "/tmp/test_valuation.py"
-        module.Imported = Imported
+        vars(module)["Imported"] = Imported
 
         recorder = ValuationCallRecorder(module)
 
