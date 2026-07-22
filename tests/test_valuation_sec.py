@@ -1040,20 +1040,20 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
                 metadata_by_quarter,
                 [
                     "revenue",
-                    "weightedAverageShsOutDil",
                     "epsDiluted",
+                    "weightedAverageShsOutDil",
                     "revenue",
                 ],
             )
 
-        self.assertEqual(fetched_fields, ["weightedAverageShsOutDil", "epsDiluted"])
+        self.assertEqual(fetched_fields, ["epsDiluted", "weightedAverageShsOutDil"])
         self.assertEqual(
             q4_value_kinds,
             [
-                ("weightedAverageShsOutDil", "average"),
-                ("weightedAverageShsOutDil", "average"),
                 ("epsDiluted", "flow"),
                 ("epsDiluted", "flow"),
+                ("weightedAverageShsOutDil", "average"),
+                ("weightedAverageShsOutDil", "average"),
             ],
         )
         self.assertEqual(

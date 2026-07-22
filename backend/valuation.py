@@ -661,40 +661,36 @@ def date_str(date: pd.Timestamp) -> str:
 
 
 def _sec_fact_window(
-    anchor: pd.Timestamp,
-    *,
-    start_months: tuple[int, int],
-    end_months: tuple[int, int],
+    expected_start: pd.Timestamp,
+    expected_end: pd.Timestamp,
 ) -> SecFactWindow:
+    tolerance = pd.DateOffset(months=1)
     return SecFactWindow(
-        min_start=date_str(anchor + pd.DateOffset(months=start_months[0])),
-        max_start=date_str(anchor + pd.DateOffset(months=start_months[1])),
-        min_end=date_str(anchor + pd.DateOffset(months=end_months[0])),
-        max_end=date_str(anchor + pd.DateOffset(months=end_months[1])),
+        min_start=date_str(expected_start - tolerance),
+        max_start=date_str(expected_start + tolerance),
+        min_end=date_str(expected_end - tolerance),
+        max_end=date_str(expected_end + tolerance),
     )
 
 
 def sec_quarter_fact_window(end: pd.Timestamp) -> SecFactWindow:
     return _sec_fact_window(
-        end,
-        start_months=(-4, -2),
-        end_months=(-1, 1),
+        expected_start=end - pd.DateOffset(months=3),
+        expected_end=end,
     )
 
 
 def sec_annual_fact_window(end: pd.Timestamp) -> SecFactWindow:
     return _sec_fact_window(
-        end,
-        start_months=(-13, -11),
-        end_months=(-1, 1),
+        expected_start=end - pd.DateOffset(months=12),
+        expected_end=end,
     )
 
 
 def sec_q1_to_q3_fact_window(annual_start: pd.Timestamp) -> SecFactWindow:
     return _sec_fact_window(
-        annual_start,
-        start_months=(-1, 1),
-        end_months=(8, 10),
+        expected_start=annual_start,
+        expected_end=annual_start + pd.DateOffset(months=9),
     )
 
 
@@ -1376,9 +1372,9 @@ async def fetch_sec_values_for_quarters(
 ) -> dict[str, dict[str, int | float]]:
     """Fetch usable SEC field values keyed by aligned quarter."""
     values_by_quarter = {}
-    requested_fields = set(fields)
-    for field_name, spec in SEC_FIELD_SPECS.items():
-        if field_name not in requested_fields:
+    for field_name in dict.fromkeys(fields):
+        spec = SEC_FIELD_SPECS.get(field_name)
+        if spec is None:
             continue
         sec_rows = await fetch_sec_field_rows(cik, field_name)
         if sec_rows.empty:
