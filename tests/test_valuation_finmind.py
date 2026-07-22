@@ -1,11 +1,30 @@
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
 from backend import valuation
 
 
 class FinMindValuationTests(unittest.TestCase):
+    def test_quarterly_start_date_uses_market_timezone_and_buffer(self):
+        now = valuation.pd.Timestamp("2026-07-22 15:30:00", tz="UTC")
+        with patch.object(valuation.pd.Timestamp, "now", return_value=now) as now_mock:
+            self.assertEqual(
+                valuation.quarterly_start_date("u", limit=4, quarter_buffer=1),
+                "2025-04-22",
+            )
+            self.assertEqual(
+                valuation.quarterly_start_date("t", limit=4, quarter_buffer=2),
+                "2025-01-22",
+            )
+
+        now_mock.assert_has_calls(
+            [
+                call(tz=valuation.shared.MARKET_TO_TIMEZONE["u"]),
+                call(tz=valuation.shared.MARKET_TO_TIMEZONE["t"]),
+            ]
+        )
+
     def test_build_xps_frame_returns_ttm_values_with_quarter_dates(self):
         quarters = {
             "2025-03-31": {
@@ -131,9 +150,14 @@ class FinMindValuationTests(unittest.TestCase):
         with (
             patch.object(
                 valuation,
+                "quarterly_start_date",
+                return_value="2024-01-01",
+            ) as start_date,
+            patch.object(
+                valuation,
                 "fetch_finmind_taiwan_rows",
                 new=AsyncMock(side_effect=[finmind_financial_rows, []]),
-            ),
+            ) as finmind_fetch,
             patch.object(
                 valuation,
                 "fetch_fmp_income_statements",
@@ -146,6 +170,15 @@ class FinMindValuationTests(unittest.TestCase):
                 )
             )
 
+        start_date.assert_called_once_with(
+            "t", 1, valuation.FINMIND_TAIWAN_QUARTER_BUFFER
+        )
+        finmind_fetch.assert_any_await(
+            "TaiwanStockFinancialStatements", "2330", "2024-01-01"
+        )
+        finmind_fetch.assert_any_await(
+            "TaiwanStockBalanceSheet", "2330", "2024-01-01"
+        )
         self.assertEqual(
             rows,
             {

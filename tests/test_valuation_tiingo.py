@@ -465,6 +465,31 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
         )
         cached_get.assert_awaited_once()
 
+    def test_tiingo_fetch_uses_shared_start_date(self):
+        with (
+            patch.object(
+                valuation,
+                "quarterly_start_date",
+                return_value="2024-01-01",
+            ) as start_date,
+            patch.object(
+                valuation.shared,
+                "cached_get",
+                new=AsyncMock(return_value="[]"),
+            ) as cached_get,
+        ):
+            rows = asyncio.run(valuation.fetch_tiingo_income_statements("HOOD", 8))
+
+        self.assertEqual(rows, {})
+        start_date.assert_called_once_with(
+            "u", 8, valuation.TIINGO_QUARTER_BUFFER
+        )
+        cached_get.assert_awaited_once_with(
+            valuation.TIINGO_FUNDAMENTALS_STATEMENTS_URL.format("HOOD"),
+            {"asReported": "false", "startDate": "2024-01-01"},
+            headers={"Authorization": f"Token {valuation.TIINGO_API_KEY}"},
+        )
+
     def test_normalize_tiingo_income_statement_rows_uses_quarterly_income_fields(self):
         statements = [
             {

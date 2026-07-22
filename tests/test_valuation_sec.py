@@ -537,12 +537,35 @@ class SecValuationTests(unittest.TestCase):
         self.assertIsNone(valuation.format_sec_cik(None))
         self.assertIsNone(valuation.format_sec_cik("not-a-cik"))
 
-    def test_normalize_massive_fiscal_quarter(self):
-        self.assertEqual(valuation.normalize_massive_fiscal_quarter(1), "Q1")
-        self.assertEqual(valuation.normalize_massive_fiscal_quarter("q4"), "Q4")
-        self.assertIsNone(valuation.normalize_massive_fiscal_quarter(5))
-        self.assertIsNone(valuation.normalize_massive_fiscal_quarter("FY"))
-        self.assertIsNone(valuation.normalize_massive_fiscal_quarter(None))
+    def test_normalize_fiscal_quarter(self):
+        for value in (1, 1.0, "1", "Q1", "q1"):
+            with self.subTest(value=value):
+                self.assertEqual(valuation.normalize_fiscal_quarter(value), "Q1")
+        self.assertEqual(valuation.normalize_fiscal_quarter("q4"), "Q4")
+        self.assertIsNone(valuation.normalize_fiscal_quarter(2.9))
+        self.assertIsNone(valuation.normalize_fiscal_quarter(5))
+        self.assertIsNone(valuation.normalize_fiscal_quarter("FY"))
+        self.assertIsNone(valuation.normalize_fiscal_quarter(None))
+
+    def test_normalize_source_row_applies_scales_only_to_configured_fields(self):
+        row = valuation.normalize_source_row(
+            {"revenue": 2, "shares": 3, "eps": 1.5},
+            {
+                "revenue": "revenue",
+                "weightedAverageShsOutDil": "shares",
+                valuation.EPS_XPS_FIELD: "eps",
+            },
+            field_scales=dict.fromkeys(valuation.BASE_XPS_FIELDS, 1_000_000),
+        )
+
+        self.assertEqual(
+            row,
+            {
+                "revenue": 2_000_000,
+                "weightedAverageShsOutDil": 3_000_000,
+                "epsDiluted": 1.5,
+            },
+        )
 
     def test_dedupe_sec_rows_keeps_latest_supported_filing_per_period(self):
         rows = [

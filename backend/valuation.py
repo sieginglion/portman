@@ -39,6 +39,20 @@ type XpsValue = int | float | None
 type SourceFieldValues = dict[str, XpsValue]
 type SecQ4ValueKind = Literal["flow", "average"]
 type SecFiscalQuarter = Literal["Q1", "Q2", "Q3", "Q4"]
+FISCAL_QUARTER_BY_VALUE: dict[str | int | float, SecFiscalQuarter] = {
+    1: "Q1",
+    2: "Q2",
+    3: "Q3",
+    4: "Q4",
+    "1": "Q1",
+    "2": "Q2",
+    "3": "Q3",
+    "4": "Q4",
+    "Q1": "Q1",
+    "Q2": "Q2",
+    "Q3": "Q3",
+    "Q4": "Q4",
+}
 
 
 @dataclass
@@ -354,19 +368,15 @@ def normalize_source_row(
     row: dict,
     field_map: dict[str, str],
     *,
-    use_finnhub_field_values: bool = False,
+    field_scales: dict[str, int | float] | None = None,
 ) -> dict[str, int | float | None]:
-    return {
-        field: sanitize_source_field_value(
-            field,
-            (
-                normalize_finnhub_field_value(field, row.get(source_field))
-                if use_finnhub_field_values
-                else row.get(source_field)
-            ),
-        )
-        for field, source_field in field_map.items()
-    }
+    normalized_row = {}
+    for field_name, source_field in field_map.items():
+        value = row.get(source_field)
+        if value is not None and field_scales is not None:
+            value *= field_scales.get(field_name, 1)
+        normalized_row[field_name] = sanitize_source_field_value(field_name, value)
+    return normalized_row
 
 
 def normalize_income_statement_rows(
@@ -375,14 +385,14 @@ def normalize_income_statement_rows(
     field_map: dict[str, str],
     date_field: str,
     metadata_fields: dict[str, str] | None = None,
-    use_finnhub_field_values: bool = False,
+    field_scales: dict[str, int | float] | None = None,
 ) -> dict[str, dict]:
     normalized_rows = {}
     for row in rows:
         normalized_row = normalize_source_row(
             row,
             field_map,
-            use_finnhub_field_values=use_finnhub_field_values,
+            field_scales=field_scales,
         )
         if metadata_fields is not None:
             normalized_row.update(
@@ -393,12 +403,6 @@ def normalize_income_statement_rows(
             )
         normalized_rows[row[date_field]] = normalized_row
     return normalized_rows
-
-
-def finnhub_million(value: int | float | None) -> int | float | None:
-    if value is None:
-        return None
-    return value * FINNHUB_MILLION_SCALE
 
 
 def to_source_number(value: object) -> int | float | None:
@@ -426,14 +430,6 @@ def parse_timestamp(value: object) -> pd.Timestamp | None:
     return timestamp if isinstance(timestamp, pd.Timestamp) else None
 
 
-def normalize_finnhub_field_value(
-    field: str, value: int | float | None
-) -> int | float | None:
-    if field in BASE_XPS_FIELDS:
-        return finnhub_million(value)
-    return value
-
-
 def select_eodhd_balance_sheet_row(
     income_date: str, balance_sheet: dict[str, dict]
 ) -> dict | None:
@@ -448,13 +444,14 @@ def select_eodhd_balance_sheet_row(
     return row if isinstance(row, dict) else None
 
 
-def finmind_taiwan_start_date(
-    limit: int, quarter_buffer: int = FINMIND_TAIWAN_QUARTER_BUFFER
+def quarterly_start_date(
+    market: Literal["t", "u"],
+    limit: int,
+    quarter_buffer: int,
 ) -> str:
-    quarter_count = limit + quarter_buffer
     start = pd.Timestamp.now(
-        tz=shared.MARKET_TO_TIMEZONE["t"]
-    ).normalize() - pd.DateOffset(months=3 * quarter_count)
+        tz=shared.MARKET_TO_TIMEZONE[market]
+    ).normalize() - pd.DateOffset(months=3 * (limit + quarter_buffer))
     return date_str(start.tz_localize(None))
 
 
@@ -602,7 +599,7 @@ async def fetch_finmind_taiwan_income_statements(
     limit: int,
     require_eps: bool = True,
 ) -> dict[str, dict]:
-    start_date = finmind_taiwan_start_date(limit)
+    start_date = quarterly_start_date("t", limit, FINMIND_TAIWAN_QUARTER_BUFFER)
     required_fields = required_xps_fields(require_eps)
     financial_statement_rows, balance_sheet_rows, rows = await asyncio.gather(
         fetch_finmind_taiwan_rows("TaiwanStockFinancialStatements", symbol, start_date),
@@ -705,25 +702,12 @@ def format_sec_cik(cik: object) -> str | None:
     return digits.zfill(10)
 
 
-def normalize_massive_fiscal_quarter(value: object) -> SecFiscalQuarter | None:
-    if value is None:
-        return None
+def normalize_fiscal_quarter(value: object) -> SecFiscalQuarter | None:
     if isinstance(value, str):
-        try:
-            quarter = int(value)
-        except ValueError:
-            normalized = value.upper()
-            return normalized if normalized in {"Q1", "Q2", "Q3", "Q4"} else None
-    elif isinstance(value, (int, float)):
-        try:
-            quarter = int(value)
-        except (ValueError, OverflowError):
-            return None
-    else:
+        value = value.upper()
+    if not isinstance(value, (str, int, float)):
         return None
-    if quarter not in {1, 2, 3, 4}:
-        return None
-    return ("Q1", "Q2", "Q3", "Q4")[quarter - 1]
+    return FISCAL_QUARTER_BY_VALUE.get(value)
 
 
 def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
@@ -1022,17 +1006,8 @@ async def fetch_finnhub_income_statements(symbol: str, limit: int) -> dict[str, 
         financials,
         field_map=field_map,
         date_field="period",
-        use_finnhub_field_values=True,
+        field_scales=dict.fromkeys(BASE_XPS_FIELDS, FINNHUB_MILLION_SCALE),
     )
-
-
-def tiingo_fundamentals_start_date(
-    limit: int, quarter_buffer: int = TIINGO_QUARTER_BUFFER
-) -> str:
-    start = pd.Timestamp.now(
-        tz=shared.MARKET_TO_TIMEZONE["u"]
-    ).normalize() - pd.DateOffset(months=3 * (limit + quarter_buffer))
-    return date_str(start.tz_localize(None))
 
 
 def normalize_tiingo_income_statement_rows(statements: list[dict]) -> dict[str, dict]:
@@ -1044,7 +1019,7 @@ def normalize_tiingo_income_statement_rows(statements: list[dict]) -> dict[str, 
         EPS_XPS_FIELD: "epsDil",
     }
     for statement in statements:
-        if normalize_massive_fiscal_quarter(statement.get("quarter")) is None:
+        if normalize_fiscal_quarter(statement.get("quarter")) is None:
             continue
         statement_data = statement.get("statementData", {})
         if not isinstance(statement_data, dict):
@@ -1067,7 +1042,7 @@ async def fetch_tiingo_income_statements(symbol: str, limit: int) -> dict[str, d
     params = {
         # Use Tiingo's latest restated values, whose dates are fiscal period ends.
         "asReported": "false",
-        "startDate": tiingo_fundamentals_start_date(limit),
+        "startDate": quarterly_start_date("u", limit, TIINGO_QUARTER_BUFFER),
     }
     text = await shared.cached_get(
         TIINGO_FUNDAMENTALS_STATEMENTS_URL.format(symbol),
@@ -1356,7 +1331,7 @@ def build_sec_quarter_metadata(
         if quarter_key in metadata:
             continue
         source_date, row = source_periods[0]
-        period = normalize_massive_fiscal_quarter(row.get("quarter"))
+        period = normalize_fiscal_quarter(row.get("quarter"))
         if period is not None:
             metadata[quarter_key] = SecQuarterMetadata(
                 date=source_date,
