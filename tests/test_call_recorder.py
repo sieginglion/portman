@@ -3,14 +3,27 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import patch
 
-from backend import valuation
+from backend import call_recorder, valuation
 from backend.call_recorder import ValuationCallRecorder
 
 
 class ValuationCallRecorderTests(unittest.TestCase):
+    def test_disabling_an_inactive_recorder_is_a_no_op(self):
+        with patch.object(call_recorder.sys, "monitoring") as monitoring:
+            recorder = ValuationCallRecorder(valuation)
+            recorder.disable()
+
+        monitoring.set_local_events.assert_not_called()
+        monitoring.register_callback.assert_not_called()
+        monitoring.free_tool_id.assert_not_called()
+
     def test_records_each_internal_call_edge_once(self):
         recorder = ValuationCallRecorder(valuation)
+        recorder.enable()
+        recorder.disable()
+        recorder.enable()
         recorder.enable()
         try:
             self.assertTrue(valuation.field_has_consensus("revenue", 1, 1))
@@ -119,6 +132,65 @@ def late_callee():
             recorder.disable()
 
         self.assertEqual(recorder.edges, set())
+
+    def test_records_partial_and_callable_instance_calls(self):
+        module = ModuleType("test_valuation")
+        module.__file__ = "/tmp/test_valuation.py"
+        source = str(Path(module.__file__).resolve())
+        exec(
+            compile(
+                """
+from functools import partial
+
+def helper():
+    return 1
+
+class Worker:
+    def __call__(self):
+        return helper()
+
+def caller():
+    return partial(helper)() + Worker()()
+""",
+                source,
+                "exec",
+            ),
+            vars(module),
+        )
+
+        recorder = ValuationCallRecorder(module)
+        recorder.enable()
+        try:
+            self.assertEqual(module.caller(), 2)
+        finally:
+            recorder.disable()
+
+        self.assertEqual(
+            recorder.edges,
+            {
+                ("caller", "helper"),
+                ("caller", "Worker.__call__"),
+                ("Worker.__call__", "helper"),
+            },
+        )
+
+    def test_skips_members_of_imported_classes(self):
+        class ImportedMeta(type):
+            def __getattribute__(cls, name: str) -> object:
+                if name == "__dict__":
+                    raise AssertionError("imported class members should not be inspected")
+                return super().__getattribute__(name)
+
+        class Imported(metaclass=ImportedMeta):
+            pass
+
+        module = ModuleType("test_valuation")
+        module.__file__ = "/tmp/test_valuation.py"
+        module.Imported = Imported
+
+        recorder = ValuationCallRecorder(module)
+
+        self.assertEqual(recorder._module_codes(), set())
 
     def test_writes_only_the_unique_edges(self):
         recorder = ValuationCallRecorder(valuation)

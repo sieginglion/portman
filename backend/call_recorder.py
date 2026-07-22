@@ -18,27 +18,26 @@ class ValuationCallRecorder:
         self._source = str(Path(module.__file__).resolve())
         self._tool_id = sys.monitoring.PROFILER_ID
         self._enabled_codes: set[CodeType] = set()
+        self._active = False
         self.edges: set[tuple[str, str]] = set()
 
     def _is_valuation_code(self, code: CodeType | None) -> bool:
         return code is not None and code.co_filename == self._source
 
     def _callee_code(self, target: object) -> CodeType | None:
-        if isinstance(target, partial):
-            return self._callee_code(target.func)
+        while isinstance(target, partial):
+            target = target.func
 
-        code = getattr(target, "__code__", None)
-        if isinstance(code, CodeType):
-            return code
+        for candidate in (
+            target,
+            getattr(target, "__func__", None),
+            getattr(type(target), "__call__", None),
+        ):
+            code = getattr(candidate, "__code__", None)
+            if isinstance(code, CodeType):
+                return code
 
-        function = getattr(target, "__func__", None)
-        code = getattr(function, "__code__", None)
-        if isinstance(code, CodeType):
-            return code
-
-        call_method = getattr(type(target), "__call__", None)
-        code = getattr(call_method, "__code__", None)
-        return code if isinstance(code, CodeType) else None
+        return None
 
     def _record_call(
         self,
@@ -83,6 +82,9 @@ class ValuationCallRecorder:
             return codes
 
         if inspect.isclass(value):
+            if value.__module__ != self._module.__name__:
+                return set()
+
             codes: set[CodeType] = set()
             for member in vars(value).values():
                 codes.update(self._value_codes(member))
@@ -91,10 +93,14 @@ class ValuationCallRecorder:
         return set()
 
     def enable(self) -> None:
+        if self._active:
+            return
+
         if sys.monitoring.get_tool(self._tool_id) is not None:
             raise RuntimeError("the Python profiler monitoring tool is already in use")
 
         sys.monitoring.use_tool_id(self._tool_id, "portman-valuation-call-recorder")
+        self._active = True
         try:
             sys.monitoring.register_callback(
                 self._tool_id,
@@ -113,6 +119,9 @@ class ValuationCallRecorder:
             raise
 
     def disable(self) -> None:
+        if not self._active:
+            return
+
         for code in self._enabled_codes:
             sys.monitoring.set_local_events(self._tool_id, code, 0)
         self._enabled_codes.clear()
@@ -123,6 +132,7 @@ class ValuationCallRecorder:
         )
         if sys.monitoring.get_tool(self._tool_id) is not None:
             sys.monitoring.free_tool_id(self._tool_id)
+        self._active = False
 
     def write(self, destination: Path) -> None:
         destination.write_text(
