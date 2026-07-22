@@ -1,7 +1,10 @@
 import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 import io
 import logging
 import os
+from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote
 
@@ -13,8 +16,33 @@ from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
 from . import shared, valuation
+from .call_recorder import ValuationCallRecorder
 
-app = fastapi.FastAPI()
+CALL_RECORDER_ENABLED = (
+    os.getenv('ENABLE_VALUATION_CALL_RECORDING', '').lower() == 'true'
+)
+
+
+@asynccontextmanager
+async def lifespan(_: fastapi.FastAPI) -> AsyncGenerator[None, None]:
+    recorder = None
+    if CALL_RECORDER_ENABLED:
+        recorder = ValuationCallRecorder(valuation)
+        recorder.enable()
+
+    try:
+        yield
+    finally:
+        if recorder is not None:
+            try:
+                recorder.write(
+                    Path(f'/tmp/portman-valuation-call-edges-{os.getpid()}.json')
+                )
+            finally:
+                recorder.disable()
+
+
+app = fastapi.FastAPI(lifespan=lifespan)
 # logging.basicConfig(level=logging.INFO)
 
 PERCENTILE_BANDS = np.linspace(0, 100, 9)
