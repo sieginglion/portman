@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report recorded direct callees by cumulative source-line count.
+"""Report recorded callees by cumulative source-line count or list all descendants.
 
 The call graph is read from ``portman-valuation-call-edges.json``, which is
 created by ``backend.call_recorder``.  A callee's cumulative count includes
@@ -9,6 +9,7 @@ with each callable counted once.
 Examples:
     uv run python bin/call_tree_lines.py
     uv run python bin/call_tree_lines.py fetch_xps --edges /tmp/edges.json
+    uv run python bin/call_tree_lines.py fetch_xps --all
 """
 
 from __future__ import annotations
@@ -97,6 +98,11 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_SOURCE,
         help=f"Python source used to count lines (default: {DEFAULT_SOURCE})",
     )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="list all reachable descendants without line counts",
+    )
     return parser.parse_args()
 
 
@@ -173,17 +179,22 @@ def cumulative_line_count(
 def main() -> None:
     args = parse_args()
     edges_path = require_file(args.edges, "call-edge file")
-    source_path = require_file(args.source, "source file")
     graph = load_graph(edges_path)
-    line_counts = collect_line_counts(source_path)
 
+    if args.all:
+        for callee in sorted(reachable_callables(args.callable, graph) - {args.callable}):
+            print(callee)
+        return
+
+    source_path = require_file(args.source, "source file")
+    line_counts = collect_line_counts(source_path)
     if args.callable not in line_counts:
         raise SystemExit(f"callable {args.callable!r} was not found in {source_path}")
 
-    direct_callees = graph.get(args.callable, set())
+    callees = graph.get(args.callable, set())
     ranked_callees = [
         (callee, cumulative_line_count(callee, graph, line_counts, source_path))
-        for callee in direct_callees
+        for callee in callees
     ]
     ranked_callees.sort(key=lambda item: (-item[1], item[0]))
 

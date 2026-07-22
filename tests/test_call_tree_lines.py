@@ -29,6 +29,25 @@ def a():
 
         self.assertEqual(result.stdout, "b 4\n")
 
+    def test_all_lists_every_reachable_descendant_without_line_counts(self):
+        result = self._run(
+            """
+def c():
+    return 1
+
+def b():
+    return c()
+
+def a():
+    return b()
+""".lstrip(),
+            [["a", "b"], ["b", "c"]],
+            "a",
+            extra_args=["--all", "--source", "/does-not-need-to-exist.py"],
+        )
+
+        self.assertEqual(result.stdout, "b\nc\n")
+
     def test_counts_shared_descendants_once_per_cumulative_total(self):
         result = self._run(
             """
@@ -156,6 +175,7 @@ def a():
         callable_name: str,
         *,
         check: bool = True,
+        extra_args: list[str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as directory:
             directory_path = Path(directory)
@@ -172,6 +192,7 @@ def a():
                     str(source),
                     "--edges",
                     str(edges_path),
+                    *(extra_args or []),
                 ],
                 cwd=REPOSITORY_ROOT,
                 check=check,
