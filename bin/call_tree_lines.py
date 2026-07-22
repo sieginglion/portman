@@ -208,12 +208,8 @@ def main() -> None:
         key=lambda item: (-item[1], item[0]),
     )
 
-    print(f"Direct recorded callees of {args.callable} by cumulative source lines:")
-    if not ranked_callees:
-        print("  none")
-        return
     for callee, lines in ranked_callees:
-        print(f"  {callee} (cumulative: {lines} lines)")
+        print(callee, lines)
 
 
 if __name__ == "__main__":

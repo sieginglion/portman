@@ -27,12 +27,7 @@ def a():
             "a",
         )
 
-        self.assertIn(
-            "Direct recorded callees of a by cumulative source lines:\n"
-            "  b (cumulative: 4 lines)\n",
-            result.stdout,
-        )
-        self.assertNotIn("\n  c (cumulative:", result.stdout)
+        self.assertEqual(result.stdout, "b 4\n")
 
     def test_counts_shared_descendants_once_per_cumulative_total(self):
         result = self._run(
@@ -62,7 +57,7 @@ def a():
             "a",
         )
 
-        self.assertIn("b (cumulative: 8 lines)", result.stdout)
+        self.assertEqual(result.stdout, "b 8\n")
 
     def test_counts_nested_callables_with_recorder_qualified_names(self):
         result = self._run(
@@ -79,7 +74,7 @@ def a():
             "a",
         )
 
-        self.assertIn("a.<locals>.b (cumulative: 4 lines)", result.stdout)
+        self.assertEqual(result.stdout, "a.<locals>.b 4\n")
 
     @staticmethod
     def _run(
