@@ -14,6 +14,10 @@ from types import CodeType, ModuleType
 class ValuationCallRecorder:
     """Collect unique caller-to-callee pairs without building a tree."""
 
+    _COMPREHENSION_NAMES = frozenset(
+        {"<dictcomp>", "<genexpr>", "<listcomp>", "<setcomp>"}
+    )
+
     def __init__(self, module: ModuleType) -> None:
         self._module = module
         module_file = getattr(module, "__file__", None)
@@ -22,6 +26,7 @@ class ValuationCallRecorder:
         self._module_source = str(Path(module_file).resolve())
         self._tool_id = sys.monitoring.PROFILER_ID
         self._monitored_codes: set[CodeType] = set()
+        self._comprehension_parents: dict[CodeType, CodeType] = {}
         self._active = False
         self.edges: set[tuple[str, str]] = set()
 
@@ -51,6 +56,10 @@ class ValuationCallRecorder:
         _arg0: object,
     ) -> None:
         callee = self._callee_code(target)
+        if callee in self._comprehension_parents:
+            return
+
+        caller = self._comprehension_parents.get(caller, caller)
         if (
             callee is not None
             and caller in self._monitored_codes
@@ -58,13 +67,24 @@ class ValuationCallRecorder:
         ):
             self.edges.add((caller.co_qualname, callee.co_qualname))
 
-    def _nested_codes(self, code: CodeType) -> Iterator[CodeType]:
+    def _nested_codes(
+        self,
+        code: CodeType,
+        parent: CodeType | None = None,
+    ) -> Iterator[CodeType]:
+        if code.co_name in self._COMPREHENSION_NAMES:
+            assert parent is not None
+            self._comprehension_parents[code] = parent
+        else:
+            parent = code
+
         yield code
         for value in code.co_consts:
             if isinstance(value, CodeType):
-                yield from self._nested_codes(value)
+                yield from self._nested_codes(value, parent)
 
     def _module_codes(self) -> set[CodeType]:
+        self._comprehension_parents.clear()
         return {
             code
             for value in vars(self._module).values()
@@ -127,6 +147,7 @@ class ValuationCallRecorder:
         for code in self._monitored_codes:
             sys.monitoring.set_local_events(self._tool_id, code, 0)
         self._monitored_codes.clear()
+        self._comprehension_parents.clear()
         sys.monitoring.register_callback(
             self._tool_id,
             sys.monitoring.events.CALL,

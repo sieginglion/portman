@@ -71,6 +71,42 @@ def caller():
             {("caller", "caller.<locals>.helper")},
         )
 
+    def test_attributes_comprehension_calls_to_the_enclosing_function(self):
+        module = ModuleType("test_valuation")
+        module.__file__ = "/tmp/test_valuation.py"
+        source = str(Path(module.__file__).resolve())
+        exec(
+            compile(
+                """
+def helper(value):
+    return value
+
+def caller():
+    return (
+        [helper(value) for value in (1,)],
+        {helper(value) for value in (2,)},
+        {value: helper(value) for value in (3,)},
+        tuple(helper(value) for value in (4,)),
+        [[helper(value) for value in values] for values in ((5,),)],
+    )
+""",
+                source,
+                "exec",
+            ),
+            vars(module),
+        )
+
+        recorder = ValuationCallRecorder(module)
+        recorder.enable()
+        recorder.disable()
+        recorder.enable()
+        try:
+            self.assertEqual(module.caller(), ([1], {2}, {3: 3}, (4,), [[5]]))
+        finally:
+            recorder.disable()
+
+        self.assertEqual(recorder.edges, {("caller", "helper")})
+
     def test_records_enabled_instance_static_class_and_property_methods(self):
         module = ModuleType("test_valuation")
         module.__file__ = "/tmp/test_valuation.py"
