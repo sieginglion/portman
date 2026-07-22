@@ -2,7 +2,6 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 import io
-import logging
 import os
 from pathlib import Path
 from typing import Literal
@@ -19,7 +18,7 @@ from . import shared, valuation
 from .call_recorder import ValuationCallRecorder
 
 CALL_RECORDER_ENABLED = (
-    os.getenv('ENABLE_VALUATION_CALL_RECORDING', '').lower() == 'true'
+    os.getenv("ENABLE_VALUATION_CALL_RECORDING", "").lower() == "true"
 )
 
 
@@ -36,7 +35,7 @@ async def lifespan(_: fastapi.FastAPI) -> AsyncGenerator[None, None]:
         if recorder is not None:
             try:
                 recorder.write(
-                    Path(f'/tmp/portman-valuation-call-edges-{os.getpid()}.json')
+                    Path(f"/tmp/portman-valuation-call-edges-{os.getpid()}.json")
                 )
             finally:
                 recorder.disable()
@@ -47,14 +46,14 @@ app = fastapi.FastAPI(lifespan=lifespan)
 
 PERCENTILE_BANDS = np.linspace(0, 100, 9)
 PERCENTILE_BAND_COLORS = [
-    '#FF0000',
-    '#FFBF00',
-    '#80FF00',
-    '#00FF40',
-    '#00FFFF',
-    '#0040FF',
-    '#8000FF',
-    '#FF00BF',
+    "#FF0000",
+    "#FFBF00",
+    "#80FF00",
+    "#00FF40",
+    "#00FFFF",
+    "#0040FF",
+    "#8000FF",
+    "#FF00BF",
 ]
 BTC_QUARTER_DAYS = 91
 BTC_GROWTH_DAYS = 365
@@ -62,10 +61,10 @@ BTC_GROWTH_SMA_WINDOW_DAYS = BTC_QUARTER_DAYS * 16
 
 
 def is_btc(market: str, symbol: str) -> bool:
-    return market == 'c' and symbol == 'BTC'
+    return market == "c" and symbol == "BTC"
 
 
-@app.get('/content')
+@app.get("/content")
 async def get_content(url: str):
     async with AsyncClient(timeout=60) as sess:
         r = await sess.get(unquote(url))
@@ -87,9 +86,9 @@ def calc_weights(P: Array[f8], R: Array[f8], t: float = 0):
 
 
 # TODO: numpy array typing with shape
-@app.post('/weights')
+@app.post("/weights")
 async def get_weights(
-    positions: list[tuple[Literal['c', 'j', 't', 'u'], str]], prior: list[float]
+    positions: list[tuple[Literal["c", "j", "t", "u"], str]], prior: list[float]
 ):
     P = np.array(
         await asyncio.gather(
@@ -109,7 +108,7 @@ def add_percentile_bands(ax, series: pd.Series):
         ax.axhspan(lo, hi, color=color, alpha=0.4, zorder=0)
 
     for level in levels:
-        ax.axhline(level, color='#111827', linewidth=0.8, alpha=0.35, zorder=1)
+        ax.axhline(level, color="#111827", linewidth=0.8, alpha=0.35, zorder=1)
 
 
 def calc_downside_score(s: pd.Series) -> float:
@@ -124,9 +123,9 @@ def calc_downside_score(s: pd.Series) -> float:
     return float(max(p50 - s.iloc[-1], 0) / (p50 - p25))
 
 
-@app.get('/scores')
+@app.get("/scores")
 async def get_scores(
-    market: Literal['c', 'j', 't', 'u'],
+    market: Literal["c", "j", "t", "u"],
     symbol: str,
     q: int,
 ):
@@ -134,28 +133,28 @@ async def get_scores(
         return await calc_btc_score(q), None
 
     df = await valuation.calc_px(market, symbol, q)
-    pe = df['pe']
-    return calc_downside_score(df['ps']), (
+    pe = df["pe"]
+    return calc_downside_score(df["ps"]), (
         None if not pe.notna().all() else calc_downside_score(pe)
     )
 
 
-@app.get('/diagnostics')
+@app.get("/diagnostics")
 async def get_diagnostics():
     return valuation.get_xps_diagnostics()
 
 
-@app.get('/growth')
-async def get_growth(market: Literal['c', 'j', 't', 'u'], symbol: str):
+@app.get("/growth")
+async def get_growth(market: Literal["c", "j", "t", "u"], symbol: str):
     if is_btc(market, symbol):
         return await calc_btc_growth()
     xps = await valuation.fetch_xps(market, symbol, 5, include_eps=False)
-    r = xps['rps']
+    r = xps["rps"]
     return r.iloc[-1] / r.iloc[-5] - 1
 
 
 async def get_btc_prices_and_sma(n: int, window: int):
-    prices = await shared.get_prices('c', 'BTC', n + window - 1, False)
+    prices = await shared.get_prices("c", "BTC", n + window - 1, False)
     cumsum = np.cumsum(prices, dtype=np.float64)
     cumsum = np.concatenate(([0.0], cumsum))
     sma = (cumsum[window:] - cumsum[:-window]) / window
@@ -165,20 +164,20 @@ async def get_btc_prices_and_sma(n: int, window: int):
 async def get_btc_price_sma_frame(periods: int, window: int) -> pd.DataFrame:
     prices, sma = await get_btc_prices_and_sma(periods, window)
     index = pd.date_range(
-        end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE['c']).date(),
+        end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE["c"]).date(),
         periods=periods,
     )
-    return pd.DataFrame({'price': prices, 'sma': sma}, index=index)
+    return pd.DataFrame({"price": prices, "sma": sma}, index=index)
 
 
 async def get_btc_price_to_sma_series(periods: int, window: int) -> pd.Series:
     df = await get_btc_price_sma_frame(periods, window)
-    return df['price'] / df['sma']
+    return df["price"] / df["sma"]
 
 
 async def calc_btc_growth():
     df = await get_btc_price_sma_frame(BTC_GROWTH_DAYS, BTC_GROWTH_SMA_WINDOW_DAYS)
-    sma = df['sma']
+    sma = df["sma"]
     return sma.iloc[-1] / sma.iloc[0] - 1
 
 
@@ -192,90 +191,90 @@ async def calc_btc_ps(q: int) -> pd.Series:
     return await get_btc_price_to_sma_series(window, window)
 
 
-@app.get('/px')
+@app.get("/px")
 async def get_px(
-    market: Literal['c', 'j', 't', 'u'],
+    market: Literal["c", "j", "t", "u"],
     symbol: str,
     q: int,
 ):
-    os.environ.setdefault('MPLCONFIGDIR', '/tmp/matplotlib')
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
     from matplotlib import pyplot as plt
 
-    if market == 'c':
-        if symbol != 'BTC':
-            raise fastapi.HTTPException(422, 'Only BTC is supported for crypto /px')
+    if market == "c":
+        if symbol != "BTC":
+            raise fastapi.HTTPException(422, "Only BTC is supported for crypto /px")
 
         ps = await calc_btc_ps(q)
 
         fig, ax = plt.subplots(1, 1, figsize=(8, 4), dpi=160)
         add_percentile_bands(ax, ps)
-        ax.plot(ps.index, ps, color='#f97316', linewidth=1.5, zorder=2)
+        ax.plot(ps.index, ps, color="#f97316", linewidth=1.5, zorder=2)
         ax.scatter(
             ps.index[-1:],
             ps.iloc[-1:],
             s=28,
-            color='#f97316',
+            color="#f97316",
             linewidths=0,
             zorder=3,
         )
-        ax.set_title(f'BTC historical P/S, last {q} quarters')
-        ax.set_ylabel('P/S')
-        ax.spines[['top', 'right']].set_visible(False)
+        ax.set_title(f"BTC historical P/S, last {q} quarters")
+        ax.set_ylabel("P/S")
+        ax.spines[["top", "right"]].set_visible(False)
 
         fig.autofmt_xdate()
         fig.tight_layout()
 
         buf = io.BytesIO()
-        fig.savefig(buf, format='png')
+        fig.savefig(buf, format="png")
         plt.close(fig)
-        return fastapi.Response(buf.getvalue(), media_type='image/png')
+        return fastapi.Response(buf.getvalue(), media_type="image/png")
 
     px = await valuation.calc_px(market, symbol, q)
-    ps = px['ps']
-    pe = px['pe'].dropna()
+    ps = px["ps"]
+    pe = px["pe"].dropna()
 
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), dpi=160, sharex=True)
     ps_ax, pe_ax = axes
 
     add_percentile_bands(ps_ax, ps)
-    ps_ax.plot(ps.index, ps, color='#2563eb', linewidth=1.5, zorder=2)
+    ps_ax.plot(ps.index, ps, color="#2563eb", linewidth=1.5, zorder=2)
     ps_ax.scatter(
-        ps.index[-1:], ps.iloc[-1:], s=28, color='#2563eb', linewidths=0, zorder=3
+        ps.index[-1:], ps.iloc[-1:], s=28, color="#2563eb", linewidths=0, zorder=3
     )
-    ps_ax.set_title(f'{symbol} historical P/S, last {q} quarters')
-    ps_ax.set_ylabel('P/S')
-    ps_ax.spines[['top', 'right']].set_visible(False)
+    ps_ax.set_title(f"{symbol} historical P/S, last {q} quarters")
+    ps_ax.set_ylabel("P/S")
+    ps_ax.spines[["top", "right"]].set_visible(False)
 
     if not pe.empty:
         add_percentile_bands(pe_ax, pe)
-        pe_ax.plot(pe.index, pe, color='#dc2626', linewidth=1.5, zorder=2)
+        pe_ax.plot(pe.index, pe, color="#dc2626", linewidth=1.5, zorder=2)
         pe_ax.scatter(
-            pe.index[-1:], pe.iloc[-1:], s=28, color='#dc2626', linewidths=0, zorder=3
+            pe.index[-1:], pe.iloc[-1:], s=28, color="#dc2626", linewidths=0, zorder=3
         )
 
-    pe_ax.set_title(f'{symbol} historical P/E, last {q} quarters')
-    pe_ax.set_ylabel('P/E')
-    pe_ax.spines[['top', 'right']].set_visible(False)
+    pe_ax.set_title(f"{symbol} historical P/E, last {q} quarters")
+    pe_ax.set_ylabel("P/E")
+    pe_ax.spines[["top", "right"]].set_visible(False)
 
     fig.autofmt_xdate()
     fig.tight_layout()
 
     buf = io.BytesIO()
-    fig.savefig(buf, format='png')
+    fig.savefig(buf, format="png")
     plt.close(fig)
-    return fastapi.Response(buf.getvalue(), media_type='image/png')
+    return fastapi.Response(buf.getvalue(), media_type="image/png")
 
 
-@app.get('/prices')
+@app.get("/prices")
 async def get_prices(
-    market: Literal['c', 'j', 't', 'u'], symbol: str, n: int, ema7: bool = False
+    market: Literal["c", "j", "t", "u"], symbol: str, n: int, ema7: bool = False
 ):
     return (await shared.get_prices(market, symbol, n, False, ema7)).tolist()
 
 
-@app.get('/extremum')
+@app.get("/extremum")
 async def get_extremum(
-    market: Literal['c', 'j', 't', 'u'], symbol: str, n: int, max: bool = False
+    market: Literal["c", "j", "t", "u"], symbol: str, n: int, max: bool = False
 ):
     ema = await shared.get_prices(market, symbol, n, True, True)
     i = ema.argmax() if max else ema.argmin()
@@ -283,30 +282,30 @@ async def get_extremum(
         end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date(),
         periods=len(ema),
     )
-    return dates[i].strftime('%Y-%m-%d'), ema[i]
+    return dates[i].strftime("%Y-%m-%d"), ema[i]
 
 
-@app.get('/BTCXAU')
+@app.get("/BTCXAU")
 async def get_btcxau():
     btc, paxg = await asyncio.gather(
-        shared.get_prices('c', 'BTC', 1456, False),
-        shared.get_prices('c', 'PAXG', 1456, False),
+        shared.get_prices("c", "BTC", 1456, False),
+        shared.get_prices("c", "PAXG", 1456, False),
     )
     ratio = btc / paxg
     lo, hi = ratio.min(), ratio.max()
     return float((ratio[-1] - lo) / (hi - lo))
 
 
-@app.get('/shares')
+@app.get("/shares")
 async def get_shares(symbol: str):
     async with AsyncClient() as sess:
         res = await sess.get(
-            'https://financialmodelingprep.com/stable/income-statement',
+            "https://financialmodelingprep.com/stable/income-statement",
             params={
-                'apikey': shared.FMP_KEY,
-                'limit': 1,
-                'period': 'quarter',
-                'symbol': symbol,
+                "apikey": shared.FMP_KEY,
+                "limit": 1,
+                "period": "quarter",
+                "symbol": symbol,
             },
         )
-    return res.json()[0]['weightedAverageShsOutDil']
+    return res.json()[0]["weightedAverageShsOutDil"]

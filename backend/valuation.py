@@ -36,8 +36,8 @@ type IncomeStatementSources = dict[str, SourceIncomeStatementRows]
 
 type XpsValue = int | float | None
 type SourceFieldValues = dict[str, XpsValue]
-type SecQ4ValueKind = Literal['flow', 'average']
-type SecFiscalQuarter = Literal['Q1', 'Q2', 'Q3', 'Q4']
+type SecQ4ValueKind = Literal["flow", "average"]
+type SecFiscalQuarter = Literal["Q1", "Q2", "Q3", "Q4"]
 
 
 @dataclass
@@ -91,28 +91,28 @@ class USIncomeStatementSource:
 
 US_INCOME_STATEMENT_SOURCES = (
     USIncomeStatementSource(
-        'fmp',
-        'FMP',
+        "fmp",
+        "FMP",
         True,
     ),
     USIncomeStatementSource(
-        'massive',
-        'Massive',
+        "massive",
+        "Massive",
         shared.ENABLE_MASSIVE_FUNDAMENTALS,
     ),
     USIncomeStatementSource(
-        'eodhd',
-        'EODHD',
+        "eodhd",
+        "EODHD",
         shared.ENABLE_EODHD_FUNDAMENTALS,
     ),
     USIncomeStatementSource(
-        'finnhub',
-        'Finnhub',
+        "finnhub",
+        "Finnhub",
         True,
     ),
     USIncomeStatementSource(
-        'tiingo',
-        'Tiingo',
+        "tiingo",
+        "Tiingo",
         shared.ENABLE_TIINGO_FUNDAMENTALS,
     ),
 )
@@ -121,7 +121,7 @@ ENABLED_US_INCOME_STATEMENT_SOURCES = tuple(
 )
 SOURCE_LABELS = {
     **{source.name: source.label for source in US_INCOME_STATEMENT_SOURCES},
-    'sec': 'SEC',
+    "sec": "SEC",
 }
 
 
@@ -129,11 +129,11 @@ def us_income_statement_source_order(
     include_sec: bool = False,
 ) -> tuple[str, ...]:
     names = tuple(source.name for source in ENABLED_US_INCOME_STATEMENT_SOURCES)
-    return (*names, 'sec') if include_sec else names
+    return (*names, "sec") if include_sec else names
 
 
-BASE_XPS_FIELDS = ('revenue', 'weightedAverageShsOutDil')
-EPS_XPS_FIELD = 'epsDiluted'
+BASE_XPS_FIELDS = ("revenue", "weightedAverageShsOutDil")
+EPS_XPS_FIELD = "epsDiluted"
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
 
 
@@ -148,7 +148,7 @@ def new_xps_consensus_pair_counts() -> dict[str, dict[str, int]]:
     source_names = us_income_statement_source_order()
     return {
         field: {
-            f'{left}:{right}': 0
+            f"{left}:{right}": 0
             for index, left in enumerate(source_names)
             for right in source_names[index + 1 :]
         }
@@ -176,34 +176,34 @@ def new_xps_diagnostics() -> XpsDiagnostics:
 # provider, so it is excluded.
 _xps_diagnostics = new_xps_diagnostics()
 SEC_USER_AGENT = (
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
 )
 SEC_COMPANY_CONCEPT_URL = (
-    'https://data.sec.gov/api/xbrl/companyconcept/CIK{}/us-gaap/{}.json'
+    "https://data.sec.gov/api/xbrl/companyconcept/CIK{}/us-gaap/{}.json"
 )
-FINMIND_API_URL = 'https://api.finmindtrade.com/api/v4/data'
-EODHD_FUNDAMENTALS_URL = 'https://eodhd.com/api/v1.1/fundamentals/{}'
+FINMIND_API_URL = "https://api.finmindtrade.com/api/v4/data"
+EODHD_FUNDAMENTALS_URL = "https://eodhd.com/api/v1.1/fundamentals/{}"
 TIINGO_FUNDAMENTALS_STATEMENTS_URL = (
-    'https://api.tiingo.com/tiingo/fundamentals/{}/statements'
+    "https://api.tiingo.com/tiingo/fundamentals/{}/statements"
 )
 FINMIND_TAIWAN_QUARTER_BUFFER = 2
 FMP_TAIWAN_QUARTER_BUFFER = 1
 TIINGO_QUARTER_BUFFER = 1
 FINMIND_TAIWAN_SHARE_PAR_VALUE = 10
-SEC_DEDUPE_COLS = ['filed', 'val', 'start', 'end']
-SEC_ALLOWED_FORMS = {'10-Q', '10-K', '10-Q/A', '10-K/A'}
-SEC_METADATA_SOURCES = ('fmp', 'massive')
+SEC_DEDUPE_COLS = ["filed", "val", "start", "end"]
+SEC_ALLOWED_FORMS = {"10-Q", "10-K", "10-Q/A", "10-K/A"}
+SEC_METADATA_SOURCES = ("fmp", "massive")
 SEC_FIELD_SPECS = {
-    'weightedAverageShsOutDil': SecFieldSpec(
-        concept='WeightedAverageNumberOfDilutedSharesOutstanding',
-        unit='shares',
-        q4_value_kind='average',
+    "weightedAverageShsOutDil": SecFieldSpec(
+        concept="WeightedAverageNumberOfDilutedSharesOutstanding",
+        unit="shares",
+        q4_value_kind="average",
     ),
     EPS_XPS_FIELD: SecFieldSpec(
-        concept='EarningsPerShareDiluted',
-        unit='USD/shares',
-        q4_value_kind='flow',
+        concept="EarningsPerShareDiluted",
+        unit="USD/shares",
+        q4_value_kind="flow",
     ),
 }
 
@@ -274,29 +274,29 @@ def record_xps_diagnostics(
             continue
 
         diagnostics.seen.add(key)
-        for field in ALL_XPS_FIELDS:
-            counts = diagnostics.missing[field]
-            for source in missing_xps_sources(data, field, unavailable_sources):
+        for field_name in ALL_XPS_FIELDS:
+            counts = diagnostics.missing[field_name]
+            for source in missing_xps_sources(data, field_name, unavailable_sources):
                 counts[source] += 1
 
-            source_values = data.fields.get(field, {})
+            source_values = data.fields.get(field_name, {})
             peer_values = usable_source_values(
                 source_values, us_income_statement_source_order()
             )
-            pair_counts = diagnostics.consensus_pairs[field]
+            pair_counts = diagnostics.consensus_pairs[field_name]
             for (left_source, left_value), (right_source, right_value) in combinations(
                 peer_values, 2
             ):
-                if field_has_consensus(field, left_value, right_value):
-                    pair_counts[f'{left_source}:{right_source}'] += 1
+                if field_has_consensus(field_name, left_value, right_value):
+                    pair_counts[f"{left_source}:{right_source}"] += 1
 
 
 def get_xps_diagnostics() -> dict:
     """Return missing-value and pairwise-consensus counts."""
     return {
-        'total_quarters': len(_xps_diagnostics.seen),
-        'missing': _xps_diagnostics.missing,
-        'consensus_pairs': _xps_diagnostics.consensus_pairs,
+        "total_quarters": len(_xps_diagnostics.seen),
+        "missing": _xps_diagnostics.missing,
+        "consensus_pairs": _xps_diagnostics.consensus_pairs,
     }
 
 
@@ -330,10 +330,10 @@ def align_source_rows(
         # Retain every matching row: SEC metadata uses the first one, while CIK
         # lookup may need a later row with a usable CIK.
         quarter.source_periods.setdefault(source_name, []).append((source_date, row))
-        for field in ALL_XPS_FIELDS:
-            if field not in row:
+        for field_name in ALL_XPS_FIELDS:
+            if field_name not in row:
                 continue
-            quarter.fields.setdefault(field, {})[source_name] = row[field]
+            quarter.fields.setdefault(field_name, {})[source_name] = row[field_name]
 
 
 def sanitize_source_field_value(
@@ -341,7 +341,7 @@ def sanitize_source_field_value(
 ) -> int | float | None:
     if value is None or pd.isna(value):
         return None
-    if field in {'revenue', 'weightedAverageShsOutDil'} and value <= 0:
+    if field in {"revenue", "weightedAverageShsOutDil"} and value <= 0:
         return None
     return value
 
@@ -400,7 +400,7 @@ def finnhub_million(value: int | float | None) -> int | float | None:
 def to_source_number(value: object) -> int | float | None:
     if value is None:
         return None
-    if isinstance(value, str) and value.strip() == '':
+    if isinstance(value, str) and value.strip() == "":
         return None
     try:
         number = float(value)
@@ -436,7 +436,7 @@ def finmind_taiwan_start_date(
 ) -> str:
     quarter_count = limit + quarter_buffer
     start = pd.Timestamp.now(
-        tz=shared.MARKET_TO_TIMEZONE['t']
+        tz=shared.MARKET_TO_TIMEZONE["t"]
     ).normalize() - pd.DateOffset(months=3 * quarter_count)
     return date_str(start.tz_localize(None))
 
@@ -445,16 +445,16 @@ def pivot_finmind_taiwan_rows(rows: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if df.empty:
         return pd.DataFrame()
-    df = df.dropna(subset=['date', 'type', 'value'])
+    df = df.dropna(subset=["date", "type", "value"])
     if df.empty:
         return pd.DataFrame()
-    df['value'] = pd.to_numeric(df['value'], errors='coerce')
-    df = df.dropna(subset=['value'])
+    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+    df = df.dropna(subset=["value"])
     return df.pivot_table(
-        index='date',
-        columns='type',
-        values='value',
-        aggfunc='last',
+        index="date",
+        columns="type",
+        values="value",
+        aggfunc="last",
     ).sort_index()
 
 
@@ -467,7 +467,7 @@ def normalize_finmind_taiwan_income_statement_rows(
     if financial_statement.empty:
         return {}
 
-    required_financial_statement_fields = ['Revenue']
+    required_financial_statement_fields = ["Revenue"]
     missing_financial_statement_fields = [
         field
         for field in required_financial_statement_fields
@@ -475,30 +475,30 @@ def normalize_finmind_taiwan_income_statement_rows(
     ]
     if missing_financial_statement_fields:
         logger.warning(
-            'FinMind Taiwan financial statement data missing fields {}; skipping rows',
+            "FinMind Taiwan financial statement data missing fields {}; skipping rows",
             missing_financial_statement_fields,
         )
         return {}
-    if 'OrdinaryShare' not in balance_sheet:
+    if "OrdinaryShare" not in balance_sheet:
         logger.warning(
-            'FinMind Taiwan balance sheet data missing OrdinaryShare; '
-            'leaving share counts empty'
+            "FinMind Taiwan balance sheet data missing OrdinaryShare; "
+            "leaving share counts empty"
         )
         balance_sheet = pd.DataFrame(index=financial_statement.index)
-        balance_sheet['OrdinaryShare'] = None
+        balance_sheet["OrdinaryShare"] = None
 
-    df = financial_statement.reindex(columns=['Revenue', 'EPS']).join(
-        balance_sheet[['OrdinaryShare']], how='outer'
+    df = financial_statement.reindex(columns=["Revenue", "EPS"]).join(
+        balance_sheet[["OrdinaryShare"]], how="outer"
     )
-    df = df.dropna(subset=required_financial_statement_fields, how='all')
+    df = df.dropna(subset=required_financial_statement_fields, how="all")
 
     normalized_rows = {}
     for date, row in df.iterrows():
-        ordinary_shares = row['OrdinaryShare']
+        ordinary_shares = row["OrdinaryShare"]
         normalized_row = {
-            'revenue': sanitize_source_field_value('revenue', row['Revenue']),
-            'weightedAverageShsOutDil': sanitize_source_field_value(
-                'weightedAverageShsOutDil',
+            "revenue": sanitize_source_field_value("revenue", row["Revenue"]),
+            "weightedAverageShsOutDil": sanitize_source_field_value(
+                "weightedAverageShsOutDil",
                 (
                     ordinary_shares / FINMIND_TAIWAN_SHARE_PAR_VALUE
                     if pd.notna(ordinary_shares)
@@ -507,7 +507,7 @@ def normalize_finmind_taiwan_income_statement_rows(
             ),
         }
         normalized_row[EPS_XPS_FIELD] = sanitize_source_field_value(
-            EPS_XPS_FIELD, row['EPS']
+            EPS_XPS_FIELD, row["EPS"]
         )
         normalized_rows[date] = normalized_row
     return normalized_rows
@@ -522,10 +522,10 @@ def merge_preferred_xps_rows(
         if baseline_date is None:
             continue
         baseline_row = baseline_rows[baseline_date]
-        for field in ALL_XPS_FIELDS:
-            value = preferred_row.get(field)
+        for field_name in ALL_XPS_FIELDS:
+            value = preferred_row.get(field_name)
             if has_source_field_value(value):
-                baseline_row[field] = value
+                baseline_row[field_name] = value
 
 
 def row_has_required_xps_fields(row: dict, required_fields: list[str]) -> bool:
@@ -558,7 +558,7 @@ def select_latest_clean_required_quarters(
         if not row_has_required_xps_fields(row, required_fields)
     ]
     if dirty_dates:
-        raise ValueError(f'incomplete quarters: {dirty_dates}')
+        raise ValueError(f"incomplete quarters: {dirty_dates}")
     return selected
 
 
@@ -568,13 +568,13 @@ async def fetch_finmind_taiwan_rows(
     text = await shared.cached_get(
         FINMIND_API_URL,
         {
-            'dataset': dataset,
-            'data_id': symbol,
-            'start_date': start_date,
-            'token': FINMIND_KEY,
+            "dataset": dataset,
+            "data_id": symbol,
+            "start_date": start_date,
+            "token": FINMIND_KEY,
         },
     )
-    return json.loads(text).get('data', [])
+    return json.loads(text).get("data", [])
 
 
 async def fetch_finmind_taiwan_income_statements(
@@ -585,10 +585,10 @@ async def fetch_finmind_taiwan_income_statements(
     start_date = finmind_taiwan_start_date(limit)
     required_fields = required_xps_fields(require_eps)
     financial_statement_rows, balance_sheet_rows, rows = await asyncio.gather(
-        fetch_finmind_taiwan_rows('TaiwanStockFinancialStatements', symbol, start_date),
-        fetch_finmind_taiwan_rows('TaiwanStockBalanceSheet', symbol, start_date),
+        fetch_finmind_taiwan_rows("TaiwanStockFinancialStatements", symbol, start_date),
+        fetch_finmind_taiwan_rows("TaiwanStockBalanceSheet", symbol, start_date),
         fetch_fmp_income_statements(
-            't',
+            "t",
             symbol,
             limit + FMP_TAIWAN_QUARTER_BUFFER,
         ),
@@ -620,14 +620,14 @@ def select_latest_required_quarters(
     limit: int,
     *,
     symbol: str | None = None,
-    quarter_label: str = 'quarters',
+    quarter_label: str = "quarters",
 ) -> dict[str, dict]:
     selected = dict(sorted(quarters.items())[-limit:])
     if len(selected) != limit:
-        subject = f' for {symbol}' if symbol is not None else ''
+        subject = f" for {symbol}" if symbol is not None else ""
         raise ValueError(
-            f'need {limit} {quarter_label}, found {len(selected)}{subject}; '
-            f'available={sorted(quarters)}'
+            f"need {limit} {quarter_label}, found {len(selected)}{subject}; "
+            f"available={sorted(quarters)}"
         )
     return selected
 
@@ -637,7 +637,7 @@ def required_xps_fields(include_eps: bool) -> list[str]:
 
 
 def date_str(date: pd.Timestamp) -> str:
-    return date.strftime('%Y-%m-%d')
+    return date.strftime("%Y-%m-%d")
 
 
 def sec_quarter_fact_window(end: pd.Timestamp) -> SecFactWindow:
@@ -672,7 +672,7 @@ def format_sec_cik(cik: int | str | None) -> str | None:
         return None
     if isinstance(cik, float) and cik.is_integer():
         cik = int(cik)
-    digits = ''.join(ch for ch in str(cik) if ch.isdigit())
+    digits = "".join(ch for ch in str(cik) if ch.isdigit())
     if not digits:
         return None
     return digits.zfill(10)
@@ -685,24 +685,24 @@ def normalize_massive_fiscal_quarter(value: object) -> SecFiscalQuarter | None:
         quarter = int(value)
     except (TypeError, ValueError):
         value = str(value).upper()
-        return value if value in {'Q1', 'Q2', 'Q3', 'Q4'} else None
+        return value if value in {"Q1", "Q2", "Q3", "Q4"} else None
     if quarter not in {1, 2, 3, 4}:
         return None
-    return f'Q{quarter}'
+    return f"Q{quarter}"
 
 
 def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
-    if df.empty or 'form' not in df:
+    if df.empty or "form" not in df:
         return empty_sec_rows()
-    df = df[df['form'].isin(SEC_ALLOWED_FORMS)]
+    df = df[df["form"].isin(SEC_ALLOWED_FORMS)]
     if df.empty:
-        logger.warning('SEC reference lookup skipped; no supported forms found')
+        logger.warning("SEC reference lookup skipped; no supported forms found")
         return empty_sec_rows()
     missing_columns = [column for column in SEC_DEDUPE_COLS if column not in df]
     if missing_columns:
         logger.warning(
-            'SEC reference lookup skipped; missing expected columns {}',
+            "SEC reference lookup skipped; missing expected columns {}",
             missing_columns,
         )
         return empty_sec_rows()
@@ -710,21 +710,21 @@ def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
     if df.empty:
         return empty_sec_rows()
     df = df[SEC_DEDUPE_COLS]
-    df = df.sort_values('filed', kind='mergesort')
-    df = df.drop_duplicates(['start', 'end'], keep='last')
+    df = df.sort_values("filed", kind="mergesort")
+    df = df.drop_duplicates(["start", "end"], keep="last")
     return df
 
 
 def format_sec_candidate_block(matches: pd.DataFrame) -> str:
-    lines = ['  SEC candidates:']
-    for _, row in matches.sort_values(['end', 'start', 'filed']).iterrows():
+    lines = ["  SEC candidates:"]
+    for _, row in matches.sort_values(["end", "start", "filed"]).iterrows():
         lines.append(
-            '    '
-            f'filed={row["filed"]} '
-            f'period={row["start"]}..{row["end"]} '
-            f'value={format_source_log_value(row["val"])}'
+            "    "
+            f"filed={row['filed']} "
+            f"period={row['start']}..{row['end']} "
+            f"value={format_source_log_value(row['val'])}"
         )
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def select_sec_fact(
@@ -737,15 +737,15 @@ def select_sec_fact(
     if df.empty:
         return None
     matches = df[
-        df['start'].gt(window.min_start)
-        & df['start'].lt(window.max_start)
-        & df['end'].gt(window.min_end)
-        & df['end'].lt(window.max_end)
+        df["start"].gt(window.min_start)
+        & df["start"].lt(window.max_start)
+        & df["end"].gt(window.min_end)
+        & df["end"].lt(window.max_end)
     ]
     if matches.empty:
         if log_errors:
             logger.warning(
-                'SEC fact lookup returned no matches: {} start=({}, {}) end=({}, {})',
+                "SEC fact lookup returned no matches: {} start=({}, {}) end=({}, {})",
                 description,
                 window.min_start,
                 window.max_start,
@@ -756,7 +756,7 @@ def select_sec_fact(
     if len(matches) > 1:
         if log_errors:
             logger.warning(
-                'SEC fact lookup returned multiple matches: {} start=({}, {}) end=({}, {}) matches={}\n{}',
+                "SEC fact lookup returned multiple matches: {} start=({}, {}) end=({}, {}) matches={}\n{}",
                 description,
                 window.min_start,
                 window.max_start,
@@ -794,25 +794,25 @@ def derive_sec_q4_value(
 ) -> int | float | None:
     annual = select_sec_fact(
         df,
-        description=f'{description_prefix} annual {date_str(end)}',
+        description=f"{description_prefix} annual {date_str(end)}",
         window=sec_annual_fact_window(end),
         log_errors=log_errors,
     )
     if annual is None:
         return None
 
-    annual_start = pd.Timestamp(annual['start'])
+    annual_start = pd.Timestamp(annual["start"])
     q1_to_q3 = select_sec_fact(
         df,
-        description=f'{description_prefix} Q1-Q3 from {annual["start"]}',
+        description=f"{description_prefix} Q1-Q3 from {annual['start']}",
         window=sec_q1_to_q3_fact_window(annual_start),
         log_errors=log_errors,
     )
     if q1_to_q3 is None:
         return None
-    if value_kind == 'average':
-        return round(annual['val'] * 4 - q1_to_q3['val'] * 3)
-    return annual['val'] - q1_to_q3['val']
+    if value_kind == "average":
+        return round(annual["val"] * 4 - q1_to_q3["val"] * 3)
+    return annual["val"] - q1_to_q3["val"]
 
 
 def lookup_sec_field_value(
@@ -821,26 +821,26 @@ def lookup_sec_field_value(
     metadata: SecQuarterMetadata,
     sec_rows: pd.DataFrame,
     *,
-    q4_value_kind: SecQ4ValueKind = 'flow',
+    q4_value_kind: SecQ4ValueKind = "flow",
     log_errors: bool = False,
 ) -> int | float | None:
     end = pd.Timestamp(metadata.date)
     period = metadata.period
     datum = select_sec_quarter_fact(
         sec_rows,
-        description=f'CIK{cik} {field} {date_str(end)}',
+        description=f"CIK{cik} {field} {date_str(end)}",
         end=end,
-        log_errors=log_errors and period != 'Q4',
+        log_errors=log_errors and period != "Q4",
     )
     if datum is not None:
-        return datum['val']
-    if period != 'Q4':
+        return datum["val"]
+    if period != "Q4":
         return None
 
     return derive_sec_q4_value(
         q4_value_kind,
         sec_rows,
-        f'CIK{cik} {field}',
+        f"CIK{cik} {field}",
         end,
         log_errors=log_errors,
     )
@@ -849,14 +849,14 @@ def lookup_sec_field_value(
 async def fetch_sec_company_concept_raw(cik: str, concept: str) -> dict:
     text = await shared.cached_get(
         SEC_COMPANY_CONCEPT_URL.format(cik, concept),
-        headers={'User-Agent': SEC_USER_AGENT},
+        headers={"User-Agent": SEC_USER_AGENT},
     )
     return json.loads(text)
 
 
 async def fetch_sec_concept_rows(cik: str, concept: str, unit: str) -> pd.DataFrame:
     data = await fetch_sec_company_concept_raw(cik, concept)
-    unit_rows = data.get('units', {}).get(unit, [])
+    unit_rows = data.get("units", {}).get(unit, [])
     if len(unit_rows) == 0:
         logger.warning(
             'SEC concept {} response had empty units["{}"] data for CIK {}; skipping',
@@ -875,18 +875,18 @@ async def fetch_sec_field_rows(cik: str, field: str) -> pd.DataFrame:
     except HTTPStatusError as exc:
         if exc.response.status_code == 404:
             logger.warning(
-                'SEC concept {} not found for CIK {}; skipping', spec.concept, cik
+                "SEC concept {} not found for CIK {}; skipping", spec.concept, cik
             )
         else:
             logger.warning(
-                'SEC concept {} fetch failed for CIK {} status={}; skipping',
+                "SEC concept {} fetch failed for CIK {} status={}; skipping",
                 spec.concept,
                 cik,
                 exc.response.status_code,
             )
     except Exception as exc:
         logger.warning(
-            'SEC concept {} fetch/processing failed for CIK {}: {}; skipping',
+            "SEC concept {} fetch/processing failed for CIK {}: {}; skipping",
             spec.concept,
             cik,
             exc,
@@ -895,94 +895,94 @@ async def fetch_sec_field_rows(cik: str, field: str) -> pd.DataFrame:
 
 
 async def fetch_fmp_income_statements(
-    market: Literal['j', 't', 'u'],
+    market: Literal["j", "t", "u"],
     symbol: str,
     limit: int,
 ) -> dict[str, dict]:
     params = {
-        'apikey': FMP_KEY,
-        'limit': limit,
-        'period': 'quarter',
+        "apikey": FMP_KEY,
+        "limit": limit,
+        "period": "quarter",
     }
-    if market == 'u':
-        url = 'https://financialmodelingprep.com/stable/income-statement'
-        params['symbol'] = symbol
-        eps_field = 'epsDiluted'
+    if market == "u":
+        url = "https://financialmodelingprep.com/stable/income-statement"
+        params["symbol"] = symbol
+        eps_field = "epsDiluted"
     else:
         url = (
-            f'https://financialmodelingprep.com/api/v3/income-statement/'
-            f'{add_suffix(market, symbol)}'
+            f"https://financialmodelingprep.com/api/v3/income-statement/"
+            f"{add_suffix(market, symbol)}"
         )
-        eps_field = 'epsdiluted'
+        eps_field = "epsdiluted"
     field_map = {
-        'revenue': 'revenue',
-        'weightedAverageShsOutDil': 'weightedAverageShsOutDil',
+        "revenue": "revenue",
+        "weightedAverageShsOutDil": "weightedAverageShsOutDil",
         EPS_XPS_FIELD: eps_field,
     }
     text = await shared.cached_get(url, params)
     return normalize_income_statement_rows(
         json.loads(text),
         field_map=field_map,
-        date_field='date',
+        date_field="date",
         metadata_fields={
-            'cik': 'cik',
-            'quarter': 'period',
+            "cik": "cik",
+            "quarter": "period",
         },
     )
 
 
 async def fetch_massive_income_statements(symbol: str, limit: int) -> dict[str, dict]:
     params = {
-        'tickers': symbol,
-        'timeframe': 'quarterly',
-        'limit': limit,
-        'sort': 'period_end.desc',
-        'apiKey': MASSIVE_API_KEY,
+        "tickers": symbol,
+        "timeframe": "quarterly",
+        "limit": limit,
+        "sort": "period_end.desc",
+        "apiKey": MASSIVE_API_KEY,
     }
     text = await shared.cached_get(
-        'https://api.massive.com/stocks/financials/v1/income-statements', params
+        "https://api.massive.com/stocks/financials/v1/income-statements", params
     )
     field_map = {
-        'revenue': 'revenue',
-        'weightedAverageShsOutDil': 'diluted_shares_outstanding',
-        EPS_XPS_FIELD: 'diluted_earnings_per_share',
+        "revenue": "revenue",
+        "weightedAverageShsOutDil": "diluted_shares_outstanding",
+        EPS_XPS_FIELD: "diluted_earnings_per_share",
     }
     return normalize_income_statement_rows(
-        json.loads(text)['results'] or [],
+        json.loads(text)["results"] or [],
         field_map=field_map,
-        date_field='period_end',
+        date_field="period_end",
         metadata_fields={
-            'cik': 'cik',
-            'quarter': 'fiscal_quarter',
+            "cik": "cik",
+            "quarter": "fiscal_quarter",
         },
     )
 
 
 async def fetch_finnhub_income_statements(symbol: str, limit: int) -> dict[str, dict]:
     params = {
-        'symbol': symbol,
-        'statement': 'ic',
-        'freq': 'quarterly',
-        'preliminary': 'false',
-        'token': FINNHUB_API_KEY,
+        "symbol": symbol,
+        "statement": "ic",
+        "freq": "quarterly",
+        "preliminary": "false",
+        "token": FINNHUB_API_KEY,
     }
-    text = await shared.cached_get('https://finnhub.io/api/v1/stock/financials', params)
+    text = await shared.cached_get("https://finnhub.io/api/v1/stock/financials", params)
 
     field_map = {
-        'revenue': 'revenue',
-        'weightedAverageShsOutDil': 'dilutedAverageSharesOutstanding',
-        EPS_XPS_FIELD: 'dilutedEPS',
+        "revenue": "revenue",
+        "weightedAverageShsOutDil": "dilutedAverageSharesOutstanding",
+        EPS_XPS_FIELD: "dilutedEPS",
     }
     financials_by_period = [
-        (row['period'], -index, row)
-        for index, row in enumerate(json.loads(text)['financials'] or [])
+        (row["period"], -index, row)
+        for index, row in enumerate(json.loads(text)["financials"] or [])
     ]
     financials_by_period.sort(reverse=True)
     financials = [row for _, _, row in financials_by_period[:limit]]
     return normalize_income_statement_rows(
         financials,
         field_map=field_map,
-        date_field='period',
+        date_field="period",
         use_finnhub_field_values=True,
     )
 
@@ -991,7 +991,7 @@ def tiingo_fundamentals_start_date(
     limit: int, quarter_buffer: int = TIINGO_QUARTER_BUFFER
 ) -> str:
     start = pd.Timestamp.now(
-        tz=shared.MARKET_TO_TIMEZONE['u']
+        tz=shared.MARKET_TO_TIMEZONE["u"]
     ).normalize() - pd.DateOffset(months=3 * (limit + quarter_buffer))
     return date_str(start.tz_localize(None))
 
@@ -1000,25 +1000,25 @@ def normalize_tiingo_income_statement_rows(statements: list[dict]) -> dict[str, 
     """Normalize Tiingo's nested quarterly income-statement response."""
     rows = {}
     field_map = {
-        'revenue': 'revenue',
-        'weightedAverageShsOutDil': 'shareswaDil',
-        EPS_XPS_FIELD: 'epsDil',
+        "revenue": "revenue",
+        "weightedAverageShsOutDil": "shareswaDil",
+        EPS_XPS_FIELD: "epsDil",
     }
     for statement in statements:
-        if normalize_massive_fiscal_quarter(statement.get('quarter')) is None:
+        if normalize_massive_fiscal_quarter(statement.get("quarter")) is None:
             continue
-        statement_data = statement.get('statementData', {})
+        statement_data = statement.get("statementData", {})
         if not isinstance(statement_data, dict):
             continue
-        income_statement = statement_data.get('incomeStatement', [])
-        if not isinstance(income_statement, list) or 'date' not in statement:
+        income_statement = statement_data.get("incomeStatement", [])
+        if not isinstance(income_statement, list) or "date" not in statement:
             continue
         values = {
-            entry.get('dataCode'): entry.get('value')
+            entry.get("dataCode"): entry.get("value")
             for entry in income_statement
-            if isinstance(entry, dict) and entry.get('dataCode') is not None
+            if isinstance(entry, dict) and entry.get("dataCode") is not None
         }
-        date = date_str(pd.Timestamp(statement['date']))
+        date = date_str(pd.Timestamp(statement["date"]))
         rows[date] = normalize_source_row(values, field_map)
     return rows
 
@@ -1026,13 +1026,13 @@ def normalize_tiingo_income_statement_rows(statements: list[dict]) -> dict[str, 
 async def fetch_tiingo_income_statements(symbol: str, limit: int) -> dict[str, dict]:
     params = {
         # Use Tiingo's latest restated values, whose dates are fiscal period ends.
-        'asReported': 'false',
-        'startDate': tiingo_fundamentals_start_date(limit),
+        "asReported": "false",
+        "startDate": tiingo_fundamentals_start_date(limit),
     }
     text = await shared.cached_get(
         TIINGO_FUNDAMENTALS_STATEMENTS_URL.format(symbol),
         params,
-        headers={'Authorization': f'Token {TIINGO_API_KEY}'},
+        headers={"Authorization": f"Token {TIINGO_API_KEY}"},
     )
     return normalize_tiingo_income_statement_rows(json.loads(text))
 
@@ -1043,14 +1043,14 @@ def diluted_eps_from_reported_income(
     if not diluted_shares:
         return None
     net_income_applicable = to_source_number(
-        income_statement_row.get('netIncomeApplicableToCommonShares')
+        income_statement_row.get("netIncomeApplicableToCommonShares")
     )
     if net_income_applicable is not None:
         earnings = net_income_applicable
     else:
-        net_income = to_source_number(income_statement_row.get('netIncome'))
+        net_income = to_source_number(income_statement_row.get("netIncome"))
         preferred_adjustments = to_source_number(
-            income_statement_row.get('preferredStockAndOtherAdjustments')
+            income_statement_row.get("preferredStockAndOtherAdjustments")
         )
         if preferred_adjustments is not None and net_income is not None:
             earnings = net_income - preferred_adjustments
@@ -1063,23 +1063,23 @@ def diluted_eps_from_reported_income(
 
 async def fetch_eodhd_fundamentals(symbol: str) -> dict:
     params = {
-        'api_token': EODHD_API_KEY,
-        'fmt': 'json',
-        'filter': (
-            'Financials::Income_Statement::quarterly,'
-            'Financials::Balance_Sheet::quarterly'
+        "api_token": EODHD_API_KEY,
+        "fmt": "json",
+        "filter": (
+            "Financials::Income_Statement::quarterly,"
+            "Financials::Balance_Sheet::quarterly"
         ),
     }
     text = await shared.cached_get(
-        EODHD_FUNDAMENTALS_URL.format(f'{symbol}.US'), params
+        EODHD_FUNDAMENTALS_URL.format(f"{symbol}.US"), params
     )
     return json.loads(text)
 
 
 async def fetch_eodhd_income_statements(symbol: str, limit: int) -> dict[str, dict]:
     data = await fetch_eodhd_fundamentals(symbol)
-    income_statement = data.get('Financials::Income_Statement::quarterly', {})
-    balance_sheet = data.get('Financials::Balance_Sheet::quarterly', {})
+    income_statement = data.get("Financials::Income_Statement::quarterly", {})
+    balance_sheet = data.get("Financials::Balance_Sheet::quarterly", {})
 
     rows = {}
     for date, income_row in sorted(income_statement.items(), reverse=True):
@@ -1088,14 +1088,14 @@ async def fetch_eodhd_income_statements(symbol: str, limit: int) -> dict[str, di
 
         balance_sheet_row = select_eodhd_balance_sheet_row(date, balance_sheet) or {}
         diluted_shares = to_source_number(
-            balance_sheet_row.get('commonStockSharesOutstanding')
+            balance_sheet_row.get("commonStockSharesOutstanding")
         )
         normalized_row = {
-            'revenue': sanitize_source_field_value(
-                'revenue', to_source_number(income_row.get('totalRevenue'))
+            "revenue": sanitize_source_field_value(
+                "revenue", to_source_number(income_row.get("totalRevenue"))
             ),
-            'weightedAverageShsOutDil': sanitize_source_field_value(
-                'weightedAverageShsOutDil', diluted_shares
+            "weightedAverageShsOutDil": sanitize_source_field_value(
+                "weightedAverageShsOutDil", diluted_shares
             ),
         }
         normalized_row[EPS_XPS_FIELD] = sanitize_source_field_value(
@@ -1110,7 +1110,7 @@ async def fetch_eodhd_income_statements(symbol: str, limit: int) -> dict[str, di
 
 def field_has_consensus(field: str, lhs: int | float, rhs: int | float) -> bool:
     log_diff = source_log_diff(lhs, rhs)
-    if field == 'epsDiluted':
+    if field == "epsDiluted":
         return (
             source_abs_diff(lhs, rhs) < EPS_ABS_TOLERANCE
             or log_diff < SOURCE_DIFF_THRESHOLD
@@ -1186,7 +1186,7 @@ def choose_consensus_group(
     sec_consensus_groups = [
         group
         for group in largest_groups
-        if any(source_name == 'sec' for source_name, _ in group)
+        if any(source_name == "sec" for source_name, _ in group)
     ]
     if len(largest_groups) == 1:
         return largest_groups[0]
@@ -1212,11 +1212,11 @@ def resolve_source_consensus(
 
 def format_source_log_value(value: int | float | None) -> str:
     if value is None:
-        return 'missing'
+        return "missing"
     value = float(value)
     if value.is_integer():
-        return f'{int(value):,}'
-    return f'{value:,.6f}'.rstrip('0').rstrip('.')
+        return f"{int(value):,}"
+    return f"{value:,.6f}".rstrip("0").rstrip(".")
 
 
 def format_source_field_block(
@@ -1224,21 +1224,21 @@ def format_source_field_block(
     source_values: dict[str, int | float | None],
     quarter_key: str,
 ) -> str:
-    lines = [f'  {field}:']
+    lines = [f"  {field}:"]
     for source_name in us_income_statement_source_order(include_sec=True):
         lines.append(
-            '    '
-            f'{SOURCE_LABELS[source_name]:<8} '
-            f'date={quarter_key:<10} '
-            f'value={format_source_log_value(source_values.get(source_name))}'
+            "    "
+            f"{SOURCE_LABELS[source_name]:<8} "
+            f"date={quarter_key:<10} "
+            f"value={format_source_log_value(source_values.get(source_name))}"
         )
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def format_source_fetch_error(error: Exception) -> str:
     """Summarize provider failures without logging request URLs or API keys."""
     if isinstance(error, HTTPStatusError):
-        return f'HTTP {error.response.status_code}'
+        return f"HTTP {error.response.status_code}"
     return type(error).__name__
 
 
@@ -1249,22 +1249,22 @@ async def fetch_us_income_statement_source(
 ) -> tuple[str, SourceIncomeStatementRows | None]:
     try:
         match source.name:
-            case 'fmp':
-                rows = await fetch_fmp_income_statements('u', symbol, limit)
-            case 'massive':
+            case "fmp":
+                rows = await fetch_fmp_income_statements("u", symbol, limit)
+            case "massive":
                 rows = await fetch_massive_income_statements(symbol, limit)
-            case 'eodhd':
+            case "eodhd":
                 rows = await fetch_eodhd_income_statements(symbol, limit)
-            case 'finnhub':
+            case "finnhub":
                 rows = await fetch_finnhub_income_statements(symbol, limit)
-            case 'tiingo':
+            case "tiingo":
                 rows = await fetch_tiingo_income_statements(symbol, limit)
             case _:
-                raise ValueError(f'unknown income statement source: {source.name}')
+                raise ValueError(f"unknown income statement source: {source.name}")
         return source.name, rows
     except Exception as error:
         logger.warning(
-            '{} income statements unavailable for {}: {}; skipping source',
+            "{} income statements unavailable for {}: {}; skipping source",
             source.label,
             symbol,
             format_source_fetch_error(error),
@@ -1302,7 +1302,7 @@ def select_sec_cik(aligned_quarters: AlignedQuarters) -> str | None:
     # over Massive, independently of the source row chosen for quarter metadata.
     for _, source_periods in iter_sec_metadata_periods(aligned_quarters):
         for _, row in source_periods:
-            cik = format_sec_cik(row.get('cik'))
+            cik = format_sec_cik(row.get("cik"))
             if cik is not None:
                 return cik
     return None
@@ -1316,7 +1316,7 @@ def build_sec_quarter_metadata(
         if quarter_key in metadata:
             continue
         source_date, row = source_periods[0]
-        period = normalize_massive_fiscal_quarter(row.get('quarter'))
+        period = normalize_massive_fiscal_quarter(row.get("quarter"))
         if period is not None:
             metadata[quarter_key] = SecQuarterMetadata(
                 date=source_date,
@@ -1332,23 +1332,25 @@ async def fetch_sec_values_for_quarters(
 ) -> dict[str, dict[str, int | float]]:
     """Fetch usable SEC field values keyed by aligned quarter."""
     values_by_quarter = {}
-    for field in (field for field in SEC_FIELD_SPECS if field in fields):
-        spec = SEC_FIELD_SPECS[field]
-        sec_rows = await fetch_sec_field_rows(cik, field)
+    for field_name in (
+        field_name for field_name in SEC_FIELD_SPECS if field_name in fields
+    ):
+        spec = SEC_FIELD_SPECS[field_name]
+        sec_rows = await fetch_sec_field_rows(cik, field_name)
         if sec_rows.empty:
             continue
 
         for quarter_key, metadata in metadata_by_quarter.items():
             value = lookup_sec_field_value(
-                field,
+                field_name,
                 cik,
                 metadata,
                 sec_rows,
                 q4_value_kind=spec.q4_value_kind,
             )
-            value = sanitize_source_field_value(field, value)
+            value = sanitize_source_field_value(field_name, value)
             if value is not None:
-                values_by_quarter.setdefault(quarter_key, {})[field] = value
+                values_by_quarter.setdefault(quarter_key, {})[field_name] = value
     return values_by_quarter
 
 
@@ -1360,13 +1362,13 @@ async def add_sec_reference_values(
     """Add usable SEC facts to aligned US quarters as reference-source values."""
     cik = select_sec_cik(aligned_quarters)
     if cik is None:
-        logger.warning('SEC reference unavailable for {}: no FMP/Massive CIK', symbol)
+        logger.warning("SEC reference unavailable for {}: no FMP/Massive CIK", symbol)
         return
 
     metadata_by_quarter = build_sec_quarter_metadata(aligned_quarters)
     if not metadata_by_quarter:
         logger.warning(
-            'SEC reference unavailable for {}: no FMP/Massive quarter metadata',
+            "SEC reference unavailable for {}: no FMP/Massive quarter metadata",
             symbol,
         )
         return
@@ -1378,8 +1380,8 @@ async def add_sec_reference_values(
     )
     for quarter_key, field_values in values_by_quarter.items():
         quarter = aligned_quarters[quarter_key]
-        for field, value in field_values.items():
-            quarter.fields.setdefault(field, {})['sec'] = value
+        for field_name, value in field_values.items():
+            quarter.fields.setdefault(field_name, {})["sec"] = value
 
 
 def drop_incomplete_latest_us_quarter(
@@ -1410,10 +1412,10 @@ def drop_incomplete_latest_us_quarter(
         if field in insufficient_fields
     ]
     logger.warning(
-        'Dropping latest {} quarter {}: fewer than 2 usable sources\n{}',
+        "Dropping latest {} quarter {}: fewer than 2 usable sources\n{}",
         symbol,
         latest_date,
-        '\n'.join(mismatch_blocks),
+        "\n".join(mismatch_blocks),
     )
     return {date: aligned_quarters[date] for date in quarter_dates[:-1]}
 
@@ -1425,19 +1427,19 @@ def resolve_us_quarter_consensus(
     required_fields: list[str],
 ) -> ResolvedQuarter:
     resolved_quarter = {}
-    for field in required_fields:
-        source_values = quarter.fields.get(field, {})
-        consensus = resolve_source_consensus(field, source_values)
+    for field_name in required_fields:
+        source_values = quarter.fields.get(field_name, {})
+        consensus = resolve_source_consensus(field_name, source_values)
         if consensus is not None:
-            resolved_quarter[field] = consensus.value
+            resolved_quarter[field_name] = consensus.value
             continue
         logger.warning(
-            'Aborting {} quarter {}: no consensus\n{}',
+            "Aborting {} quarter {}: no consensus\n{}",
             symbol,
             anchor_date,
-            format_source_field_block(field, source_values, anchor_date),
+            format_source_field_block(field_name, source_values, anchor_date),
         )
-        raise ValueError(f'no consensus for {symbol} {anchor_date} field={field}')
+        raise ValueError(f"no consensus for {symbol} {anchor_date} field={field_name}")
     return resolved_quarter
 
 
@@ -1467,7 +1469,7 @@ async def resolve_us_income_statement_quarters(
         symbol, aligned_quarters, required_fields
     )
     selected_quarters = select_latest_required_quarters(
-        eligible_quarters, limit, symbol=symbol, quarter_label='aligned quarters'
+        eligible_quarters, limit, symbol=symbol, quarter_label="aligned quarters"
     )
 
     # 4. Record diagnostics for the same quarters that will be returned.
@@ -1488,17 +1490,17 @@ async def resolve_us_income_statement_quarters(
 
 
 async def fetch_resolved_income_statement_quarters(
-    market: Literal['j', 't', 'u'],
+    market: Literal["j", "t", "u"],
     symbol: str,
     limit: int,
     include_eps: bool,
 ) -> ResolvedQuarters:
-    if market == 't':
+    if market == "t":
         return await fetch_finmind_taiwan_income_statements(
             symbol, limit, require_eps=include_eps
         )
 
-    if market != 'u':
+    if market != "u":
         fmp_rows = await fetch_fmp_income_statements(market, symbol, limit)
         return select_latest_required_quarters(fmp_rows, limit, symbol=symbol)
 
@@ -1515,19 +1517,19 @@ async def fetch_resolved_income_statement_quarters(
 def build_xps_frame(
     resolved_quarters: ResolvedQuarters, include_eps: bool
 ) -> pd.DataFrame:
-    df = pd.DataFrame.from_dict(resolved_quarters, orient='index')
+    df = pd.DataFrame.from_dict(resolved_quarters, orient="index")
     df.index = pd.to_datetime(df.index) + pd.Timedelta(days=1)
     frame = pd.DataFrame(
         {
-            'rps': df['revenue'] / df['weightedAverageShsOutDil'],
-            **({'eps': df['epsDiluted']} if include_eps else {}),
+            "rps": df["revenue"] / df["weightedAverageShsOutDil"],
+            **({"eps": df["epsDiluted"]} if include_eps else {}),
         }
     )
     return frame.rolling(4).sum().iloc[3:]
 
 
 async def fetch_xps(
-    market: Literal['j', 't', 'u'], symbol: str, q: int, include_eps: bool = True
+    market: Literal["j", "t", "u"], symbol: str, q: int, include_eps: bool = True
 ) -> pd.DataFrame:
     limit = q + 3
     resolved_quarters = await fetch_resolved_income_statement_quarters(
@@ -1536,7 +1538,7 @@ async def fetch_xps(
     return build_xps_frame(resolved_quarters, include_eps)
 
 
-async def calc_px(market: Literal['j', 't', 'u'], symbol: str, q: int) -> pd.DataFrame:
+async def calc_px(market: Literal["j", "t", "u"], symbol: str, q: int) -> pd.DataFrame:
     prices, xps = await asyncio.gather(
         shared.get_prices(market, symbol, 91 * q, False),
         fetch_xps(market, symbol, q + EXTRA_Q),
@@ -1546,16 +1548,16 @@ async def calc_px(market: Literal['j', 't', 'u'], symbol: str, q: int) -> pd.Dat
         periods=len(prices),
     )
     df = (
-        pd.DataFrame({'price': prices}, index)
-        .join(xps, how='outer')
+        pd.DataFrame({"price": prices}, index)
+        .join(xps, how="outer")
         .ffill()
         .tail(len(index))
     )
-    if (pd.isna(df['price'].iloc[0])) or pd.isna(df['rps'].iloc[0]):
+    if (pd.isna(df["price"].iloc[0])) or pd.isna(df["rps"].iloc[0]):
         raise ValueError
-    df['ps'] = df['price'] / df['rps']
-    df['pe'] = df['price'] / df['eps'].where(df['eps'] > 0)
-    return df[['ps', 'pe']]
+    df["ps"] = df["price"] / df["rps"]
+    df["pe"] = df["price"] / df["eps"].where(df["eps"] > 0)
+    return df[["ps", "pe"]]
 
 
 # def avg_by_period_ends(values, ends):

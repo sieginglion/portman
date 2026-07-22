@@ -20,33 +20,33 @@ from numpy.typing import NDArray as Array
 
 dotenv.load_dotenv()
 
-FMP_KEY = os.environ['FMP_KEY']
-FINMIND_KEY = os.environ['FINMIND_KEY']
-FINNHUB_API_KEY = os.environ['FINNHUB_API_KEY']
+FMP_KEY = os.environ["FMP_KEY"]
+FINMIND_KEY = os.environ["FINMIND_KEY"]
+FINNHUB_API_KEY = os.environ["FINNHUB_API_KEY"]
 ENABLE_MASSIVE_FUNDAMENTALS = (
-    os.getenv('ENABLE_MASSIVE_FUNDAMENTALS', 'true').lower() == 'true'
+    os.getenv("ENABLE_MASSIVE_FUNDAMENTALS", "true").lower() == "true"
 )
 ENABLE_EODHD_FUNDAMENTALS = (
-    os.getenv('ENABLE_EODHD_FUNDAMENTALS', 'true').lower() == 'true'
+    os.getenv("ENABLE_EODHD_FUNDAMENTALS", "true").lower() == "true"
 )
-MASSIVE_API_KEY = os.environ['MASSIVE_API_KEY'] if ENABLE_MASSIVE_FUNDAMENTALS else ''
-EODHD_API_KEY = os.environ['EODHD_API_KEY'] if ENABLE_EODHD_FUNDAMENTALS else ''
-TIINGO_API_KEY = os.getenv('TIINGO_API_KEY', '')
+MASSIVE_API_KEY = os.environ["MASSIVE_API_KEY"] if ENABLE_MASSIVE_FUNDAMENTALS else ""
+EODHD_API_KEY = os.environ["EODHD_API_KEY"] if ENABLE_EODHD_FUNDAMENTALS else ""
+TIINGO_API_KEY = os.getenv("TIINGO_API_KEY", "")
 ENABLE_TIINGO_FUNDAMENTALS = (
-    os.getenv('ENABLE_TIINGO_FUNDAMENTALS', '').lower() == 'true'
+    os.getenv("ENABLE_TIINGO_FUNDAMENTALS", "").lower() == "true"
 )
-FROM_COINGECKO = set(os.environ['FROM_COINGECKO'].split(','))
+FROM_COINGECKO = set(os.environ["FROM_COINGECKO"].split(","))
 MARKET_TO_TIMEZONE = {
-    'c': 'UTC',
-    'j': 'Asia/Tokyo',
-    't': 'Asia/Taipei',
-    'u': 'America/New_York',
+    "c": "UTC",
+    "j": "Asia/Tokyo",
+    "t": "Asia/Taipei",
+    "u": "America/New_York",
 }
 
 CACHE = "ON_TWSE.pkl"
 URL = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2"
 
-cache = Cache(Path().resolve() / '.cache')
+cache = Cache(Path().resolve() / ".cache")
 
 if os.path.isfile(CACHE):
     with open(CACHE, "rb") as f:
@@ -62,25 +62,25 @@ else:
         pickle.dump(ON_TWSE, f)
 
 
-def to_date(time: Arrow | int | str, timezone: str = ''):
+def to_date(time: Arrow | int | str, timezone: str = ""):
     if not isinstance(time, Arrow):
         time = arrow.get(time)
     if timezone:
         time = time.to(timezone)
-    return time.format('YYYY-MM-DD')
+    return time.format("YYYY-MM-DD")
 
 
 def gen_dates(start: Arrow, end: Arrow):
-    return map(to_date, Arrow.range('day', start, end))
+    return map(to_date, Arrow.range("day", start, end))
 
 
-def add_suffix(market: Literal['j', 't', 'u'], symbol: str):
+def add_suffix(market: Literal["j", "t", "u"], symbol: str):
     return (
         symbol
         + {
-            'j': '.T',
-            't': '.TW' if symbol in ON_TWSE else '.TWO',
-            'u': '',
+            "j": ".T",
+            "t": ".TW" if symbol in ON_TWSE else ".TWO",
+            "u": "",
         }[market]
     )
 
@@ -127,29 +127,29 @@ async def cached_get(
     return response.text
 
 
-async def get_today_dividend(market: Literal['j', 't', 'u'], symbol: str):
+async def get_today_dividend(market: Literal["j", "t", "u"], symbol: str):
     today = to_date(arrow.now(MARKET_TO_TIMEZONE[market]))
-    if market == 't':
+    if market == "t":
         text = await cached_get(
-            'https://www.twse.com.tw/rwd/zh/exRight/TWT48U?response=json'
+            "https://www.twse.com.tw/rwd/zh/exRight/TWT48U?response=json"
         )
-        for e in json.loads(text)['data']:
-            y, m, d = map(int, re.findall('\\d+', e[0]))
+        for e in json.loads(text)["data"]:
+            y, m, d = map(int, re.findall("\\d+", e[0]))
             if to_date(Arrow(y + 1911, m, d)) == today and e[1] == symbol:
                 return float(e[7])
     else:
         text = await cached_get(
-            'https://financialmodelingprep.com/api/v3/stock_dividend_calendar',
+            "https://financialmodelingprep.com/api/v3/stock_dividend_calendar",
             {
-                'apikey': FMP_KEY,
-                'from': today,
-                'to': today,
+                "apikey": FMP_KEY,
+                "from": today,
+                "to": today,
             },
         )
         suffixed_symbol = add_suffix(market, symbol)
         for e in json.loads(text):
-            if e['date'] == today and e['symbol'] == suffixed_symbol:
-                return e['dividend']
+            if e["date"] == today and e["symbol"] == suffixed_symbol:
+                return e["dividend"]
     return 0.0
 
 
@@ -161,10 +161,10 @@ def get_sorted_values(D: dict[str, float]):
 def break_limit(prices: Array[f8]):
     L = np.abs((prices[1:] - prices[:-1]) / prices[:-1]) > 0.095
     s = 0
-    for i, l in enumerate(L):
-        if not s and l:
+    for i, is_limited in enumerate(L):
+        if not s and is_limited:
             s = i + 1
-        elif s and not l:
+        elif s and not is_limited:
             prices[s : i + 1] = prices[i + 1]
             s = 0
     if s:
@@ -174,7 +174,7 @@ def break_limit(prices: Array[f8]):
 
 @nb.njit
 def post_process(prices: Array[f8], n: int, limited: bool = False):
-    prices = np.trim_zeros(prices, 'f')
+    prices = np.trim_zeros(prices, "f")
     assert len(prices) >= n
     for i in range(1, len(prices)):
         if not prices[i]:
@@ -187,7 +187,7 @@ def post_process(prices: Array[f8], n: int, limited: bool = False):
 
 @cached(43200)
 async def get_prices(
-    market: Literal['c', 'j', 't', 'u'],
+    market: Literal["c", "j", "t", "u"],
     symbol: str,
     n: int,
     to_usd: bool,
@@ -201,7 +201,7 @@ async def get_prices(
     n_ = n + k - 1 if ema7 else n
     prices = await (
         crypto.get_prices(symbol, n_)
-        if market == 'c'
+        if market == "c"
         else stock.get_prices(market, symbol, n_, to_usd)
     )
     return calc_ema(prices, 2 / (w + 1), k) if ema7 else prices

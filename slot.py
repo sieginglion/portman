@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Sequence, Tuple
+from typing import List, Sequence, Tuple
 import requests
 
 WEIGHTS_URL = "http://52.198.155.160:8080/weights"
@@ -30,7 +30,9 @@ class WeightService:
         self.timeout_s = timeout_s
         self.session = requests.Session()
 
-    def get_weights(self, positions: Sequence[Position], slots: Sequence[float]) -> List[float]:
+    def get_weights(
+        self, positions: Sequence[Position], slots: Sequence[float]
+    ) -> List[float]:
         payload = {
             "positions": [[m, t] for (m, t) in positions],
             "slots": [float(s) for s in slots],
@@ -75,9 +77,13 @@ def compute_rebalance_usd(
     weights = ws.get_weights(inp.positions, slots)
 
     if len(weights) != len(inp.positions):
-        raise RuntimeError(f"Weight length mismatch: got {len(weights)}, expected {len(inp.positions)}")
+        raise RuntimeError(
+            f"Weight length mismatch: got {len(weights)}, expected {len(inp.positions)}"
+        )
     if len(inp.current_usd) != len(inp.positions):
-        raise RuntimeError(f"current_usd length mismatch: got {len(inp.current_usd)}, expected {len(inp.positions)}")
+        raise RuntimeError(
+            f"current_usd length mismatch: got {len(inp.current_usd)}, expected {len(inp.positions)}"
+        )
 
     scale = compute_scale(inp)
     target = compute_target_usd(weights, scale)
@@ -133,7 +139,9 @@ def optimize_slots(
 
         step = steps[i]
         if step == 0.0:
-            raise RuntimeError(f"Cannot adjust {inp.positions[i]}: initial slot is 0 (step=0)")
+            raise RuntimeError(
+                f"Cannot adjust {inp.positions[i]}: initial slot is 0 (step=0)"
+            )
 
         # Direction heuristic (same as original):
         #   if worst < 0 (need sell), increase slot
@@ -172,10 +180,21 @@ def parse_money_block(s: str) -> List[float]:
 
 def main() -> None:
     positions: List[Position] = [
-        ("c", "AAVE"), ("u", "COIN"), ("u", "HOOD"),
-        ("u", "IBIT"), ("t", "2330"), ("t", "3081"), ("t", "3131"),
-        ("t", "3443"), ("t", "3661"), ("u", "AMZN"), ("u", "AVGO"),
-        ("u", "GOOGL"), ("u", "NVDA"), ("u", "PLTR"), ("u", "TSLA"),
+        ("c", "AAVE"),
+        ("u", "COIN"),
+        ("u", "HOOD"),
+        ("u", "IBIT"),
+        ("t", "2330"),
+        ("t", "3081"),
+        ("t", "3131"),
+        ("t", "3443"),
+        ("t", "3661"),
+        ("u", "AMZN"),
+        ("u", "AVGO"),
+        ("u", "GOOGL"),
+        ("u", "NVDA"),
+        ("u", "PLTR"),
+        ("u", "TSLA"),
     ]
 
     initial_slots = parse_floats_block("""
@@ -218,7 +237,7 @@ def main() -> None:
         positions=positions,
         initial_slots=initial_slots,
         current_usd=current_usd,
-        crcl_weight=2 ** -7,
+        crcl_weight=2**-7,
         total_value=float("2,699,802.986".replace(",", "")),
         leverage=1.401,
         threshold=float("29,545.084".replace(",", "")),

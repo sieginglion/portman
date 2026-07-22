@@ -27,17 +27,17 @@ class ValuationCallRecorder:
         if isinstance(target, partial):
             return self._callee_code(target.func)
 
-        code = getattr(target, '__code__', None)
+        code = getattr(target, "__code__", None)
         if isinstance(code, CodeType):
             return code
 
-        function = getattr(target, '__func__', None)
-        code = getattr(function, '__code__', None)
+        function = getattr(target, "__func__", None)
+        code = getattr(function, "__code__", None)
         if isinstance(code, CodeType):
             return code
 
-        call_method = getattr(type(target), '__call__', None)
-        code = getattr(call_method, '__code__', None)
+        call_method = getattr(type(target), "__call__", None)
+        code = getattr(call_method, "__code__", None)
         return code if isinstance(code, CodeType) else None
 
     def _record_call(
@@ -67,9 +67,9 @@ class ValuationCallRecorder:
 
     def enable(self) -> None:
         if sys.monitoring.get_tool(self._tool_id) is not None:
-            raise RuntimeError('the Python profiler monitoring tool is already in use')
+            raise RuntimeError("the Python profiler monitoring tool is already in use")
 
-        sys.monitoring.use_tool_id(self._tool_id, 'portman-valuation-call-recorder')
+        sys.monitoring.use_tool_id(self._tool_id, "portman-valuation-call-recorder")
         try:
             sys.monitoring.register_callback(
                 self._tool_id,
@@ -101,6 +101,6 @@ class ValuationCallRecorder:
 
     def write(self, destination: Path) -> None:
         destination.write_text(
-            json.dumps(sorted(self.edges), indent=2) + '\n',
-            encoding='utf-8',
+            json.dumps(sorted(self.edges), indent=2) + "\n",
+            encoding="utf-8",
         )

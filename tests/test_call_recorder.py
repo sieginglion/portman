@@ -12,24 +12,24 @@ class ValuationCallRecorderTests(unittest.TestCase):
         recorder = ValuationCallRecorder(valuation)
         recorder.enable()
         try:
-            self.assertTrue(valuation.field_has_consensus('revenue', 1, 1))
-            self.assertTrue(valuation.field_has_consensus('revenue', 2, 2))
+            self.assertTrue(valuation.field_has_consensus("revenue", 1, 1))
+            self.assertTrue(valuation.field_has_consensus("revenue", 2, 2))
         finally:
             recorder.disable()
 
         self.assertEqual(
             recorder.edges,
-            {('field_has_consensus', 'source_log_diff')},
+            {("field_has_consensus", "source_log_diff")},
         )
 
     def test_writes_only_the_unique_edges(self):
         recorder = ValuationCallRecorder(valuation)
-        recorder.edges.add(('caller', 'callee'))
+        recorder.edges.add(("caller", "callee"))
         with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / 'edges.json'
+            output = Path(directory) / "edges.json"
             recorder.write(output)
 
             self.assertEqual(
-                json.loads(output.read_text(encoding='utf-8')),
-                [['caller', 'callee']],
+                json.loads(output.read_text(encoding="utf-8")),
+                [["caller", "callee"]],
             )

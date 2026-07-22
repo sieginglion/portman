@@ -23,27 +23,27 @@ class TiingoValuationTests(unittest.TestCase):
         project_root = Path(__file__).resolve().parents[1]
         base_env = {
             **os.environ,
-            'FMP_KEY': 'test',
-            'FINMIND_KEY': 'test',
-            'FINNHUB_API_KEY': 'test',
-            'MASSIVE_API_KEY': 'test',
-            'EODHD_API_KEY': 'test',
-            'FROM_COINGECKO': '',
-            'ENABLE_TIINGO_FUNDAMENTALS': 'false',
+            "FMP_KEY": "test",
+            "FINMIND_KEY": "test",
+            "FINNHUB_API_KEY": "test",
+            "MASSIVE_API_KEY": "test",
+            "EODHD_API_KEY": "test",
+            "FROM_COINGECKO": "",
+            "ENABLE_TIINGO_FUNDAMENTALS": "false",
         }
         for flag, api_key, source in (
-            ('ENABLE_MASSIVE_FUNDAMENTALS', 'MASSIVE_API_KEY', 'massive'),
-            ('ENABLE_EODHD_FUNDAMENTALS', 'EODHD_API_KEY', 'eodhd'),
+            ("ENABLE_MASSIVE_FUNDAMENTALS", "MASSIVE_API_KEY", "massive"),
+            ("ENABLE_EODHD_FUNDAMENTALS", "EODHD_API_KEY", "eodhd"),
         ):
             with self.subTest(source=source):
                 env = {
                     **base_env,
-                    'ENABLE_MASSIVE_FUNDAMENTALS': 'true',
-                    'ENABLE_EODHD_FUNDAMENTALS': 'true',
-                    flag: 'false',
+                    "ENABLE_MASSIVE_FUNDAMENTALS": "true",
+                    "ENABLE_EODHD_FUNDAMENTALS": "true",
+                    flag: "false",
                 }
                 env.pop(api_key)
-                code = f'''\
+                code = f"""\
 import sys
 import types
 
@@ -57,9 +57,9 @@ assert not shared.{flag}
 assert shared.{api_key} == ''
 assert '{source}' not in valuation.us_income_statement_source_order()
 assert '{source}' not in valuation.us_income_statement_source_order(include_sec=True)
-'''
+"""
                 result = subprocess.run(
-                    [sys.executable, '-c', code],
+                    [sys.executable, "-c", code],
                     cwd=project_root,
                     env=env,
                     text=True,
@@ -69,24 +69,24 @@ assert '{source}' not in valuation.us_income_statement_source_order(include_sec=
                 self.assertEqual(
                     result.returncode,
                     0,
-                    f'{result.stdout}\n{result.stderr}',
+                    f"{result.stdout}\n{result.stderr}",
                 )
 
     def test_tiingo_defaults_to_disabled_without_environment_flag(self):
         project_root = Path(__file__).resolve().parents[1]
         env = {
             **os.environ,
-            'FMP_KEY': 'test',
-            'FINMIND_KEY': 'test',
-            'FINNHUB_API_KEY': 'test',
-            'MASSIVE_API_KEY': 'test',
-            'EODHD_API_KEY': 'test',
-            'FROM_COINGECKO': '',
-            'ENABLE_MASSIVE_FUNDAMENTALS': 'false',
-            'ENABLE_EODHD_FUNDAMENTALS': 'false',
+            "FMP_KEY": "test",
+            "FINMIND_KEY": "test",
+            "FINNHUB_API_KEY": "test",
+            "MASSIVE_API_KEY": "test",
+            "EODHD_API_KEY": "test",
+            "FROM_COINGECKO": "",
+            "ENABLE_MASSIVE_FUNDAMENTALS": "false",
+            "ENABLE_EODHD_FUNDAMENTALS": "false",
         }
-        env.pop('ENABLE_TIINGO_FUNDAMENTALS', None)
-        code = '''\
+        env.pop("ENABLE_TIINGO_FUNDAMENTALS", None)
+        code = """\
 import sys
 import types
 
@@ -99,9 +99,9 @@ from backend import shared, valuation
 assert not shared.ENABLE_TIINGO_FUNDAMENTALS
 assert 'tiingo' not in valuation.us_income_statement_source_order()
 assert 'tiingo' not in valuation.us_income_statement_source_order(include_sec=True)
-'''
+"""
         result = subprocess.run(
-            [sys.executable, '-c', code],
+            [sys.executable, "-c", code],
             cwd=project_root,
             env=env,
             text=True,
@@ -109,23 +109,23 @@ assert 'tiingo' not in valuation.us_income_statement_source_order(include_sec=Tr
             check=False,
         )
 
-        self.assertEqual(result.returncode, 0, f'{result.stdout}\n{result.stderr}')
+        self.assertEqual(result.returncode, 0, f"{result.stdout}\n{result.stderr}")
 
     def test_all_sources_enabled_at_startup_match_the_registry(self):
         project_root = Path(__file__).resolve().parents[1]
         env = {
             **os.environ,
-            'FMP_KEY': 'test',
-            'FINMIND_KEY': 'test',
-            'FINNHUB_API_KEY': 'test',
-            'MASSIVE_API_KEY': 'test',
-            'EODHD_API_KEY': 'test',
-            'FROM_COINGECKO': '',
-            'ENABLE_MASSIVE_FUNDAMENTALS': 'true',
-            'ENABLE_EODHD_FUNDAMENTALS': 'true',
-            'ENABLE_TIINGO_FUNDAMENTALS': 'true',
+            "FMP_KEY": "test",
+            "FINMIND_KEY": "test",
+            "FINNHUB_API_KEY": "test",
+            "MASSIVE_API_KEY": "test",
+            "EODHD_API_KEY": "test",
+            "FROM_COINGECKO": "",
+            "ENABLE_MASSIVE_FUNDAMENTALS": "true",
+            "ENABLE_EODHD_FUNDAMENTALS": "true",
+            "ENABLE_TIINGO_FUNDAMENTALS": "true",
         }
-        code = '''\
+        code = """\
 import sys
 import types
 
@@ -139,9 +139,9 @@ expected = ('fmp', 'massive', 'eodhd', 'finnhub', 'tiingo')
 assert tuple(source.name for source in valuation.ENABLED_US_INCOME_STATEMENT_SOURCES) == expected
 assert valuation.us_income_statement_source_order() == expected
 assert valuation.us_income_statement_source_order(include_sec=True) == (*expected, 'sec')
-'''
+"""
         result = subprocess.run(
-            [sys.executable, '-c', code],
+            [sys.executable, "-c", code],
             cwd=project_root,
             env=env,
             text=True,
@@ -149,327 +149,317 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
             check=False,
         )
 
-        self.assertEqual(result.returncode, 0, f'{result.stdout}\n{result.stderr}')
+        self.assertEqual(result.returncode, 0, f"{result.stdout}\n{result.stderr}")
 
     def test_disabled_tiingo_is_not_fetched(self):
         with (
             patch.object(
                 valuation,
-                'ENABLED_US_INCOME_STATEMENT_SOURCES',
-                selected_sources('fmp', 'massive', 'eodhd', 'finnhub'),
+                "ENABLED_US_INCOME_STATEMENT_SOURCES",
+                selected_sources("fmp", "massive", "eodhd", "finnhub"),
             ),
             patch.object(
                 valuation,
-                'fetch_fmp_income_statements',
+                "fetch_fmp_income_statements",
                 new=AsyncMock(return_value={}),
             ),
             patch.object(
                 valuation,
-                'fetch_massive_income_statements',
+                "fetch_massive_income_statements",
                 new=AsyncMock(return_value={}),
             ),
             patch.object(
                 valuation,
-                'fetch_eodhd_income_statements',
+                "fetch_eodhd_income_statements",
                 new=AsyncMock(return_value={}),
             ),
             patch.object(
                 valuation,
-                'fetch_finnhub_income_statements',
+                "fetch_finnhub_income_statements",
                 new=AsyncMock(return_value={}),
             ),
             patch.object(
                 valuation,
-                'fetch_tiingo_income_statements',
+                "fetch_tiingo_income_statements",
                 new=AsyncMock(),
             ) as tiingo_fetch,
         ):
             fetched = asyncio.run(
-                valuation.fetch_us_income_statement_sources('HOOD', 8)
+                valuation.fetch_us_income_statement_sources("HOOD", 8)
             )
 
-        self.assertEqual(
-            set(fetched.rows), {'fmp', 'massive', 'eodhd', 'finnhub'}
-        )
+        self.assertEqual(set(fetched.rows), {"fmp", "massive", "eodhd", "finnhub"})
         tiingo_fetch.assert_not_awaited()
 
     def test_enabled_sources_are_fetched_in_registry_order(self):
         with (
             patch.object(
                 valuation,
-                'ENABLED_US_INCOME_STATEMENT_SOURCES',
-                selected_sources('fmp', 'massive', 'eodhd', 'finnhub', 'tiingo'),
+                "ENABLED_US_INCOME_STATEMENT_SOURCES",
+                selected_sources("fmp", "massive", "eodhd", "finnhub", "tiingo"),
             ),
             patch.object(
                 valuation,
-                'fetch_fmp_income_statements',
+                "fetch_fmp_income_statements",
                 new=AsyncMock(return_value={}),
             ) as fmp_fetch,
             patch.object(
                 valuation,
-                'fetch_massive_income_statements',
+                "fetch_massive_income_statements",
                 new=AsyncMock(return_value={}),
             ) as massive_fetch,
             patch.object(
                 valuation,
-                'fetch_eodhd_income_statements',
+                "fetch_eodhd_income_statements",
                 new=AsyncMock(return_value={}),
             ) as eodhd_fetch,
             patch.object(
                 valuation,
-                'fetch_finnhub_income_statements',
+                "fetch_finnhub_income_statements",
                 new=AsyncMock(return_value={}),
             ) as finnhub_fetch,
             patch.object(
                 valuation,
-                'fetch_tiingo_income_statements',
+                "fetch_tiingo_income_statements",
                 new=AsyncMock(return_value={}),
             ) as tiingo_fetch,
         ):
             fetched = asyncio.run(
-                valuation.fetch_us_income_statement_sources('HOOD', 8)
+                valuation.fetch_us_income_statement_sources("HOOD", 8)
             )
 
         self.assertEqual(
             list(fetched.rows),
-            ['fmp', 'massive', 'eodhd', 'finnhub', 'tiingo'],
+            ["fmp", "massive", "eodhd", "finnhub", "tiingo"],
         )
-        fmp_fetch.assert_awaited_once_with('u', 'HOOD', 8)
-        massive_fetch.assert_awaited_once_with('HOOD', 8)
-        eodhd_fetch.assert_awaited_once_with('HOOD', 8)
-        finnhub_fetch.assert_awaited_once_with('HOOD', 8)
-        tiingo_fetch.assert_awaited_once_with('HOOD', 8)
+        fmp_fetch.assert_awaited_once_with("u", "HOOD", 8)
+        massive_fetch.assert_awaited_once_with("HOOD", 8)
+        eodhd_fetch.assert_awaited_once_with("HOOD", 8)
+        finnhub_fetch.assert_awaited_once_with("HOOD", 8)
+        tiingo_fetch.assert_awaited_once_with("HOOD", 8)
 
     def test_failed_source_is_empty_and_marked_unavailable(self):
-        fmp_rows = {'2025-03-31': {'revenue': 100}}
+        fmp_rows = {"2025-03-31": {"revenue": 100}}
         with (
             patch.object(
                 valuation,
-                'ENABLED_US_INCOME_STATEMENT_SOURCES',
-                selected_sources('fmp', 'massive'),
+                "ENABLED_US_INCOME_STATEMENT_SOURCES",
+                selected_sources("fmp", "massive"),
             ),
             patch.object(
                 valuation,
-                'fetch_fmp_income_statements',
+                "fetch_fmp_income_statements",
                 new=AsyncMock(return_value=fmp_rows),
             ),
             patch.object(
                 valuation,
-                'fetch_massive_income_statements',
+                "fetch_massive_income_statements",
                 new=AsyncMock(side_effect=RuntimeError),
             ),
         ):
             fetched = asyncio.run(
-                valuation.fetch_us_income_statement_sources('HOOD', 8)
+                valuation.fetch_us_income_statement_sources("HOOD", 8)
             )
 
-        self.assertEqual(fetched.rows, {'fmp': fmp_rows, 'massive': {}})
-        self.assertEqual(fetched.unavailable_sources, frozenset({'massive'}))
+        self.assertEqual(fetched.rows, {"fmp": fmp_rows, "massive": {}})
+        self.assertEqual(fetched.unavailable_sources, frozenset({"massive"}))
 
     def test_cancelled_source_propagates(self):
         with (
             patch.object(
                 valuation,
-                'ENABLED_US_INCOME_STATEMENT_SOURCES',
-                selected_sources('fmp'),
+                "ENABLED_US_INCOME_STATEMENT_SOURCES",
+                selected_sources("fmp"),
             ),
             patch.object(
                 valuation,
-                'fetch_fmp_income_statements',
+                "fetch_fmp_income_statements",
                 new=AsyncMock(side_effect=asyncio.CancelledError),
             ),
         ):
             with self.assertRaises(asyncio.CancelledError):
-                asyncio.run(
-                    valuation.fetch_us_income_statement_sources('HOOD', 8)
-                )
+                asyncio.run(valuation.fetch_us_income_statement_sources("HOOD", 8))
 
     def test_us_resolution_receives_fetched_rows_and_availability(self):
-        rows = {'fmp': {'2025-03-31': {'revenue': 100}}}
-        fetched = valuation.IncomeStatementFetch(
-            rows, frozenset({'massive'})
-        )
-        resolved = {'2025-03-31': {'revenue': 100}}
+        rows = {"fmp": {"2025-03-31": {"revenue": 100}}}
+        fetched = valuation.IncomeStatementFetch(rows, frozenset({"massive"}))
+        resolved = {"2025-03-31": {"revenue": 100}}
         with (
             patch.object(
                 valuation,
-                'fetch_us_income_statement_sources',
+                "fetch_us_income_statement_sources",
                 new=AsyncMock(return_value=fetched),
             ) as fetch_sources,
             patch.object(
                 valuation,
-                'resolve_us_income_statement_quarters',
+                "resolve_us_income_statement_quarters",
                 new=AsyncMock(return_value=resolved),
             ) as resolve_quarters,
         ):
             result = asyncio.run(
-                valuation.fetch_resolved_income_statement_quarters(
-                    'u', 'HOOD', 8, True
-                )
+                valuation.fetch_resolved_income_statement_quarters("u", "HOOD", 8, True)
             )
 
         self.assertEqual(result, resolved)
-        fetch_sources.assert_awaited_once_with('HOOD', 9)
+        fetch_sources.assert_awaited_once_with("HOOD", 9)
         resolve_quarters.assert_awaited_once_with(
-            'HOOD',
+            "HOOD",
             rows,
             8,
             True,
-            unavailable_sources=frozenset({'massive'}),
+            unavailable_sources=frozenset({"massive"}),
         )
 
     def test_us_resolution_preserves_disabled_eps_after_fetch(self):
-        rows = {'fmp': {'2025-03-31': {'revenue': 100}}}
+        rows = {"fmp": {"2025-03-31": {"revenue": 100}}}
         fetched = valuation.IncomeStatementFetch(rows, frozenset())
         with (
             patch.object(
                 valuation,
-                'fetch_us_income_statement_sources',
+                "fetch_us_income_statement_sources",
                 new=AsyncMock(return_value=fetched),
             ) as fetch_sources,
             patch.object(
                 valuation,
-                'resolve_us_income_statement_quarters',
+                "resolve_us_income_statement_quarters",
                 new=AsyncMock(return_value={}),
             ) as resolve_quarters,
         ):
             asyncio.run(
                 valuation.fetch_resolved_income_statement_quarters(
-                    'u', 'HOOD', 8, False
+                    "u", "HOOD", 8, False
                 )
             )
 
-        fetch_sources.assert_awaited_once_with('HOOD', 9)
+        fetch_sources.assert_awaited_once_with("HOOD", 9)
         resolve_quarters.assert_awaited_once_with(
-            'HOOD', rows, 8, False, unavailable_sources=frozenset()
+            "HOOD", rows, 8, False, unavailable_sources=frozenset()
         )
 
     def test_disabled_massive_is_not_fetched(self):
         with (
             patch.object(
                 valuation,
-                'ENABLED_US_INCOME_STATEMENT_SOURCES',
-                selected_sources('fmp', 'eodhd', 'finnhub'),
+                "ENABLED_US_INCOME_STATEMENT_SOURCES",
+                selected_sources("fmp", "eodhd", "finnhub"),
             ),
             patch.object(
                 valuation,
-                'fetch_fmp_income_statements',
+                "fetch_fmp_income_statements",
                 new=AsyncMock(return_value={}),
             ),
             patch.object(
                 valuation,
-                'fetch_massive_income_statements',
+                "fetch_massive_income_statements",
                 new=AsyncMock(),
             ) as massive_fetch,
             patch.object(
                 valuation,
-                'fetch_eodhd_income_statements',
+                "fetch_eodhd_income_statements",
                 new=AsyncMock(return_value={}),
             ),
             patch.object(
                 valuation,
-                'fetch_finnhub_income_statements',
+                "fetch_finnhub_income_statements",
                 new=AsyncMock(return_value={}),
             ),
         ):
             fetched = asyncio.run(
-                valuation.fetch_us_income_statement_sources('HOOD', 8)
+                valuation.fetch_us_income_statement_sources("HOOD", 8)
             )
 
-        self.assertNotIn('massive', fetched.rows)
+        self.assertNotIn("massive", fetched.rows)
         massive_fetch.assert_not_awaited()
 
     def test_disabled_eodhd_is_not_fetched(self):
         with (
             patch.object(
                 valuation,
-                'ENABLED_US_INCOME_STATEMENT_SOURCES',
-                selected_sources('fmp', 'massive', 'finnhub'),
+                "ENABLED_US_INCOME_STATEMENT_SOURCES",
+                selected_sources("fmp", "massive", "finnhub"),
             ),
             patch.object(
                 valuation,
-                'fetch_fmp_income_statements',
+                "fetch_fmp_income_statements",
                 new=AsyncMock(return_value={}),
             ),
             patch.object(
                 valuation,
-                'fetch_massive_income_statements',
+                "fetch_massive_income_statements",
                 new=AsyncMock(return_value={}),
             ),
             patch.object(
                 valuation,
-                'fetch_eodhd_income_statements',
+                "fetch_eodhd_income_statements",
                 new=AsyncMock(),
             ) as eodhd_fetch,
             patch.object(
                 valuation,
-                'fetch_finnhub_income_statements',
+                "fetch_finnhub_income_statements",
                 new=AsyncMock(return_value={}),
             ),
         ):
             fetched = asyncio.run(
-                valuation.fetch_us_income_statement_sources('HOOD', 8)
+                valuation.fetch_us_income_statement_sources("HOOD", 8)
             )
 
-        self.assertNotIn('eodhd', fetched.rows)
+        self.assertNotIn("eodhd", fetched.rows)
         eodhd_fetch.assert_not_awaited()
 
     def test_source_fetch_error_redacts_request_url_and_token(self):
         request = Request(
-            'GET',
-            'https://api.tiingo.com/tiingo/fundamentals/HOOD/statements?token=secret',
+            "GET",
+            "https://api.tiingo.com/tiingo/fundamentals/HOOD/statements?token=secret",
         )
         error = HTTPStatusError(
-            'Client error', request=request, response=Response(400, request=request)
+            "Client error", request=request, response=Response(400, request=request)
         )
 
-        self.assertEqual(valuation.format_source_fetch_error(error), 'HTTP 400')
+        self.assertEqual(valuation.format_source_fetch_error(error), "HTTP 400")
 
     def test_finnhub_fetch_orders_stably_limits_and_normalizes_values(self):
         payload = {
-            'financials': [
+            "financials": [
                 {
-                    'period': '2025-09-30',
-                    'revenue': 10,
-                    'dilutedAverageSharesOutstanding': 2,
-                    'dilutedEPS': 1.0,
+                    "period": "2025-09-30",
+                    "revenue": 10,
+                    "dilutedAverageSharesOutstanding": 2,
+                    "dilutedEPS": 1.0,
                 },
                 {
-                    'period': '2025-09-30',
-                    'revenue': 20,
-                    'dilutedAverageSharesOutstanding': 3,
-                    'dilutedEPS': 2.0,
+                    "period": "2025-09-30",
+                    "revenue": 20,
+                    "dilutedAverageSharesOutstanding": 3,
+                    "dilutedEPS": 2.0,
                 },
                 {
-                    'period': '2025-12-31',
-                    'revenue': 30,
-                    'dilutedAverageSharesOutstanding': 4,
-                    'dilutedEPS': 3.0,
+                    "period": "2025-12-31",
+                    "revenue": 30,
+                    "dilutedAverageSharesOutstanding": 4,
+                    "dilutedEPS": 3.0,
                 },
             ]
         }
         with patch.object(
             valuation.shared,
-            'cached_get',
+            "cached_get",
             new=AsyncMock(return_value=json.dumps(payload)),
         ) as cached_get:
-            rows = asyncio.run(
-                valuation.fetch_finnhub_income_statements('HOOD', 2)
-            )
+            rows = asyncio.run(valuation.fetch_finnhub_income_statements("HOOD", 2))
 
-        self.assertEqual(list(rows), ['2025-12-31', '2025-09-30'])
+        self.assertEqual(list(rows), ["2025-12-31", "2025-09-30"])
         self.assertEqual(
             rows,
             {
-                '2025-12-31': {
-                    'revenue': 30_000_000,
-                    'weightedAverageShsOutDil': 4_000_000,
-                    'epsDiluted': 3.0,
+                "2025-12-31": {
+                    "revenue": 30_000_000,
+                    "weightedAverageShsOutDil": 4_000_000,
+                    "epsDiluted": 3.0,
                 },
-                '2025-09-30': {
-                    'revenue': 10_000_000,
-                    'weightedAverageShsOutDil': 2_000_000,
-                    'epsDiluted': 1.0,
+                "2025-09-30": {
+                    "revenue": 10_000_000,
+                    "weightedAverageShsOutDil": 2_000_000,
+                    "epsDiluted": 1.0,
                 },
             },
         )
@@ -478,31 +468,31 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
     def test_normalize_tiingo_income_statement_rows_uses_quarterly_income_fields(self):
         statements = [
             {
-                'date': '2025-12-31T00:00:00.000Z',
-                'quarter': 0,
-                'year': 2025,
-                'statementData': {
-                    'balanceSheet': [],
-                    'cashFlow': [],
-                    'incomeStatement': [
-                        {'dataCode': 'revenue', 'value': 999},
+                "date": "2025-12-31T00:00:00.000Z",
+                "quarter": 0,
+                "year": 2025,
+                "statementData": {
+                    "balanceSheet": [],
+                    "cashFlow": [],
+                    "incomeStatement": [
+                        {"dataCode": "revenue", "value": 999},
                     ],
-                    'overview': [],
+                    "overview": [],
                 },
             },
             {
-                'date': '2025-09-30T00:00:00.000Z',
-                'quarter': 3,
-                'year': 2025,
-                'statementData': {
-                    'balanceSheet': [],
-                    'cashFlow': [],
-                    'incomeStatement': [
-                        {'dataCode': 'revenue', 'value': 100},
-                        {'dataCode': 'shareswaDil', 'value': 20},
-                        {'dataCode': 'epsDil', 'value': 1.5},
+                "date": "2025-09-30T00:00:00.000Z",
+                "quarter": 3,
+                "year": 2025,
+                "statementData": {
+                    "balanceSheet": [],
+                    "cashFlow": [],
+                    "incomeStatement": [
+                        {"dataCode": "revenue", "value": 100},
+                        {"dataCode": "shareswaDil", "value": 20},
+                        {"dataCode": "epsDil", "value": 1.5},
                     ],
-                    'overview': [],
+                    "overview": [],
                 },
             },
         ]
@@ -512,10 +502,10 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
         self.assertEqual(
             rows,
             {
-                '2025-09-30': {
-                    'revenue': 100,
-                    'weightedAverageShsOutDil': 20,
-                    'epsDiluted': 1.5,
+                "2025-09-30": {
+                    "revenue": 100,
+                    "weightedAverageShsOutDil": 20,
+                    "epsDiluted": 1.5,
                 }
             },
         )
@@ -524,16 +514,16 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
         rows = valuation.normalize_tiingo_income_statement_rows(
             [
                 {
-                    'date': '2025-09-30',
-                    'quarter': 'Q3',
-                    'statementData': {
-                        'incomeStatement': [
-                            {'dataCode': 'revenue', 'value': 100},
+                    "date": "2025-09-30",
+                    "quarter": "Q3",
+                    "statementData": {
+                        "incomeStatement": [
+                            {"dataCode": "revenue", "value": 100},
                             {
-                                'dataCode': 'shareswaDil',
-                                'value': 20,
+                                "dataCode": "shareswaDil",
+                                "value": 20,
                             },
-                            {'dataCode': 'epsDil', 'value': 1.5},
+                            {"dataCode": "epsDil", "value": 1.5},
                         ]
                     },
                 }
@@ -541,6 +531,6 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
         )
 
         self.assertEqual(
-            rows['2025-09-30'],
-            {'revenue': 100, 'weightedAverageShsOutDil': 20, 'epsDiluted': 1.5},
+            rows["2025-09-30"],
+            {"revenue": 100, "weightedAverageShsOutDil": 20, "epsDiluted": 1.5},
         )

@@ -9,7 +9,7 @@ from numpy.typing import NDArray as Array
 from plotly import graph_objects as go
 import httpx as h
 
-BACKEND_HOST = os.getenv('BACKEND_HOST', 'localhost')
+BACKEND_HOST = os.getenv("BACKEND_HOST", "localhost")
 
 
 @dataclass
@@ -22,8 +22,8 @@ class Chart:
         self.P = np.array(self.P)
 
 
-def get_charts(market: Literal['c', 't', 'u'], symbol: str):
-    res = h.get(f'http://{BACKEND_HOST}:8080/charts?market={market}&symbol={symbol}')
+def get_charts(market: Literal["c", "t", "u"], symbol: str):
+    res = h.get(f"http://{BACKEND_HOST}:8080/charts?market={market}&symbol={symbol}")
     short, long = res.json()
     return Chart(*short), Chart(*long)
 
@@ -33,22 +33,22 @@ def plot_chart(chart: Chart):
         go.Figure(
             (
                 go.Scatter(y=chart.P),
-                go.Scatter(x=chart.X_b, y=chart.P[chart.X_b], mode='markers'),
-                go.Scatter(x=chart.X_s, y=chart.P[chart.X_s], mode='markers'),
+                go.Scatter(x=chart.X_b, y=chart.P[chart.X_b], mode="markers"),
+                go.Scatter(x=chart.X_s, y=chart.P[chart.X_s], mode="markers"),
             ),
-            {'showlegend': False},
+            {"showlegend": False},
         )
     )
 
 
 def main():
-    market = st.selectbox('Market', ('c', 't', 'u'))
-    symbol = st.text_input('Symbol', 'ETH')
-    if st.button('Run'):
+    market = st.selectbox("Market", ("c", "t", "u"))
+    symbol = st.text_input("Symbol", "ETH")
+    if st.button("Run"):
         short, long = get_charts(market, symbol)
         plot_chart(short)
         plot_chart(long)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

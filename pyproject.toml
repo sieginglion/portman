@@ -1,31 +1,32 @@
-[tool.poetry]
+[project]
 name = "portman"
 version = "0.1.0"
-description = ""
-authors = ["sieginglion <sieginglion@gmail.com>"]
+description = "Portfolio analysis and valuation service"
+requires-python = ">=3.12,<3.13"
 readme = "README.md"
+dependencies = [
+    "arrow>=1.4.0,<2",
+    "diskcache>=5.6.3,<6",
+    "fastapi>=0.127.1,<0.128",
+    "httpx>=0.28.1,<0.29",
+    "loguru>=0.7.3,<0.8",
+    "matplotlib>=3.10.9,<4",
+    "numba>=0.63.1,<0.64",
+    "openai>=2.34.0,<3",
+    "pandas[xml]>=2.3.3,<3",
+    "pydantic>=2.13.3,<3",
+    "python-dotenv>=1.2.1,<2",
+    "uvicorn>=0.40.0,<0.41",
+]
 
-[tool.poetry.dependencies]
-python = "^3.12"
-arrow = "^1.4.0"
-fastapi = "^0.127.1"
-httpx = "^0.28.1"
-numba = "^0.63.1"
-python-dotenv = "^1.2.1"
-uvicorn = "^0.40.0"
-pandas = {extras = ["xml"], version = "^2.3.3"}
-diskcache = "^5.6.3"
-matplotlib = "^3.10.9"
-openai = "^2.34.0"
-pydantic = "^2.13.3"
-loguru = "^0.7.3"
+[dependency-groups]
+dev = [
+    "notebook>=7.5.1,<8",
+    "plotly>=6.5.0,<7",
+    "ruff>=0.15.22",
+    "streamlit>=1.52.2,<2",
+    "ty>=0.0.62",
+]
 
-[tool.poetry.group.dev.dependencies]
-matplotlib = "^3.10.8"
-notebook = "^7.5.1"
-plotly = "^6.5.0"
-streamlit = "^1.52.2"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+[tool.ruff]
+target-version = "py312"
