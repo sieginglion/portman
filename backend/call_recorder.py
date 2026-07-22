@@ -48,7 +48,7 @@ class ValuationCallRecorder:
         arg0: object,
     ) -> None:
         callee = self._callee_code(target)
-        if self._is_valuation_code(caller) and self._is_valuation_code(callee):
+        if caller in self._enabled_codes and callee in self._enabled_codes:
             self.edges.add((caller.co_qualname, callee.co_qualname))
 
     def _nested_codes(self, code: CodeType) -> set[CodeType]:
@@ -61,9 +61,34 @@ class ValuationCallRecorder:
     def _module_codes(self) -> set[CodeType]:
         codes: set[CodeType] = set()
         for value in vars(self._module).values():
-            if inspect.isfunction(value) and self._is_valuation_code(value.__code__):
-                codes.update(self._nested_codes(value.__code__))
+            codes.update(self._value_codes(value))
         return codes
+
+    def _value_codes(self, value: object) -> set[CodeType]:
+        if inspect.isfunction(value):
+            return (
+                self._nested_codes(value.__code__)
+                if self._is_valuation_code(value.__code__)
+                else set()
+            )
+
+        if isinstance(value, (staticmethod, classmethod)):
+            return self._value_codes(value.__func__)
+
+        if isinstance(value, property):
+            codes: set[CodeType] = set()
+            for accessor in (value.fget, value.fset, value.fdel):
+                if accessor is not None:
+                    codes.update(self._value_codes(accessor))
+            return codes
+
+        if inspect.isclass(value):
+            codes: set[CodeType] = set()
+            for member in vars(value).values():
+                codes.update(self._value_codes(member))
+            return codes
+
+        return set()
 
     def enable(self) -> None:
         if sys.monitoring.get_tool(self._tool_id) is not None:
