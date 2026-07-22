@@ -5,8 +5,9 @@ import json
 import math
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import date
 from itertools import combinations
-from typing import Literal
+from typing import Literal, TypeGuard
 
 import pandas as pd
 from httpx import HTTPStatusError
@@ -217,7 +218,7 @@ class IncomeStatementFetch:
 
 
 def empty_sec_rows() -> pd.DataFrame:
-    return pd.DataFrame(columns=SEC_DEDUPE_COLS)
+    return pd.DataFrame(columns=pd.Index(SEC_DEDUPE_COLS))
 
 
 def source_log_diff(lhs: int | float, rhs: int | float) -> float:
@@ -243,7 +244,7 @@ def source_abs_diff(lhs: int | float, rhs: int | float) -> float:
     return abs(lhs - rhs)
 
 
-def has_source_field_value(value: int | float | None) -> bool:
+def has_source_field_value(value: XpsValue) -> TypeGuard[int | float]:
     return value is not None and not pd.isna(value)
 
 
@@ -333,7 +334,10 @@ def align_source_rows(
         for field_name in ALL_XPS_FIELDS:
             if field_name not in row:
                 continue
-            quarter.fields.setdefault(field_name, {})[source_name] = row[field_name]
+            value = row[field_name]
+            if not isinstance(value, (int, float)) and value is not None:
+                continue
+            quarter.fields.setdefault(field_name, {})[source_name] = value
 
 
 def sanitize_source_field_value(
@@ -400,13 +404,26 @@ def finnhub_million(value: int | float | None) -> int | float | None:
 def to_source_number(value: object) -> int | float | None:
     if value is None:
         return None
-    if isinstance(value, str) and value.strip() == "":
+    if isinstance(value, str):
+        if value.strip() == "":
+            return None
+    elif not isinstance(value, (int, float)):
         return None
     try:
         number = float(value)
     except (TypeError, ValueError):
         return None
     return int(number) if number.is_integer() else number
+
+
+def parse_timestamp(value: object) -> pd.Timestamp | None:
+    if not isinstance(value, (str, int, float, date)):
+        return None
+    try:
+        timestamp = pd.Timestamp(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return timestamp if isinstance(timestamp, pd.Timestamp) else None
 
 
 def normalize_finnhub_field_value(
@@ -461,7 +478,7 @@ def pivot_finmind_taiwan_rows(rows: list[dict]) -> pd.DataFrame:
 def normalize_finmind_taiwan_income_statement_rows(
     financial_statement_rows: list[dict],
     balance_sheet_rows: list[dict],
-) -> dict[str, dict]:
+) -> dict[str, SourceFieldValues]:
     financial_statement = pivot_finmind_taiwan_rows(financial_statement_rows)
     balance_sheet = pivot_finmind_taiwan_rows(balance_sheet_rows)
     if financial_statement.empty:
@@ -492,8 +509,11 @@ def normalize_finmind_taiwan_income_statement_rows(
     )
     df = df.dropna(subset=required_financial_statement_fields, how="all")
 
-    normalized_rows = {}
+    normalized_rows: dict[str, SourceFieldValues] = {}
     for date, row in df.iterrows():
+        timestamp = parse_timestamp(date)
+        if timestamp is None:
+            continue
         ordinary_shares = row["OrdinaryShare"]
         normalized_row = {
             "revenue": sanitize_source_field_value("revenue", row["Revenue"]),
@@ -509,7 +529,7 @@ def normalize_finmind_taiwan_income_statement_rows(
         normalized_row[EPS_XPS_FIELD] = sanitize_source_field_value(
             EPS_XPS_FIELD, row["EPS"]
         )
-        normalized_rows[date] = normalized_row
+        normalized_rows[date_str(timestamp)] = normalized_row
     return normalized_rows
 
 
@@ -615,13 +635,13 @@ def build_aligned_source_quarters(
     return dict(sorted(aligned_quarters.items()))
 
 
-def select_latest_required_quarters(
-    quarters: dict[str, dict],
+def select_latest_required_quarters[T](
+    quarters: dict[str, T],
     limit: int,
     *,
     symbol: str | None = None,
     quarter_label: str = "quarters",
-) -> dict[str, dict]:
+) -> dict[str, T]:
     selected = dict(sorted(quarters.items())[-limit:])
     if len(selected) != limit:
         subject = f" for {symbol}" if symbol is not None else ""
@@ -640,34 +660,45 @@ def date_str(date: pd.Timestamp) -> str:
     return date.strftime("%Y-%m-%d")
 
 
-def sec_quarter_fact_window(end: pd.Timestamp) -> SecFactWindow:
+def _sec_fact_window(
+    anchor: pd.Timestamp,
+    *,
+    start_months: tuple[int, int],
+    end_months: tuple[int, int],
+) -> SecFactWindow:
     return SecFactWindow(
-        min_start=date_str(end - pd.DateOffset(months=4)),
-        max_start=date_str(end - pd.DateOffset(months=2)),
-        min_end=date_str(end - pd.DateOffset(months=1)),
-        max_end=date_str(end + pd.DateOffset(months=1)),
+        min_start=date_str(anchor + pd.DateOffset(months=start_months[0])),
+        max_start=date_str(anchor + pd.DateOffset(months=start_months[1])),
+        min_end=date_str(anchor + pd.DateOffset(months=end_months[0])),
+        max_end=date_str(anchor + pd.DateOffset(months=end_months[1])),
+    )
+
+
+def sec_quarter_fact_window(end: pd.Timestamp) -> SecFactWindow:
+    return _sec_fact_window(
+        end,
+        start_months=(-4, -2),
+        end_months=(-1, 1),
     )
 
 
 def sec_annual_fact_window(end: pd.Timestamp) -> SecFactWindow:
-    return SecFactWindow(
-        min_start=date_str(end - pd.DateOffset(months=13)),
-        max_start=date_str(end - pd.DateOffset(months=11)),
-        min_end=date_str(end - pd.DateOffset(months=1)),
-        max_end=date_str(end + pd.DateOffset(months=1)),
+    return _sec_fact_window(
+        end,
+        start_months=(-13, -11),
+        end_months=(-1, 1),
     )
 
 
 def sec_q1_to_q3_fact_window(annual_start: pd.Timestamp) -> SecFactWindow:
-    return SecFactWindow(
-        min_start=date_str(annual_start - pd.DateOffset(months=1)),
-        max_start=date_str(annual_start + pd.DateOffset(months=1)),
-        min_end=date_str(annual_start + pd.DateOffset(months=8)),
-        max_end=date_str(annual_start + pd.DateOffset(months=10)),
+    return _sec_fact_window(
+        annual_start,
+        start_months=(-1, 1),
+        end_months=(8, 10),
     )
 
 
-def format_sec_cik(cik: int | str | None) -> str | None:
+def format_sec_cik(cik: object) -> str | None:
     if cik is None:
         return None
     if isinstance(cik, float) and cik.is_integer():
@@ -681,14 +712,22 @@ def format_sec_cik(cik: int | str | None) -> str | None:
 def normalize_massive_fiscal_quarter(value: object) -> SecFiscalQuarter | None:
     if value is None:
         return None
-    try:
-        quarter = int(value)
-    except (TypeError, ValueError):
-        value = str(value).upper()
-        return value if value in {"Q1", "Q2", "Q3", "Q4"} else None
+    if isinstance(value, str):
+        try:
+            quarter = int(value)
+        except ValueError:
+            normalized = value.upper()
+            return normalized if normalized in {"Q1", "Q2", "Q3", "Q4"} else None
+    elif isinstance(value, (int, float)):
+        try:
+            quarter = int(value)
+        except (ValueError, OverflowError):
+            return None
+    else:
+        return None
     if quarter not in {1, 2, 3, 4}:
         return None
-    return f"Q{quarter}"
+    return ("Q1", "Q2", "Q3", "Q4")[quarter - 1]
 
 
 def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
@@ -801,7 +840,9 @@ def derive_sec_q4_value(
     if annual is None:
         return None
 
-    annual_start = pd.Timestamp(annual["start"])
+    annual_start = parse_timestamp(annual["start"])
+    if annual_start is None:
+        return None
     q1_to_q3 = select_sec_fact(
         df,
         description=f"{description_prefix} Q1-Q3 from {annual['start']}",
@@ -821,10 +862,12 @@ def lookup_sec_field_value(
     metadata: SecQuarterMetadata,
     sec_rows: pd.DataFrame,
     *,
-    q4_value_kind: SecQ4ValueKind = "flow",
+    q4_value_kind: SecQ4ValueKind,
     log_errors: bool = False,
 ) -> int | float | None:
-    end = pd.Timestamp(metadata.date)
+    end = parse_timestamp(metadata.date)
+    if end is None:
+        return None
     period = metadata.period
     datum = select_sec_quarter_fact(
         sec_rows,
@@ -1018,8 +1061,9 @@ def normalize_tiingo_income_statement_rows(statements: list[dict]) -> dict[str, 
             for entry in income_statement
             if isinstance(entry, dict) and entry.get("dataCode") is not None
         }
-        date = date_str(pd.Timestamp(statement["date"]))
-        rows[date] = normalize_source_row(values, field_map)
+        date = parse_timestamp(statement["date"])
+        if date is not None:
+            rows[date_str(date)] = normalize_source_row(values, field_map)
     return rows
 
 
@@ -1332,10 +1376,10 @@ async def fetch_sec_values_for_quarters(
 ) -> dict[str, dict[str, int | float]]:
     """Fetch usable SEC field values keyed by aligned quarter."""
     values_by_quarter = {}
-    for field_name in (
-        field_name for field_name in SEC_FIELD_SPECS if field_name in fields
-    ):
-        spec = SEC_FIELD_SPECS[field_name]
+    requested_fields = set(fields)
+    for field_name, spec in SEC_FIELD_SPECS.items():
+        if field_name not in requested_fields:
+            continue
         sec_rows = await fetch_sec_field_rows(cik, field_name)
         if sec_rows.empty:
             continue

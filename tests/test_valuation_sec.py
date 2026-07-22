@@ -805,7 +805,9 @@ class SecValuationTests(unittest.TestCase):
         metadata = valuation.SecQuarterMetadata("2025-12-31", "Q4")
 
         self.assertEqual(
-            valuation.lookup_sec_field_value("revenue", "0000320193", metadata, rows),
+            valuation.lookup_sec_field_value(
+                "revenue", "0000320193", metadata, rows, q4_value_kind="flow"
+            ),
             25,
         )
 
@@ -829,7 +831,9 @@ class SecValuationTests(unittest.TestCase):
         metadata = valuation.SecQuarterMetadata("2025-12-31", "Q4")
 
         self.assertEqual(
-            valuation.lookup_sec_field_value("revenue", "0000320193", metadata, rows),
+            valuation.lookup_sec_field_value(
+                "revenue", "0000320193", metadata, rows, q4_value_kind="flow"
+            ),
             40,
         )
 
