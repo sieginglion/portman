@@ -1,36 +1,23 @@
 # Portman
 
-Portfolio analysis and valuation service.
+Portfolio analysis and valuation service. Requires Python 3.12 and [uv](https://docs.astral.sh/uv/).
 
-## Setup
-
-The project uses [uv](https://docs.astral.sh/uv/) to manage dependencies and
-the local virtual environment. Python 3.12 is selected automatically.
+## Quick start
 
 ```sh
 uv sync
-```
-
-This creates a local `.venv/`; use `uv run` rather than activating it
-manually.
-
-## Run
-
-Start the backend with:
-
-```sh
 ./bin/run.sh
 ```
 
-## Tests
+Use `uv run` for project commands; do not activate `.venv` manually.
+
+## Test
 
 ```sh
 uv run --locked python -m unittest discover -v
 ```
 
-## Code quality
-
-Check linting, formatting, and types with:
+## Quality checks
 
 ```sh
 uv run --locked ruff check .
@@ -38,7 +25,7 @@ uv run --locked ruff format --check .
 uv run --locked ty check
 ```
 
-Apply Ruff's safe lint fixes and formatter with:
+Fix lint and formatting issues:
 
 ```sh
 uv run ruff check --fix .
