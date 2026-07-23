@@ -20,7 +20,6 @@ from .call_recorder import ValuationCallRecorder
 CALL_RECORDER_ENABLED = (
     os.getenv("ENABLE_VALUATION_CALL_RECORDING", "").lower() == "true"
 )
-DOWNSIDE_SCORE_UPPER = float(os.getenv("DOWNSIDE_SCORE_UPPER", "0.5"))
 
 
 @asynccontextmanager
@@ -110,12 +109,12 @@ def add_percentile_bands(ax, series: pd.Series):
         ax.axhline(level, color="#111827", linewidth=0.8, alpha=0.35, zorder=1)
 
 
-def calc_downside_score(s: pd.Series) -> float:
+def calc_downside_score(s: pd.Series, valuation_score_upper: float) -> float:
     if s.empty or s.isna().any() or (s <= 0).any():
         raise ValueError
 
-    upper = float(s.quantile(DOWNSIDE_SCORE_UPPER))
-    lower = float(s.quantile(DOWNSIDE_SCORE_UPPER / 2))
+    upper = float(s.quantile(valuation_score_upper))
+    lower = float(s.quantile(valuation_score_upper / 2))
     if lower == upper:
         return 0
 
@@ -127,16 +126,17 @@ async def get_scores(
     market: Literal["c", "j", "t", "u"],
     symbol: str,
     q: int,
+    u: float,
 ):
     if is_btc(market, symbol):
-        return await calc_btc_score(q), None
+        return await calc_btc_score(q, u), None
     if market == "c":
         raise fastapi.HTTPException(422, "Only BTC is supported for crypto /scores")
 
     df = await valuation.calc_px(market, symbol, q)
     pe = df["pe"]
-    return calc_downside_score(df["ps"]), (
-        None if not pe.notna().all() else calc_downside_score(pe)
+    return calc_downside_score(df["ps"], u), (
+        None if not pe.notna().all() else calc_downside_score(pe, u)
     )
 
 
@@ -190,8 +190,8 @@ async def get_btc_valuation_proxy(q: int) -> pd.Series:
     return await get_btc_price_to_sma_series(window, window)
 
 
-async def calc_btc_score(q: int) -> float:
-    return calc_downside_score(await get_btc_valuation_proxy(q))
+async def calc_btc_score(q: int, valuation_score_upper: float) -> float:
+    return calc_downside_score(await get_btc_valuation_proxy(q), valuation_score_upper)
 
 
 @app.get("/px")

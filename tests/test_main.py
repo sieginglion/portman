@@ -9,13 +9,50 @@ from fastapi.testclient import TestClient
 
 
 class DownsideScoreTests(unittest.TestCase):
-    def test_lower_quantile_is_half_the_configured_upper_quantile(self):
+    def test_lower_quantile_is_half_the_requested_upper_quantile(self):
         series = pd.Series([1, 2, 4, 8, 16, 3])
 
-        with patch.object(main, "DOWNSIDE_SCORE_UPPER", 0.8):
-            score = main.calc_downside_score(series)
+        score = main.calc_downside_score(series, valuation_score_upper=0.8)
 
         self.assertEqual(score, 1)
+
+
+class ScoresRouteTests(unittest.TestCase):
+    def test_stock_scores_use_the_requested_upper_quantile(self):
+        prices = pd.DataFrame(
+            {
+                "ps": [1, 2, 4, 8, 16, 3],
+                "pe": [1, 2, 4, 8, 16, 3],
+            }
+        )
+        with patch.object(valuation, "calc_px", return_value=prices) as calc_px:
+            response = TestClient(main.app).get(
+                "/scores",
+                params={"market": "u", "symbol": "A", "q": 16, "u": 0.8},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [1.0, 1.0])
+        calc_px.assert_awaited_once_with("u", "A", 16)
+
+    def test_bitcoin_scores_forward_the_requested_upper_quantile(self):
+        with patch.object(main, "calc_btc_score", return_value=1.25) as calc_btc_score:
+            response = TestClient(main.app).get(
+                "/scores",
+                params={"market": "c", "symbol": "BTC", "q": 16, "u": 0.8},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [1.25, None])
+        calc_btc_score.assert_awaited_once_with(16, 0.8)
+
+    def test_scores_require_the_upper_quantile(self):
+        response = TestClient(main.app).get(
+            "/scores",
+            params={"market": "c", "symbol": "BTC", "q": 16},
+        )
+
+        self.assertEqual(response.status_code, 422)
 
 
 class DiagnosticsRouteTests(unittest.TestCase):
