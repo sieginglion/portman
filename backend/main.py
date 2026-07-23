@@ -113,12 +113,12 @@ def calc_downside_score(s: pd.Series) -> float:
     if s.empty or s.isna().any() or (s <= 0).any():
         raise ValueError
 
-    p50 = float(s.median())
-    p25 = float(s.quantile(0.25))
-    if p25 <= 0 or p25 >= p50:
+    upper = float(s.quantile(0.625))
+    lower = float(s.quantile(0.3125))
+    if lower == upper:
         return 0
 
-    return float(max(p50 - s.iloc[-1], 0) / (p50 - p25))
+    return float(max(upper - s.iloc[-1], 0) / (upper - lower))
 
 
 @app.get("/scores")
@@ -129,6 +129,8 @@ async def get_scores(
 ):
     if is_btc(market, symbol):
         return await calc_btc_score(q), None
+    if market == "c":
+        raise fastapi.HTTPException(422, "Only BTC is supported for crypto /scores")
 
     df = await valuation.calc_px(market, symbol, q)
     pe = df["pe"]
@@ -146,6 +148,9 @@ async def get_diagnostics():
 async def get_growth(market: Literal["c", "j", "t", "u"], symbol: str):
     if is_btc(market, symbol):
         return await calc_btc_growth()
+    if market == "c":
+        raise fastapi.HTTPException(422, "Only BTC is supported for crypto /growth")
+
     xps = await valuation.fetch_xps(market, symbol, 5, include_eps=False)
     r = xps["rps"]
     return r.iloc[-1] / r.iloc[-5] - 1
@@ -179,14 +184,13 @@ async def calc_btc_growth():
     return sma.iloc[-1] / sma.iloc[0] - 1
 
 
-async def calc_btc_score(q: int):
-    window = BTC_QUARTER_DAYS * q
-    return calc_downside_score(await get_btc_price_to_sma_series(window, window))
-
-
-async def calc_btc_ps(q: int) -> pd.Series:
+async def get_btc_valuation_proxy(q: int) -> pd.Series:
     window = BTC_QUARTER_DAYS * q
     return await get_btc_price_to_sma_series(window, window)
+
+
+async def calc_btc_score(q: int) -> float:
+    return calc_downside_score(await get_btc_valuation_proxy(q))
 
 
 @app.get("/px")
@@ -202,7 +206,7 @@ async def get_px(
         if symbol != "BTC":
             raise fastapi.HTTPException(422, "Only BTC is supported for crypto /px")
 
-        ps = await calc_btc_ps(q)
+        ps = await get_btc_valuation_proxy(q)
 
         fig, ax = plt.subplots(1, 1, figsize=(8, 4), dpi=160)
         add_percentile_bands(ax, ps)
