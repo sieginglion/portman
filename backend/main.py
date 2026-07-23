@@ -20,6 +20,7 @@ from .call_recorder import ValuationCallRecorder
 CALL_RECORDER_ENABLED = (
     os.getenv("ENABLE_VALUATION_CALL_RECORDING", "").lower() == "true"
 )
+DOWNSIDE_SCORE_UPPER = float(os.getenv("DOWNSIDE_SCORE_UPPER", "0.5"))
 
 
 @asynccontextmanager
@@ -113,8 +114,8 @@ def calc_downside_score(s: pd.Series) -> float:
     if s.empty or s.isna().any() or (s <= 0).any():
         raise ValueError
 
-    upper = float(s.quantile(0.625))
-    lower = float(s.quantile(0.3125))
+    upper = float(s.quantile(DOWNSIDE_SCORE_UPPER))
+    lower = float(s.quantile(DOWNSIDE_SCORE_UPPER / 2))
     if lower == upper:
         return 0
 

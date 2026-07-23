@@ -3,8 +3,19 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pandas as pd
 from backend import main, valuation
 from fastapi.testclient import TestClient
+
+
+class DownsideScoreTests(unittest.TestCase):
+    def test_lower_quantile_is_half_the_configured_upper_quantile(self):
+        series = pd.Series([1, 2, 4, 8, 16, 3])
+
+        with patch.object(main, "DOWNSIDE_SCORE_UPPER", 0.8):
+            score = main.calc_downside_score(series)
+
+        self.assertEqual(score, 1)
 
 
 class DiagnosticsRouteTests(unittest.TestCase):
