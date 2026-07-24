@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 import json
 import sys
-from collections.abc import Iterator
 from functools import partial
 from pathlib import Path
 from types import CodeType, ModuleType
@@ -14,10 +13,6 @@ from types import CodeType, ModuleType
 class ValuationCallRecorder:
     """Collect unique caller-to-callee pairs without building a tree."""
 
-    _COMPREHENSION_NAMES = frozenset(
-        {"<dictcomp>", "<genexpr>", "<listcomp>", "<setcomp>"}
-    )
-
     def __init__(self, module: ModuleType) -> None:
         self._module = module
         module_file = getattr(module, "__file__", None)
@@ -25,8 +20,6 @@ class ValuationCallRecorder:
             raise ValueError("the recorded module must have a source file")
         self._module_source = str(Path(module_file).resolve())
         self._tool_id = sys.monitoring.PROFILER_ID
-        self._monitored_codes: set[CodeType] = set()
-        self._comprehension_parents: dict[CodeType, CodeType] = {}
         self._active = False
         self.edges: set[tuple[str, str]] = set()
 
@@ -48,6 +41,24 @@ class ValuationCallRecorder:
 
         return None
 
+    def _callee_name(self, target: object) -> str | None:
+        """Return the source-level name for a callable from the module."""
+        if not callable(target):
+            return None
+
+        while isinstance(target, partial):
+            target = target.func
+
+        if inspect.isclass(target):
+            if target.__module__ == self._module.__name__:
+                return target.__qualname__
+            return None
+
+        code = self._callee_code(target)
+        if code is not None and self._is_module_code(code):
+            return code.co_qualname
+        return None
+
     def _record_call(
         self,
         caller: CodeType,
@@ -55,64 +66,12 @@ class ValuationCallRecorder:
         target: object,
         _arg0: object,
     ) -> None:
-        callee = self._callee_code(target)
-        if callee in self._comprehension_parents:
+        if not self._is_module_code(caller):
             return
 
-        caller = self._comprehension_parents.get(caller, caller)
-        if (
-            callee is not None
-            and caller in self._monitored_codes
-            and callee in self._monitored_codes
-        ):
-            self.edges.add((caller.co_qualname, callee.co_qualname))
-
-    def _nested_codes(
-        self,
-        code: CodeType,
-        parent: CodeType | None = None,
-    ) -> Iterator[CodeType]:
-        if code.co_name in self._COMPREHENSION_NAMES:
-            assert parent is not None
-            self._comprehension_parents[code] = parent
-        else:
-            parent = code
-
-        yield code
-        for value in code.co_consts:
-            if isinstance(value, CodeType):
-                yield from self._nested_codes(value, parent)
-
-    def _module_codes(self) -> set[CodeType]:
-        self._comprehension_parents.clear()
-        return {
-            code
-            for value in vars(self._module).values()
-            for code in self._value_codes(value)
-        }
-
-    def _value_codes(self, value: object) -> Iterator[CodeType]:
-        if inspect.isfunction(value):
-            if self._is_module_code(value.__code__):
-                yield from self._nested_codes(value.__code__)
-            return
-
-        if isinstance(value, (staticmethod, classmethod)):
-            yield from self._value_codes(value.__func__)
-            return
-
-        if isinstance(value, property):
-            for accessor in (value.fget, value.fset, value.fdel):
-                if accessor is not None:
-                    yield from self._value_codes(accessor)
-            return
-
-        if inspect.isclass(value):
-            if value.__module__ != self._module.__name__:
-                return
-
-            for member in vars(value).values():
-                yield from self._value_codes(member)
+        callee = self._callee_name(target)
+        if callee is not None:
+            self.edges.add((caller.co_qualname, callee))
 
     def enable(self) -> None:
         if self._active:
@@ -129,13 +88,10 @@ class ValuationCallRecorder:
                 sys.monitoring.events.CALL,
                 self._record_call,
             )
-            self._monitored_codes = self._module_codes()
-            for code in self._monitored_codes:
-                sys.monitoring.set_local_events(
-                    self._tool_id,
-                    code,
-                    sys.monitoring.events.CALL,
-                )
+            sys.monitoring.set_events(
+                self._tool_id,
+                sys.monitoring.events.CALL,
+            )
         except BaseException:
             self.disable()
             raise
@@ -144,10 +100,7 @@ class ValuationCallRecorder:
         if not self._active:
             return
 
-        for code in self._monitored_codes:
-            sys.monitoring.set_local_events(self._tool_id, code, 0)
-        self._monitored_codes.clear()
-        self._comprehension_parents.clear()
+        sys.monitoring.set_events(self._tool_id, 0)
         sys.monitoring.register_callback(
             self._tool_id,
             sys.monitoring.events.CALL,
