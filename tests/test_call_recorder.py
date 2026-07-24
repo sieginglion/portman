@@ -83,7 +83,7 @@ def caller():
             {("caller", "caller.<locals>.helper")},
         )
 
-    def test_attributes_comprehension_calls_to_the_enclosing_function(self):
+    def test_records_comprehension_callers(self):
         module = ModuleType("test_valuation")
         module.__file__ = "/tmp/test_valuation.py"
         source = str(Path(module.__file__).resolve())
@@ -117,7 +117,14 @@ def caller():
         finally:
             recorder.disable()
 
-        self.assertEqual(recorder.edges, {("caller", "helper")})
+        self.assertEqual(
+            recorder.edges,
+            {
+                ("caller", "caller.<locals>.<genexpr>"),
+                ("caller", "helper"),
+                ("caller.<locals>.<genexpr>", "helper"),
+            },
+        )
 
     def test_records_enabled_instance_static_class_and_property_methods(self):
         module = ModuleType("test_valuation")
