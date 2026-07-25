@@ -138,13 +138,14 @@ SOURCE_LABELS = {
     **{source.name: source.label for source in US_INCOME_STATEMENT_SOURCES},
     "sec": "SEC",
 }
+SEC_REFERENCE_SOURCES = ("sec",)
 
 
 def us_income_statement_source_order(
     include_sec: bool = False,
 ) -> tuple[str, ...]:
     names = tuple(source.name for source in ENABLED_US_INCOME_STATEMENT_SOURCES)
-    return (*names, "sec") if include_sec else names
+    return (*names, *SEC_REFERENCE_SOURCES) if include_sec else names
 
 
 BASE_XPS_FIELDS = ("revenue", "weightedAverageShsOutDil")
@@ -209,16 +210,34 @@ FINMIND_TAIWAN_SHARE_PAR_VALUE = 10
 SEC_DEDUPE_COLS = ["filed", "val", "start", "end"]
 SEC_ALLOWED_FORMS = {"10-Q", "10-K", "10-Q/A", "10-K/A"}
 SEC_METADATA_SOURCES = ("fmp", "massive")
+# Revenue concepts differ by filer. Prefer the contract-revenue fact and use the
+# generic revenues fact only when the preferred concept is unavailable.
 SEC_FIELD_SPECS = {
-    "weightedAverageShsOutDil": SecFieldSpec(
-        concept="WeightedAverageNumberOfDilutedSharesOutstanding",
-        unit="shares",
-        q4_value_kind="average",
+    "revenue": (
+        SecFieldSpec(
+            concept="RevenueFromContractWithCustomerExcludingAssessedTax",
+            unit="USD",
+            q4_value_kind="flow",
+        ),
+        SecFieldSpec(
+            concept="Revenues",
+            unit="USD",
+            q4_value_kind="flow",
+        ),
     ),
-    EPS_XPS_FIELD: SecFieldSpec(
-        concept="EarningsPerShareDiluted",
-        unit="USD/shares",
-        q4_value_kind="flow",
+    "weightedAverageShsOutDil": (
+        SecFieldSpec(
+            concept="WeightedAverageNumberOfDilutedSharesOutstanding",
+            unit="shares",
+            q4_value_kind="average",
+        ),
+    ),
+    EPS_XPS_FIELD: (
+        SecFieldSpec(
+            concept="EarningsPerShareDiluted",
+            unit="USD/shares",
+            q4_value_kind="flow",
+        ),
     ),
 }
 
@@ -891,8 +910,10 @@ async def fetch_sec_concept_rows(cik: str, concept: str, unit: str) -> pd.DataFr
     return dedupe_sec_rows(unit_rows)
 
 
-async def fetch_sec_field_rows(cik: str, field: str) -> pd.DataFrame:
-    spec = SEC_FIELD_SPECS[field]
+async def fetch_sec_field_rows(
+    cik: str,
+    spec: SecFieldSpec,
+) -> pd.DataFrame:
     try:
         return await fetch_sec_concept_rows(cik, spec.concept, spec.unit)
     except HTTPStatusError as exc:
@@ -915,6 +936,17 @@ async def fetch_sec_field_rows(cik: str, field: str) -> pd.DataFrame:
             exc,
         )
     return empty_sec_rows()
+
+
+async def fetch_first_available_sec_field(
+    cik: str,
+    field: str,
+) -> tuple[SecFieldSpec, pd.DataFrame] | None:
+    for spec in SEC_FIELD_SPECS.get(field, ()):
+        sec_rows = await fetch_sec_field_rows(cik, spec)
+        if not sec_rows.empty:
+            return spec, sec_rows
+    return None
 
 
 async def fetch_fmp_income_statements(
@@ -1201,7 +1233,7 @@ def choose_consensus_group(
     sec_consensus_groups = [
         group
         for group in largest_groups
-        if any(source_name == "sec" for source_name, _ in group)
+        if any(source_name in SEC_REFERENCE_SOURCES for source_name, _ in group)
     ]
     if len(largest_groups) == 1:
         return largest_groups[0]
@@ -1344,16 +1376,14 @@ async def fetch_sec_values_for_quarters(
     cik: str,
     metadata_by_quarter: dict[str, SecQuarterMetadata],
     fields: list[str],
-) -> dict[str, dict[str, int | float]]:
+) -> dict[str, dict[str, dict[str, int | float]]]:
     """Fetch usable SEC field values keyed by aligned quarter."""
     values_by_quarter = {}
     for field_name in dict.fromkeys(fields):
-        spec = SEC_FIELD_SPECS.get(field_name)
-        if spec is None:
+        available = await fetch_first_available_sec_field(cik, field_name)
+        if available is None:
             continue
-        sec_rows = await fetch_sec_field_rows(cik, field_name)
-        if sec_rows.empty:
-            continue
+        spec, sec_rows = available
 
         for quarter_key, metadata in metadata_by_quarter.items():
             value = lookup_sec_field_value(
@@ -1365,7 +1395,9 @@ async def fetch_sec_values_for_quarters(
             )
             value = sanitize_source_field_value(field_name, value)
             if value is not None:
-                values_by_quarter.setdefault(quarter_key, {})[field_name] = value
+                values_by_quarter.setdefault(quarter_key, {}).setdefault(
+                    field_name, {}
+                )["sec"] = value
     return values_by_quarter
 
 
@@ -1395,8 +1427,8 @@ async def add_sec_reference_values(
     )
     for quarter_key, field_values in values_by_quarter.items():
         quarter = aligned_quarters[quarter_key]
-        for field_name, value in field_values.items():
-            quarter.fields.setdefault(field_name, {})["sec"] = value
+        for field_name, source_values in field_values.items():
+            quarter.fields.setdefault(field_name, {}).update(source_values)
 
 
 def drop_incomplete_latest_us_quarter(
@@ -1472,7 +1504,7 @@ async def resolve_us_income_statement_quarters(
     # 1. Group provider rows that describe the same fiscal quarter.
     aligned_quarters = build_aligned_source_quarters(source_rows)
 
-    # 2. Add SEC shares/EPS as a reference source before validation.
+    # 2. Add SEC revenue/shares/EPS reference values before validation.
     await add_sec_reference_values(
         symbol,
         aligned_quarters,

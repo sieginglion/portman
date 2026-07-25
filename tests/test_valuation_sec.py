@@ -117,6 +117,20 @@ class SecValuationTests(unittest.TestCase):
             valuation.Consensus(106, ("fmp", "finnhub", "sec")),
         )
 
+    def test_consensus_helpers_use_a_single_sec_revenue_value(self):
+        source_values = {
+            "fmp": 100,
+            "sec": 101,
+        }
+
+        self.assertEqual(
+            valuation.resolve_source_consensus("revenue", source_values),
+            valuation.Consensus(
+                100.5,
+                ("fmp", "sec"),
+            ),
+        )
+
     def test_choose_consensus_group_prefers_sec_in_a_tie(self):
         groups = [
             (("fmp", 100), ("finnhub", 100)),
@@ -979,7 +993,7 @@ class FetchSecFieldRowsTests(unittest.IsolatedAsyncioTestCase):
             return_value=empty_rows,
         ):
             result = await valuation.fetch_sec_field_rows(
-                "0000320193", "weightedAverageShsOutDil"
+                "0000320193", valuation.SEC_FIELD_SPECS["weightedAverageShsOutDil"][0]
             )
 
         self.assertIs(result, empty_rows)
@@ -992,7 +1006,7 @@ class FetchSecFieldRowsTests(unittest.IsolatedAsyncioTestCase):
             side_effect=RuntimeError("bad SEC response"),
         ):
             result = await valuation.fetch_sec_field_rows(
-                "0000320193", "weightedAverageShsOutDil"
+                "0000320193", valuation.SEC_FIELD_SPECS["weightedAverageShsOutDil"][0]
             )
 
         self.assertIsInstance(result, pd.DataFrame)
@@ -1010,7 +1024,7 @@ class FetchSecFieldRowsTests(unittest.IsolatedAsyncioTestCase):
             side_effect=error,
         ):
             result = await valuation.fetch_sec_field_rows(
-                "0000320193", "weightedAverageShsOutDil"
+                "0000320193", valuation.SEC_FIELD_SPECS["weightedAverageShsOutDil"][0]
             )
 
         self.assertTrue(result.empty)
@@ -1022,29 +1036,54 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
             "2025-03-31": valuation.SecQuarterMetadata("2025-03-31", "Q1"),
             "2025-06-30": valuation.SecQuarterMetadata("2025-06-30", "Q2"),
         }
-        frames_by_field = {
-            "weightedAverageShsOutDil": sec_frame([{}]),
-            "epsDiluted": sec_frame([{}]),
+        frames_by_concept = {
+            "RevenueFromContractWithCustomerExcludingAssessedTax": sec_frame([{}]),
+            "Revenues": sec_frame([{}]),
+            "WeightedAverageNumberOfDilutedSharesOutstanding": sec_frame([{}]),
+            "EarningsPerShareDiluted": sec_frame([{}]),
         }
-        values_by_field_and_date = {
-            ("weightedAverageShsOutDil", "2025-03-31"): 12,
-            ("weightedAverageShsOutDil", "2025-06-30"): 0,
-            ("epsDiluted", "2025-03-31"): 1.2,
-            ("epsDiluted", "2025-06-30"): float("nan"),
+        values_by_field_concept_and_date = {
+            (
+                "revenue",
+                "RevenueFromContractWithCustomerExcludingAssessedTax",
+                "2025-03-31",
+            ): 101,
+            (
+                "revenue",
+                "RevenueFromContractWithCustomerExcludingAssessedTax",
+                "2025-06-30",
+            ): 0,
+            (
+                "weightedAverageShsOutDil",
+                "WeightedAverageNumberOfDilutedSharesOutstanding",
+                "2025-03-31",
+            ): 12,
+            (
+                "weightedAverageShsOutDil",
+                "WeightedAverageNumberOfDilutedSharesOutstanding",
+                "2025-06-30",
+            ): 0,
+            ("epsDiluted", "EarningsPerShareDiluted", "2025-03-31"): 1.2,
+            ("epsDiluted", "EarningsPerShareDiluted", "2025-06-30"): float("nan"),
         }
         fetched_fields = []
         q4_value_kinds = []
 
-        async def fake_fetch_sec_field_rows(cik, field):
+        async def fake_fetch_sec_field_rows(cik, spec):
             self.assertEqual(cik, "0000320193")
-            fetched_fields.append(field)
-            return frames_by_field[field]
+            fetched_fields.append(spec.concept)
+            return frames_by_concept[spec.concept]
 
         def fake_lookup_sec_field_value(
             field, cik, metadata, sec_rows, *, q4_value_kind
         ):
-            q4_value_kinds.append((field, q4_value_kind))
-            return values_by_field_and_date[(field, metadata.date)]
+            concept = next(
+                concept
+                for concept, frame in frames_by_concept.items()
+                if frame is sec_rows
+            )
+            q4_value_kinds.append((field, concept, q4_value_kind))
+            return values_by_field_concept_and_date[(field, concept, metadata.date)]
 
         with (
             patch.object(
@@ -1069,22 +1108,50 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
                 ],
             )
 
-        self.assertEqual(fetched_fields, ["epsDiluted", "weightedAverageShsOutDil"])
+        self.assertEqual(
+            fetched_fields,
+            [
+                "RevenueFromContractWithCustomerExcludingAssessedTax",
+                "EarningsPerShareDiluted",
+                "WeightedAverageNumberOfDilutedSharesOutstanding",
+            ],
+        )
         self.assertEqual(
             q4_value_kinds,
             [
-                ("epsDiluted", "flow"),
-                ("epsDiluted", "flow"),
-                ("weightedAverageShsOutDil", "average"),
-                ("weightedAverageShsOutDil", "average"),
+                (
+                    "revenue",
+                    "RevenueFromContractWithCustomerExcludingAssessedTax",
+                    "flow",
+                ),
+                (
+                    "revenue",
+                    "RevenueFromContractWithCustomerExcludingAssessedTax",
+                    "flow",
+                ),
+                ("epsDiluted", "EarningsPerShareDiluted", "flow"),
+                ("epsDiluted", "EarningsPerShareDiluted", "flow"),
+                (
+                    "weightedAverageShsOutDil",
+                    "WeightedAverageNumberOfDilutedSharesOutstanding",
+                    "average",
+                ),
+                (
+                    "weightedAverageShsOutDil",
+                    "WeightedAverageNumberOfDilutedSharesOutstanding",
+                    "average",
+                ),
             ],
         )
         self.assertEqual(
             values,
             {
                 "2025-03-31": {
-                    "weightedAverageShsOutDil": 12,
-                    "epsDiluted": 1.2,
+                    "revenue": {
+                        "sec": 101,
+                    },
+                    "weightedAverageShsOutDil": {"sec": 12},
+                    "epsDiluted": {"sec": 1.2},
                 }
             },
         )
@@ -1114,13 +1181,88 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(values, {})
 
+    async def test_keeps_revenue_from_the_available_sec_concept(self):
+        metadata_by_quarter = {
+            "2025-03-31": valuation.SecQuarterMetadata("2025-03-31", "Q1"),
+        }
+        fetched_sources = []
+
+        async def fake_fetch_sec_field_rows(cik, spec):
+            self.assertEqual(cik, "0000320193")
+            fetched_sources.append(spec.concept)
+            return (
+                sec_frame([])
+                if spec.concept == "RevenueFromContractWithCustomerExcludingAssessedTax"
+                else sec_frame([{}])
+            )
+
+        with (
+            patch.object(
+                valuation,
+                "fetch_sec_field_rows",
+                side_effect=fake_fetch_sec_field_rows,
+            ),
+            patch.object(valuation, "lookup_sec_field_value", return_value=101),
+        ):
+            values = await valuation.fetch_sec_values_for_quarters(
+                "0000320193", metadata_by_quarter, ["revenue"]
+            )
+
+        self.assertEqual(
+            fetched_sources,
+            ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues"],
+        )
+        self.assertEqual(
+            values,
+            {
+                "2025-03-31": {
+                    "revenue": {"sec": 101},
+                }
+            },
+        )
+
+    async def test_falls_back_to_revenues_when_preferred_concept_is_not_found(self):
+        metadata_by_quarter = {
+            "2025-03-31": valuation.SecQuarterMetadata("2025-03-31", "Q1"),
+        }
+        request = Request("GET", "https://data.sec.gov/api/xbrl/companyconcept")
+        not_found = HTTPStatusError(
+            "Not found", request=request, response=Response(404, request=request)
+        )
+        fetched_concepts = []
+
+        async def fake_fetch_sec_concept_rows(cik, concept, unit):
+            self.assertEqual((cik, unit), ("0000320193", "USD"))
+            fetched_concepts.append(concept)
+            if concept == "RevenueFromContractWithCustomerExcludingAssessedTax":
+                raise not_found
+            return sec_frame([{}])
+
+        with (
+            patch.object(
+                valuation,
+                "fetch_sec_concept_rows",
+                side_effect=fake_fetch_sec_concept_rows,
+            ),
+            patch.object(valuation, "lookup_sec_field_value", return_value=101),
+        ):
+            values = await valuation.fetch_sec_values_for_quarters(
+                "0000320193", metadata_by_quarter, ["revenue"]
+            )
+
+        self.assertEqual(
+            fetched_concepts,
+            ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues"],
+        )
+        self.assertEqual(values, {"2025-03-31": {"revenue": {"sec": 101}}})
+
     async def test_continues_when_a_field_has_no_sec_data(self):
         metadata_by_quarter = {
             "2025-03-31": valuation.SecQuarterMetadata("2025-03-31", "Q1"),
         }
 
-        async def fake_fetch_sec_field_rows(cik, field):
-            if field == "weightedAverageShsOutDil":
+        async def fake_fetch_sec_field_rows(cik, spec):
+            if spec.concept == "WeightedAverageNumberOfDilutedSharesOutstanding":
                 return sec_frame([])
             return sec_frame([{}])
 
@@ -1138,7 +1280,7 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
                 ["weightedAverageShsOutDil", "epsDiluted"],
             )
 
-        self.assertEqual(values, {"2025-03-31": {"epsDiluted": 1.2}})
+        self.assertEqual(values, {"2025-03-31": {"epsDiluted": {"sec": 1.2}}})
 
 
 class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
@@ -1154,8 +1296,18 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
             }
         }
         aligned_quarters = valuation.build_aligned_source_quarters(source_rows)
-        frames_by_field = {
-            "weightedAverageShsOutDil": sec_frame(
+        frames_by_concept = {
+            "RevenueFromContractWithCustomerExcludingAssessedTax": sec_frame(
+                [
+                    {
+                        "filed": "2025-04-20",
+                        "val": 101,
+                        "start": "2025-01-01",
+                        "end": "2025-03-31",
+                    }
+                ]
+            ),
+            "WeightedAverageNumberOfDilutedSharesOutstanding": sec_frame(
                 [
                     {
                         "filed": "2025-04-20",
@@ -1169,10 +1321,10 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
 
         fetched_fields = []
 
-        async def fake_fetch_sec_field_rows(cik, field):
+        async def fake_fetch_sec_field_rows(cik, spec):
             self.assertEqual(cik, "0000320193")
-            fetched_fields.append(field)
-            return frames_by_field[field]
+            fetched_fields.append(spec.concept)
+            return frames_by_concept[spec.concept]
 
         with patch.object(
             valuation,
@@ -1185,8 +1337,20 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
                 ["revenue", "weightedAverageShsOutDil", "revenue"],
             )
 
-        self.assertEqual(fetched_fields, ["weightedAverageShsOutDil"])
-        self.assertNotIn("sec", aligned_quarters["2025-03-31"].fields["revenue"])
+        self.assertEqual(
+            fetched_fields,
+            [
+                "RevenueFromContractWithCustomerExcludingAssessedTax",
+                "WeightedAverageNumberOfDilutedSharesOutstanding",
+            ],
+        )
+        self.assertEqual(
+            aligned_quarters["2025-03-31"].fields["revenue"],
+            {
+                "fmp": 100,
+                "sec": 101,
+            },
+        )
         self.assertEqual(
             aligned_quarters["2025-03-31"].fields["weightedAverageShsOutDil"]["sec"],
             12,
@@ -1200,7 +1364,7 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
             {"fmp": {"2025-03-31": {"revenue": 100, "cik": "320193"}}}
         )
 
-        async def fail_if_called(cik, field):
+        async def fail_if_called(cik, spec):
             raise AssertionError("SEC fetch should not run")
 
         with patch.object(

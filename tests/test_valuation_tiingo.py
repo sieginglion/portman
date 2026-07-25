@@ -138,7 +138,10 @@ from backend import valuation
 expected = ('fmp', 'massive', 'eodhd', 'finnhub', 'tiingo')
 assert tuple(source.name for source in valuation.ENABLED_US_INCOME_STATEMENT_SOURCES) == expected
 assert valuation.us_income_statement_source_order() == expected
-assert valuation.us_income_statement_source_order(include_sec=True) == (*expected, 'sec')
+assert valuation.us_income_statement_source_order(include_sec=True) == (
+    *expected,
+    *valuation.SEC_REFERENCE_SOURCES,
+)
 """
         result = subprocess.run(
             [sys.executable, "-c", code],
@@ -481,9 +484,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (*expecte
             rows = asyncio.run(valuation.fetch_tiingo_income_statements("HOOD", 8))
 
         self.assertEqual(rows, {})
-        start_date.assert_called_once_with(
-            "u", 8, valuation.TIINGO_QUARTER_BUFFER
-        )
+        start_date.assert_called_once_with("u", 8, valuation.TIINGO_QUARTER_BUFFER)
         cached_get.assert_awaited_once_with(
             valuation.TIINGO_FUNDAMENTALS_STATEMENTS_URL.format("HOOD"),
             {"asReported": "false", "startDate": "2024-01-01"},
