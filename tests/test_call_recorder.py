@@ -23,17 +23,34 @@ class ValuationCallRecorderTests(unittest.TestCase):
         monitoring.register_callback.assert_not_called()
         monitoring.free_tool_id.assert_not_called()
 
-    def test_enables_global_call_events(self):
+    def test_context_manager_enables_global_call_events(self):
         with patch.object(call_recorder.sys, "monitoring") as monitoring:
             monitoring.PROFILER_ID = 2
             monitoring.get_tool.return_value = None
             recorder = ValuationCallRecorder(valuation)
-            recorder.enable()
-            recorder.disable()
+            with recorder as active_recorder:
+                self.assertIs(active_recorder, recorder)
 
         monitoring.set_events.assert_any_call(2, monitoring.events.CALL)
         monitoring.set_events.assert_any_call(2, 0)
         monitoring.set_local_events.assert_not_called()
+
+    def test_context_manager_disables_after_an_exception(self):
+        with patch.object(call_recorder.sys, "monitoring") as monitoring:
+            monitoring.PROFILER_ID = 2
+            monitoring.get_tool.return_value = None
+            recorder = ValuationCallRecorder(valuation)
+
+            with self.assertRaisesRegex(ValueError, "expected"):
+                with recorder:
+                    raise ValueError("expected")
+
+        monitoring.set_events.assert_any_call(2, 0)
+        monitoring.register_callback.assert_any_call(
+            2,
+            monitoring.events.CALL,
+            None,
+        )
 
     def test_records_each_internal_call_edge_once(self):
         recorder = ValuationCallRecorder(valuation)

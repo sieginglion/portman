@@ -22,20 +22,12 @@ class ValuationCallRecorder:
         self._active = False
         self.edges: set[tuple[str, str]] = set()
 
-    def _is_module_code(self, code: CodeType | None) -> bool:
-        return code is not None and code.co_filename == self._module_source
+    def __enter__(self) -> ValuationCallRecorder:
+        self.enable()
+        return self
 
-    def _callee_code(self, target: object) -> CodeType | None:
-        for candidate in (
-            target,
-            getattr(target, "__func__", None),
-            getattr(type(target), "__call__", None),
-        ):
-            code = getattr(candidate, "__code__", None)
-            if isinstance(code, CodeType):
-                return code
-
-        return None
+    def __exit__(self, *_: object) -> None:
+        self.disable()
 
     def _callee_name(self, target: object) -> str | None:
         """Return the qualified name for a callable from the module."""
@@ -49,9 +41,15 @@ class ValuationCallRecorder:
                 else None
             )
 
-        code = self._callee_code(target)
-        if self._is_module_code(code):
-            return code.co_qualname
+        for candidate in (
+            target,
+            getattr(target, "__func__", None),
+            getattr(type(target), "__call__", None),
+        ):
+            code = getattr(candidate, "__code__", None)
+            if isinstance(code, CodeType) and code.co_filename == self._module_source:
+                return code.co_qualname
+
         return None
 
     def _record_call(
@@ -61,7 +59,7 @@ class ValuationCallRecorder:
         target: object,
         _arg0: object,
     ) -> None:
-        if not self._is_module_code(caller):
+        if caller.co_filename != self._module_source:
             return
 
         callee = self._callee_name(target)
