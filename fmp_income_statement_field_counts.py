@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Count fields returned by FMP for the most liquid US tickers."""
 
-import argparse
 import json
 import os
 import sys
@@ -58,14 +57,13 @@ def fetch_field_counts(tickers: list[str], api_key: str) -> Counter[str]:
             )
             counts.update(count_data_fields(response_data))
         except (httpx.HTTPError, ValueError, TypeError) as exc:
-            message = str(exc)
-            print(f"Skipping {ticker}: {message}", file=sys.stderr)
+            print(f"Skipping {ticker}: {exc}", file=sys.stderr)
 
     return counts
 
 
-def load_liquid_us_tickers(api_key: str, pool_size: int | None) -> list[str]:
-    pool_size = pool_size or quadrant.candidate_pool_size(
+def load_liquid_us_tickers(api_key: str) -> list[str]:
+    pool_size = quadrant.candidate_pool_size(
         quadrant.RESULT_LIMIT, quadrant.CANDIDATE_POOL_MULTIPLIER
     )
     candidates = quadrant.load_top_candidates(
@@ -77,27 +75,13 @@ def load_liquid_us_tickers(api_key: str, pool_size: int | None) -> list[str]:
     return [candidate.symbol for candidate in candidates]
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Count fields in one quarterly FMP as-reported income statement "
-        "for the most liquid US tickers."
-    )
-    parser.add_argument(
-        "--pool-size",
-        type=int,
-        help="number of US tickers to rank for liquidity (default: quadrant pool size)",
-    )
-    return parser.parse_args()
-
-
 def main() -> int:
     load_dotenv()
-    args = parse_args()
     api_key = os.environ.get("FMP_API_KEY") or os.environ.get("FMP_KEY")
     if not api_key:
         raise SystemExit("FMP_API_KEY (or FMP_KEY) is required")
 
-    tickers = load_liquid_us_tickers(api_key, args.pool_size)
+    tickers = load_liquid_us_tickers(api_key)
 
     counts = fetch_field_counts(tickers, api_key)
     counts = Counter(
