@@ -224,7 +224,46 @@ def late_callee():
 
         self.assertEqual(recorder.edges, {("caller", "late_callee")})
 
-    def test_records_partial_and_callable_instance_calls(self):
+    def test_records_callable_instance_calls(self):
+        module = ModuleType("test_valuation")
+        module.__file__ = "/tmp/test_valuation.py"
+        source = str(Path(module.__file__).resolve())
+        exec(
+            compile(
+                """
+def helper():
+    return 1
+
+class Worker:
+    def __call__(self):
+        return helper()
+
+def caller():
+    return Worker()()
+""",
+                source,
+                "exec",
+            ),
+            vars(module),
+        )
+
+        recorder = ValuationCallRecorder(module)
+        recorder.enable()
+        try:
+            self.assertEqual(module.caller(), 1)
+        finally:
+            recorder.disable()
+
+        self.assertEqual(
+            recorder.edges,
+            {
+                ("caller", "Worker"),
+                ("caller", "Worker.__call__"),
+                ("Worker.__call__", "helper"),
+            },
+        )
+
+    def test_ignores_partial_calls(self):
         module = ModuleType("test_valuation")
         module.__file__ = "/tmp/test_valuation.py"
         source = str(Path(module.__file__).resolve())
@@ -236,12 +275,8 @@ from functools import partial
 def helper():
     return 1
 
-class Worker:
-    def __call__(self):
-        return helper()
-
 def caller():
-    return partial(helper)() + Worker()()
+    return partial(helper)()
 """,
                 source,
                 "exec",
@@ -252,19 +287,11 @@ def caller():
         recorder = ValuationCallRecorder(module)
         recorder.enable()
         try:
-            self.assertEqual(module.caller(), 2)
+            self.assertEqual(module.caller(), 1)
         finally:
             recorder.disable()
 
-        self.assertEqual(
-            recorder.edges,
-            {
-                ("caller", "helper"),
-                ("caller", "Worker"),
-                ("caller", "Worker.__call__"),
-                ("Worker.__call__", "helper"),
-            },
-        )
+        self.assertEqual(recorder.edges, set())
 
     def test_excludes_a_callable_from_another_module(self):
         module = ModuleType("test_valuation")
