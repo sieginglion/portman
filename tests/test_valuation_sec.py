@@ -634,6 +634,22 @@ class SecValuationTests(unittest.TestCase):
         )
         self.assertTrue(valuation.dedupe_sec_rows([{"form": "8-K"}]).empty)
 
+    def test_dedupe_sec_rows_keeps_expected_empty_shape_after_dropping_rows(self):
+        df = valuation.dedupe_sec_rows(
+            [
+                {
+                    "form": "10-Q",
+                    "filed": "2025-04-20",
+                    "val": 10,
+                    "start": None,
+                    "end": "2025-03-31",
+                }
+            ]
+        )
+
+        self.assertEqual(df.columns.tolist(), valuation.SEC_DEDUPE_COLS)
+        self.assertTrue(df.empty)
+
     def test_select_sec_fact_requires_exactly_one_date_window_match(self):
         rows = sec_frame(
             [
@@ -1176,11 +1192,9 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
             values,
             {
                 "2025-03-31": {
-                    "revenue": {
-                        "sec": 101,
-                    },
-                    "weightedAverageShsOutDil": {"sec": 12},
-                    "epsDiluted": {"sec": 1.2},
+                    "revenue": 101,
+                    "weightedAverageShsOutDil": 12,
+                    "epsDiluted": 1.2,
                 }
             },
         )
@@ -1245,7 +1259,7 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
             values,
             {
                 "2025-03-31": {
-                    "revenue": {"sec": 101},
+                    "revenue": 101,
                 }
             },
         )
@@ -1283,7 +1297,7 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
             fetched_concepts,
             ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues"],
         )
-        self.assertEqual(values, {"2025-03-31": {"revenue": {"sec": 101}}})
+        self.assertEqual(values, {"2025-03-31": {"revenue": 101}})
 
     async def test_continues_when_a_field_has_no_sec_data(self):
         metadata_by_quarter = {
@@ -1309,7 +1323,7 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
                 ["weightedAverageShsOutDil", "epsDiluted"],
             )
 
-        self.assertEqual(values, {"2025-03-31": {"epsDiluted": {"sec": 1.2}}})
+        self.assertEqual(values, {"2025-03-31": {"epsDiluted": 1.2}})
 
 
 class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):

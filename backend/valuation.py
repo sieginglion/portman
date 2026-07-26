@@ -723,13 +723,12 @@ def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
             missing_columns,
         )
         return empty_sec_rows()
-    df = df.dropna(subset=SEC_DEDUPE_COLS)
-    if df.empty:
-        return empty_sec_rows()
-    df = df[SEC_DEDUPE_COLS]
-    df = df.sort_values("filed", kind="mergesort")
-    df = df.drop_duplicates(["start", "end"], keep="last")
-    return df
+    return (
+        df.dropna(subset=SEC_DEDUPE_COLS)
+        .loc[:, SEC_DEDUPE_COLS]
+        .sort_values("filed", kind="mergesort")
+        .drop_duplicates(["start", "end"], keep="last")
+    )
 
 
 def format_sec_candidate_block(matches: pd.DataFrame) -> str:
@@ -1340,7 +1339,7 @@ async def fetch_sec_values_for_quarters(
     cik: str,
     metadata_by_quarter: dict[str, SecQuarterMetadata],
     fields: list[str],
-) -> dict[str, dict[str, dict[str, int | float]]]:
+) -> dict[str, dict[str, int | float]]:
     """Fetch usable SEC field values keyed by aligned quarter."""
     values_by_quarter = {}
     for field_name in dict.fromkeys(fields):
@@ -1359,9 +1358,7 @@ async def fetch_sec_values_for_quarters(
             )
             value = sanitize_source_field_value(field_name, value)
             if value is not None:
-                values_by_quarter.setdefault(quarter_key, {}).setdefault(
-                    field_name, {}
-                )["sec"] = value
+                values_by_quarter.setdefault(quarter_key, {})[field_name] = value
     return values_by_quarter
 
 
@@ -1391,8 +1388,8 @@ async def add_sec_reference_values(
     )
     for quarter_key, field_values in values_by_quarter.items():
         quarter = aligned_quarters[quarter_key]
-        for field_name, source_values in field_values.items():
-            quarter.fields.setdefault(field_name, {}).update(source_values)
+        for field_name, value in field_values.items():
+            quarter.fields.setdefault(field_name, {})["sec"] = value
 
 
 def drop_incomplete_latest_us_quarter(
