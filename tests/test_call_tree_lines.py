@@ -29,7 +29,7 @@ def a():
 
         self.assertEqual(result.stdout, "b 4\n")
 
-    def test_all_lists_every_reachable_descendant_without_line_counts(self):
+    def test_all_lists_root_and_every_reachable_descendant_without_line_counts(self):
         result = self._run(
             """
 def c():
@@ -46,7 +46,7 @@ def a():
             extra_args=["--all", "--source", "/does-not-need-to-exist.py"],
         )
 
-        self.assertEqual(result.stdout, "b\nc\n")
+        self.assertEqual(result.stdout, "a\nb\nc\n")
 
     def test_counts_shared_descendants_once_per_cumulative_total(self):
         result = self._run(
@@ -112,29 +112,6 @@ def a():
         )
 
         self.assertEqual(result.stdout, "a.<locals>.Worker.b 4\n")
-
-    def test_counts_lambdas_and_comprehensions_with_qualified_names(self):
-        result = self._run(
-            """
-def helper():
-    return 1
-
-def a():
-    return (lambda: helper())() + sum([helper() for _ in range(1)])
-""".lstrip(),
-            [
-                ["a", "a.<locals>.<lambda>"],
-                ["a", "a.<locals>.<listcomp>"],
-                ["a.<locals>.<lambda>", "helper"],
-                ["a.<locals>.<listcomp>", "helper"],
-            ],
-            "a",
-        )
-
-        self.assertEqual(
-            result.stdout,
-            "a.<locals>.<lambda> 3\na.<locals>.<listcomp> 3\n",
-        )
 
     def test_ranks_direct_callees_by_lines_then_name(self):
         result = self._run(

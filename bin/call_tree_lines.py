@@ -12,8 +12,6 @@ Examples:
     uv run python bin/call_tree_lines.py fetch_xps --all
 """
 
-from __future__ import annotations
-
 import argparse
 import ast
 import json
@@ -44,18 +42,6 @@ class CallableLineCollector(ast.NodeVisitor):
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
         self._visit_callable(node, "<lambda>")
-
-    def visit_ListComp(self, node: ast.ListComp) -> None:
-        self._visit_callable(node, "<listcomp>")
-
-    def visit_SetComp(self, node: ast.SetComp) -> None:
-        self._visit_callable(node, "<setcomp>")
-
-    def visit_DictComp(self, node: ast.DictComp) -> None:
-        self._visit_callable(node, "<dictcomp>")
-
-    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
-        self._visit_callable(node, "<genexpr>")
 
     def _visit_callable(self, node: ast.AST, name: str) -> None:
         self.line_counts[self._qualname(name)] += self._line_count(node)
@@ -182,7 +168,7 @@ def main() -> None:
     graph = load_graph(edges_path)
 
     if args.all:
-        for callee in sorted(reachable_callables(args.root, graph) - {args.root}):
+        for callee in sorted(reachable_callables(args.root, graph)):
             print(callee)
         return
 
