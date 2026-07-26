@@ -78,14 +78,6 @@ class SecQuarterMetadata:
     period: SecFiscalQuarter
 
 
-@dataclass(frozen=True)
-class SecFactWindow:
-    min_start: str
-    max_start: str
-    min_end: str
-    max_end: str
-
-
 type AlignedQuarters = dict[str, AlignedQuarter]
 type ResolvedQuarter = dict[str, XpsValue]
 type ResolvedQuarters = dict[str, ResolvedQuarter]
@@ -676,19 +668,6 @@ def date_str(date: pd.Timestamp) -> str:
     return date.strftime("%Y-%m-%d")
 
 
-def _sec_fact_window(
-    expected_start: pd.Timestamp,
-    expected_end: pd.Timestamp,
-) -> SecFactWindow:
-    tolerance = pd.DateOffset(months=1)
-    return SecFactWindow(
-        min_start=date_str(expected_start - tolerance),
-        max_start=date_str(expected_start + tolerance),
-        min_end=date_str(expected_end - tolerance),
-        max_end=date_str(expected_end + tolerance),
-    )
-
-
 def format_sec_cik(cik: object) -> str | None:
     if cik is None:
         return None
@@ -746,27 +725,33 @@ def format_sec_candidate_block(matches: pd.DataFrame) -> str:
 def select_sec_fact(
     df: pd.DataFrame,
     description: str,
-    window: SecFactWindow,
+    expected_start: pd.Timestamp,
+    expected_end: pd.Timestamp,
     *,
     log_errors: bool = True,
 ) -> pd.Series | None:
     if df.empty:
         return None
+    tolerance = pd.DateOffset(months=1)
+    min_start = date_str(expected_start - tolerance)
+    max_start = date_str(expected_start + tolerance)
+    min_end = date_str(expected_end - tolerance)
+    max_end = date_str(expected_end + tolerance)
     matches = df[
-        df["start"].gt(window.min_start)
-        & df["start"].lt(window.max_start)
-        & df["end"].gt(window.min_end)
-        & df["end"].lt(window.max_end)
+        df["start"].gt(min_start)
+        & df["start"].lt(max_start)
+        & df["end"].gt(min_end)
+        & df["end"].lt(max_end)
     ]
     if matches.empty:
         if log_errors:
             logger.warning(
                 "SEC fact lookup returned no matches: {} start=({}, {}) end=({}, {})",
                 description,
-                window.min_start,
-                window.max_start,
-                window.min_end,
-                window.max_end,
+                min_start,
+                max_start,
+                min_end,
+                max_end,
             )
         return None
     if len(matches) > 1:
@@ -774,10 +759,10 @@ def select_sec_fact(
             logger.warning(
                 "SEC fact lookup returned multiple matches: {} start=({}, {}) end=({}, {}) matches={}\n{}",
                 description,
-                window.min_start,
-                window.max_start,
-                window.min_end,
-                window.max_end,
+                min_start,
+                max_start,
+                min_end,
+                max_end,
                 len(matches),
                 format_sec_candidate_block(matches),
             )
@@ -796,7 +781,8 @@ def derive_sec_q4_value(
     annual = select_sec_fact(
         df,
         description=f"{description_prefix} annual {date_str(end)}",
-        window=_sec_fact_window(end - pd.DateOffset(months=12), end),
+        expected_start=end - pd.DateOffset(months=12),
+        expected_end=end,
         log_errors=log_errors,
     )
     if annual is None:
@@ -808,7 +794,8 @@ def derive_sec_q4_value(
     q1_to_q3 = select_sec_fact(
         df,
         description=f"{description_prefix} Q1-Q3 from {annual['start']}",
-        window=_sec_fact_window(annual_start, annual_start + pd.DateOffset(months=9)),
+        expected_start=annual_start,
+        expected_end=annual_start + pd.DateOffset(months=9),
         log_errors=log_errors,
     )
     if q1_to_q3 is None:
@@ -834,7 +821,8 @@ def lookup_sec_field_value(
     datum = select_sec_fact(
         sec_rows,
         description=f"CIK{cik} {field} {date_str(end)}",
-        window=_sec_fact_window(end - pd.DateOffset(months=3), end),
+        expected_start=end - pd.DateOffset(months=3),
+        expected_end=end,
         log_errors=log_errors and period != "Q4",
     )
     if datum is not None:
@@ -851,16 +839,12 @@ def lookup_sec_field_value(
     )
 
 
-async def fetch_sec_company_concept_raw(cik: str, concept: str) -> dict:
+async def fetch_sec_concept_rows(cik: str, concept: str, unit: str) -> pd.DataFrame:
     text = await shared.cached_get(
         SEC_COMPANY_CONCEPT_URL.format(cik, concept),
         headers={"User-Agent": SEC_USER_AGENT},
     )
-    return json.loads(text)
-
-
-async def fetch_sec_concept_rows(cik: str, concept: str, unit: str) -> pd.DataFrame:
-    data = await fetch_sec_company_concept_raw(cik, concept)
+    data = json.loads(text)
     unit_rows = data.get("units", {}).get(unit, [])
     if len(unit_rows) == 0:
         logger.warning(

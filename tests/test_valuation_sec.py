@@ -665,25 +665,26 @@ class SecValuationTests(unittest.TestCase):
         match = valuation.select_sec_fact(
             rows,
             "single match",
-            valuation.SecFactWindow(
-                min_start="2024-12-31",
-                max_start="2025-02-01",
-                min_end="2025-03-01",
-                max_end="2025-04-30",
-            ),
+            pd.Timestamp("2025-01-01"),
+            pd.Timestamp("2025-03-31"),
         )
 
         self.assertEqual(match["val"], 10)
         self.assertIsNone(
             valuation.select_sec_fact(
-                rows,
-                "strict boundary",
-                valuation.SecFactWindow(
-                    min_start="2025-01-01",
-                    max_start="2025-02-01",
-                    min_end="2025-03-01",
-                    max_end="2025-04-30",
+                sec_frame(
+                    [
+                        {
+                            "filed": "2025-04-20",
+                            "val": 10,
+                            "start": "2024-12-01",
+                            "end": "2025-03-31",
+                        }
+                    ]
                 ),
+                "strict boundary",
+                pd.Timestamp("2025-01-01"),
+                pd.Timestamp("2025-03-31"),
                 log_errors=False,
             )
         )
@@ -710,12 +711,8 @@ class SecValuationTests(unittest.TestCase):
             valuation.select_sec_fact(
                 rows,
                 "ambiguous",
-                valuation.SecFactWindow(
-                    min_start="2024-12-31",
-                    max_start="2025-02-01",
-                    min_end="2025-03-01",
-                    max_end="2025-04-30",
-                ),
+                pd.Timestamp("2025-01-01"),
+                pd.Timestamp("2025-03-31"),
                 log_errors=False,
             )
         )
@@ -1029,6 +1026,52 @@ class SecValuationTests(unittest.TestCase):
 
 
 class FetchSecFieldRowsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fetch_sec_concept_rows_fetches_and_dedupes_requested_unit(self):
+        response = """
+        {
+          "units": {
+            "USD": [
+              {
+                "form": "10-Q",
+                "filed": "2025-04-20",
+                "val": 10,
+                "start": "2025-01-01",
+                "end": "2025-03-31"
+              },
+              {
+                "form": "10-Q/A",
+                "filed": "2025-05-01",
+                "val": 11,
+                "start": "2025-01-01",
+                "end": "2025-03-31"
+              }
+            ]
+          }
+        }
+        """
+        cached_get = AsyncMock(return_value=response)
+
+        with patch.object(valuation.shared, "cached_get", cached_get):
+            rows = await valuation.fetch_sec_concept_rows(
+                "0000320193", "Revenues", "USD"
+            )
+
+        cached_get.assert_awaited_once_with(
+            valuation.SEC_COMPANY_CONCEPT_URL.format("0000320193", "Revenues"),
+            headers={"User-Agent": valuation.SEC_USER_AGENT},
+        )
+        self.assertEqual(
+            rows.to_dict("records"),
+            [
+                {
+                    "filed": "2025-05-01",
+                    "val": 11,
+                    "start": "2025-01-01",
+                    "end": "2025-03-31",
+                }
+            ],
+        )
+
     async def test_returns_the_empty_concept_frame(self):
         empty_rows = sec_frame([])
 
@@ -1064,9 +1107,9 @@ class FetchSecFieldRowsTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch.object(
-            valuation,
-            "fetch_sec_company_concept_raw",
-            side_effect=error,
+            valuation.shared,
+            "cached_get",
+            new=AsyncMock(side_effect=error),
         ):
             result = await valuation.fetch_sec_field_rows(
                 "0000320193", valuation.SEC_FIELD_SPECS["weightedAverageShsOutDil"][0]
