@@ -22,6 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EDGES = PROJECT_ROOT / "portman-valuation-call-edges.json"
 DEFAULT_SOURCE = PROJECT_ROOT / "backend/valuation.py"
 DEFAULT_ROOT = "fetch_resolved_income_statement_quarters"
+TRANSPARENT_CALLABLES = {"<dictcomp>", "<genexpr>", "<listcomp>", "<setcomp>"}
 
 
 class CallableLineCollector(ast.NodeVisitor):
@@ -29,9 +30,13 @@ class CallableLineCollector(ast.NodeVisitor):
 
     def __init__(self) -> None:
         self.line_counts: dict[str, int] = defaultdict(int)
+        self.callables: set[str] = set()
         self._qualname_parts: list[str] = []
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        name = self._qualname(node.name)
+        self.callables.add(name)
+        self.line_counts[name] += self._line_count(node)
         self._visit_scoped(node, node.name)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -43,8 +48,25 @@ class CallableLineCollector(ast.NodeVisitor):
     def visit_Lambda(self, node: ast.Lambda) -> None:
         self._visit_callable(node, "<lambda>")
 
-    def _visit_callable(self, node: ast.AST, name: str) -> None:
-        self.line_counts[self._qualname(name)] += self._line_count(node)
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        self._visit_callable(node, "<genexpr>", count_lines=False)
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        self._visit_callable(node, "<listcomp>", count_lines=False)
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        self._visit_callable(node, "<setcomp>", count_lines=False)
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        self._visit_callable(node, "<dictcomp>", count_lines=False)
+
+    def _visit_callable(
+        self, node: ast.AST, name: str, *, count_lines: bool = True
+    ) -> None:
+        qualified_name = self._qualname(name)
+        self.callables.add(qualified_name)
+        if count_lines:
+            self.line_counts[qualified_name] += self._line_count(node)
         self._visit_scoped(node, name, "<locals>")
 
     def _visit_scoped(self, node: ast.AST, *parts: str) -> None:
@@ -126,25 +148,63 @@ def load_graph(path: Path) -> dict[str, set[str]]:
     return graph
 
 
-def collect_line_counts(source: Path) -> dict[str, int]:
-    """Return source-line counts keyed by Python code-object qualified name."""
+def collect_source_callables(source: Path) -> CallableLineCollector:
+    """Collect source callables and line counts keyed by qualified name."""
     tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
     collector = CallableLineCollector()
     collector.visit(tree)
-    return collector.line_counts
+    return collector
+
+
+def is_transparent_callable(name: str) -> bool:
+    """Return whether ``name`` is a compiler-generated comprehension."""
+    return name.rsplit(".", maxsplit=1)[-1] in TRANSPARENT_CALLABLES
 
 
 def reachable_callables(root: str, graph: dict[str, set[str]]) -> set[str]:
-    """Return all recorded callables reachable from ``root``, including it."""
+    """Return reachable source callables, passing through comprehensions."""
     reachable: set[str] = set()
+    visited: set[str] = set()
     pending = [root]
     while pending:
         current = pending.pop()
-        if current in reachable:
+        if current in visited:
             continue
-        reachable.add(current)
+        visited.add(current)
+        if not is_transparent_callable(current):
+            reachable.add(current)
         pending.extend(graph.get(current, ()))
     return reachable
+
+
+def direct_callees(root: str, graph: dict[str, set[str]]) -> set[str]:
+    """Return direct source callees, passing through comprehensions."""
+    callees: set[str] = set()
+    seen: set[str] = set()
+    pending = list(graph.get(root, ()))
+    while pending:
+        callee = pending.pop()
+        if callee in seen:
+            continue
+        seen.add(callee)
+        if is_transparent_callable(callee):
+            pending.extend(graph.get(callee, ()))
+        else:
+            callees.add(callee)
+    return callees
+
+
+def validate_graph_callables(
+    graph: dict[str, set[str]], source_callables: set[str], source: Path
+) -> None:
+    """Ensure every recorded caller and callee is represented in ``source``."""
+    recorded = set(graph)
+    recorded.update(callee for callees in graph.values() for callee in callees)
+    missing = sorted(recorded - source_callables)
+    if missing:
+        raise SystemExit(
+            f"recorded callable(s) not found in {source}: {', '.join(missing)}"
+        )
 
 
 def cumulative_line_count(
@@ -173,11 +233,13 @@ def main() -> None:
         return
 
     source_path = require_file(args.source, "source file")
-    line_counts = collect_line_counts(source_path)
+    collector = collect_source_callables(source_path)
+    validate_graph_callables(graph, collector.callables, source_path)
+    line_counts = collector.line_counts
     if args.root not in line_counts:
         raise SystemExit(f"callable {args.root!r} was not found in {source_path}")
 
-    callees = graph.get(args.root, set())
+    callees = direct_callees(args.root, graph)
     ranked_callees = [
         (callee, cumulative_line_count(callee, graph, line_counts, source_path))
         for callee in callees

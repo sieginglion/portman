@@ -113,6 +113,129 @@ def a():
 
         self.assertEqual(result.stdout, "a.<locals>.Worker.b 4\n")
 
+    def test_counts_a_called_class(self):
+        result = self._run(
+            """
+class Result:
+    value: int
+
+def a():
+    return Result()
+""".lstrip(),
+            [["a", "Result"]],
+            "a",
+        )
+
+        self.assertEqual(result.stdout, "Result 2\n")
+
+    def test_comprehensions_are_transparent_direct_callees(self):
+        expressions = {
+            "<genexpr>": "(c() for _ in range(1))",
+            "<listcomp>": "[c() for _ in range(1)]",
+            "<setcomp>": "{c() for _ in range(1)}",
+            "<dictcomp>": "{_: c() for _ in range(1)}",
+        }
+        for callable_name, expression in expressions.items():
+            with self.subTest(callable_name=callable_name):
+                result = self._run(
+                    f"""
+def c():
+    return 1
+
+def a():
+    return {expression}
+""".lstrip(),
+                    [
+                        ["a", f"a.<locals>.{callable_name}"],
+                        [f"a.<locals>.{callable_name}", "c"],
+                    ],
+                    "a",
+                )
+
+                self.assertEqual(result.stdout, "c 2\n")
+
+    def test_comprehensions_are_transparent_to_cumulative_counts(self):
+        result = self._run(
+            """
+def c():
+    return 1
+
+def b():
+    return (c() for _ in range(1))
+
+class IncomeStatementFetch:
+    rows: object
+
+def a():
+    return b(), IncomeStatementFetch()
+""".lstrip(),
+            [
+                ["a", "b"],
+                ["a", "IncomeStatementFetch"],
+                ["b", "b.<locals>.<genexpr>"],
+                ["b.<locals>.<genexpr>", "c"],
+            ],
+            "a",
+        )
+
+        self.assertEqual(result.stdout, "b 4\nIncomeStatementFetch 2\n")
+
+    def test_all_omits_comprehensions_but_retains_their_descendants(self):
+        result = self._run(
+            """
+def c():
+    return 1
+
+def a():
+    return (c() for _ in range(1))
+""".lstrip(),
+            [
+                ["a", "a.<locals>.<genexpr>"],
+                ["a.<locals>.<genexpr>", "c"],
+            ],
+            "a",
+            extra_args=["--all"],
+        )
+
+        self.assertEqual(result.stdout, "a\nc\n")
+
+    def test_rejects_a_disconnected_recorded_callable_missing_from_source(self):
+        result = self._run(
+            """
+def b():
+    return 1
+
+def a():
+    return b()
+""".lstrip(),
+            [["a", "b"], ["removed", "also_removed"]],
+            "a",
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("also_removed, removed", result.stderr)
+
+    def test_rejects_a_comprehension_not_present_in_source(self):
+        result = self._run(
+            """
+def c():
+    return 1
+
+def a():
+    return c()
+""".lstrip(),
+            [
+                ["a", "a.<locals>.<genexpr>"],
+                ["a.<locals>.<genexpr>", "c"],
+            ],
+            "a",
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("a.<locals>.<genexpr>", result.stderr)
+
     def test_ranks_direct_callees_by_lines_then_name(self):
         result = self._run(
             """
