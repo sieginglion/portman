@@ -10,7 +10,10 @@ from backend import valuation
 
 
 def sec_frame(rows):
-    return pd.DataFrame(rows, columns=valuation.SEC_DEDUPE_COLS)
+    df = pd.DataFrame(rows, columns=valuation.SEC_DEDUPE_COLS)
+    for column in ("filed", "start", "end"):
+        df[column] = pd.to_datetime(df[column])
+    return df
 
 
 def selected_sources(*names: str):
@@ -619,10 +622,10 @@ class SecValuationTests(unittest.TestCase):
             df.to_dict("records"),
             [
                 {
-                    "filed": "2025-05-01",
+                    "filed": pd.Timestamp("2025-05-01"),
                     "val": 11,
-                    "start": "2025-01-01",
-                    "end": "2025-03-31",
+                    "start": pd.Timestamp("2025-01-01"),
+                    "end": pd.Timestamp("2025-03-31"),
                 }
             ],
         )
@@ -649,6 +652,23 @@ class SecValuationTests(unittest.TestCase):
 
         self.assertEqual(df.columns.tolist(), valuation.SEC_DEDUPE_COLS)
         self.assertTrue(df.empty)
+
+    def test_dedupe_sec_rows_drops_invalid_dates(self):
+        valid_row = {
+            "form": "10-Q",
+            "filed": "2025-04-20",
+            "val": 10,
+            "start": "2025-01-01",
+            "end": "2025-03-31",
+        }
+
+        for column in ("filed", "start", "end"):
+            with self.subTest(column=column):
+                df = valuation.dedupe_sec_rows(
+                    [{**valid_row, column: "not a date"}]
+                )
+
+                self.assertTrue(df.empty)
 
     def test_select_sec_fact_requires_exactly_one_date_window_match(self):
         rows = sec_frame(
@@ -1025,7 +1045,7 @@ class SecValuationTests(unittest.TestCase):
         )
 
 
-class FetchSecFieldRowsTests(unittest.IsolatedAsyncioTestCase):
+class FetchSecConceptRowsTests(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_sec_concept_rows_fetches_and_dedupes_requested_unit(self):
         response = """
         {
@@ -1064,58 +1084,26 @@ class FetchSecFieldRowsTests(unittest.IsolatedAsyncioTestCase):
             rows.to_dict("records"),
             [
                 {
-                    "filed": "2025-05-01",
+                    "filed": pd.Timestamp("2025-05-01"),
                     "val": 11,
-                    "start": "2025-01-01",
-                    "end": "2025-03-31",
+                    "start": pd.Timestamp("2025-01-01"),
+                    "end": pd.Timestamp("2025-03-31"),
                 }
             ],
         )
 
-    async def test_returns_the_empty_concept_frame(self):
-        empty_rows = sec_frame([])
 
-        with patch.object(
-            valuation,
-            "fetch_sec_concept_rows",
-            return_value=empty_rows,
-        ):
-            result = await valuation.fetch_sec_field_rows(
-                "0000320193", valuation.SEC_FIELD_SPECS["weightedAverageShsOutDil"][0]
-            )
-
-        self.assertIs(result, empty_rows)
-        self.assertTrue(result.empty)
-
-    async def test_returns_empty_dataframe_when_concept_processing_fails(self):
+    async def test_first_available_field_skips_concept_processing_failures(self):
         with patch.object(
             valuation,
             "fetch_sec_concept_rows",
             side_effect=RuntimeError("bad SEC response"),
         ):
-            result = await valuation.fetch_sec_field_rows(
-                "0000320193", valuation.SEC_FIELD_SPECS["weightedAverageShsOutDil"][0]
+            result = await valuation.fetch_first_available_sec_field(
+                "0000320193", "weightedAverageShsOutDil"
             )
 
-        self.assertIsInstance(result, pd.DataFrame)
-        self.assertTrue(result.empty)
-
-    async def test_returns_empty_dataframe_when_concept_is_not_found(self):
-        request = Request("GET", "https://data.sec.gov/api/xbrl/companyconcept")
-        error = HTTPStatusError(
-            "Not found", request=request, response=Response(404, request=request)
-        )
-
-        with patch.object(
-            valuation.shared,
-            "cached_get",
-            new=AsyncMock(side_effect=error),
-        ):
-            result = await valuation.fetch_sec_field_rows(
-                "0000320193", valuation.SEC_FIELD_SPECS["weightedAverageShsOutDil"][0]
-            )
-
-        self.assertTrue(result.empty)
+        self.assertIsNone(result)
 
 
 class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
@@ -1157,10 +1145,10 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
         fetched_fields = []
         q4_value_kinds = []
 
-        async def fake_fetch_sec_field_rows(cik, spec):
+        async def fake_fetch_sec_concept_rows(cik, concept, unit):
             self.assertEqual(cik, "0000320193")
-            fetched_fields.append(spec.concept)
-            return frames_by_concept[spec.concept]
+            fetched_fields.append(concept)
+            return frames_by_concept[concept]
 
         def fake_lookup_sec_field_value(
             field, cik, metadata, sec_rows, *, q4_value_kind
@@ -1176,8 +1164,8 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 valuation,
-                "fetch_sec_field_rows",
-                side_effect=fake_fetch_sec_field_rows,
+                "fetch_sec_concept_rows",
+                side_effect=fake_fetch_sec_concept_rows,
             ),
             patch.object(
                 valuation,
@@ -1250,7 +1238,7 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 valuation,
-                "fetch_sec_field_rows",
+                "fetch_sec_concept_rows",
                 return_value=sec_frame([]),
             ),
             patch.object(
@@ -1273,20 +1261,20 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
         }
         fetched_sources = []
 
-        async def fake_fetch_sec_field_rows(cik, spec):
+        async def fake_fetch_sec_concept_rows(cik, concept, unit):
             self.assertEqual(cik, "0000320193")
-            fetched_sources.append(spec.concept)
+            fetched_sources.append(concept)
             return (
                 sec_frame([])
-                if spec.concept == "RevenueFromContractWithCustomerExcludingAssessedTax"
+                if concept == "RevenueFromContractWithCustomerExcludingAssessedTax"
                 else sec_frame([{}])
             )
 
         with (
             patch.object(
                 valuation,
-                "fetch_sec_field_rows",
-                side_effect=fake_fetch_sec_field_rows,
+                "fetch_sec_concept_rows",
+                side_effect=fake_fetch_sec_concept_rows,
             ),
             patch.object(valuation, "lookup_sec_field_value", return_value=101),
         ):
@@ -1307,21 +1295,58 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_falls_back_to_revenues_when_preferred_concept_is_not_found(self):
+    async def test_falls_back_to_revenues_when_preferred_concept_fails(self):
         metadata_by_quarter = {
             "2025-03-31": valuation.SecQuarterMetadata("2025-03-31", "Q1"),
         }
         request = Request("GET", "https://data.sec.gov/api/xbrl/companyconcept")
-        not_found = HTTPStatusError(
-            "Not found", request=request, response=Response(404, request=request)
+        errors = (
+            HTTPStatusError(
+                "Not found", request=request, response=Response(404, request=request)
+            ),
+            HTTPStatusError(
+                "Server error", request=request, response=Response(500, request=request)
+            ),
+            RuntimeError("bad SEC response"),
         )
-        fetched_concepts = []
+
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                fetched_concepts = []
+
+                async def fake_fetch_sec_concept_rows(cik, concept, unit):
+                    self.assertEqual((cik, unit), ("0000320193", "USD"))
+                    fetched_concepts.append(concept)
+                    if concept == "RevenueFromContractWithCustomerExcludingAssessedTax":
+                        raise error
+                    return sec_frame([{}])
+
+                with (
+                    patch.object(
+                        valuation,
+                        "fetch_sec_concept_rows",
+                        side_effect=fake_fetch_sec_concept_rows,
+                    ),
+                    patch.object(valuation, "lookup_sec_field_value", return_value=101),
+                ):
+                    values = await valuation.fetch_sec_values_for_quarters(
+                        "0000320193", metadata_by_quarter, ["revenue"]
+                    )
+
+                self.assertEqual(
+                    fetched_concepts,
+                    ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues"],
+                )
+                self.assertEqual(values, {"2025-03-31": {"revenue": 101}})
+
+    async def test_continues_when_a_field_has_no_sec_data(self):
+        metadata_by_quarter = {
+            "2025-03-31": valuation.SecQuarterMetadata("2025-03-31", "Q1"),
+        }
 
         async def fake_fetch_sec_concept_rows(cik, concept, unit):
-            self.assertEqual((cik, unit), ("0000320193", "USD"))
-            fetched_concepts.append(concept)
-            if concept == "RevenueFromContractWithCustomerExcludingAssessedTax":
-                raise not_found
+            if concept == "WeightedAverageNumberOfDilutedSharesOutstanding":
+                return sec_frame([])
             return sec_frame([{}])
 
         with (
@@ -1329,34 +1354,6 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
                 valuation,
                 "fetch_sec_concept_rows",
                 side_effect=fake_fetch_sec_concept_rows,
-            ),
-            patch.object(valuation, "lookup_sec_field_value", return_value=101),
-        ):
-            values = await valuation.fetch_sec_values_for_quarters(
-                "0000320193", metadata_by_quarter, ["revenue"]
-            )
-
-        self.assertEqual(
-            fetched_concepts,
-            ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues"],
-        )
-        self.assertEqual(values, {"2025-03-31": {"revenue": 101}})
-
-    async def test_continues_when_a_field_has_no_sec_data(self):
-        metadata_by_quarter = {
-            "2025-03-31": valuation.SecQuarterMetadata("2025-03-31", "Q1"),
-        }
-
-        async def fake_fetch_sec_field_rows(cik, spec):
-            if spec.concept == "WeightedAverageNumberOfDilutedSharesOutstanding":
-                return sec_frame([])
-            return sec_frame([{}])
-
-        with (
-            patch.object(
-                valuation,
-                "fetch_sec_field_rows",
-                side_effect=fake_fetch_sec_field_rows,
             ),
             patch.object(valuation, "lookup_sec_field_value", return_value=1.2),
         ):
@@ -1407,15 +1404,15 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
 
         fetched_fields = []
 
-        async def fake_fetch_sec_field_rows(cik, spec):
+        async def fake_fetch_sec_concept_rows(cik, concept, unit):
             self.assertEqual(cik, "0000320193")
-            fetched_fields.append(spec.concept)
-            return frames_by_concept[spec.concept]
+            fetched_fields.append(concept)
+            return frames_by_concept[concept]
 
         with patch.object(
             valuation,
-            "fetch_sec_field_rows",
-            side_effect=fake_fetch_sec_field_rows,
+            "fetch_sec_concept_rows",
+            side_effect=fake_fetch_sec_concept_rows,
         ):
             await valuation.add_sec_reference_values(
                 "AAPL",
@@ -1450,11 +1447,11 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
             {"fmp": {"2025-03-31": {"revenue": 100, "cik": "320193"}}}
         )
 
-        async def fail_if_called(cik, spec):
+        async def fail_if_called(cik, concept, unit):
             raise AssertionError("SEC fetch should not run")
 
         with patch.object(
-            valuation, "fetch_sec_field_rows", side_effect=fail_if_called
+            valuation, "fetch_sec_concept_rows", side_effect=fail_if_called
         ):
             await valuation.add_sec_reference_values("AAPL", without_cik, ["revenue"])
             await valuation.add_sec_reference_values(

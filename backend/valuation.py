@@ -702,9 +702,11 @@ def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
             missing_columns,
         )
         return empty_sec_rows()
+    df = df.loc[:, SEC_DEDUPE_COLS].copy()
+    for column in ("filed", "start", "end"):
+        df[column] = pd.to_datetime(df[column], errors="coerce")
     return (
         df.dropna(subset=SEC_DEDUPE_COLS)
-        .loc[:, SEC_DEDUPE_COLS]
         .sort_values("filed", kind="mergesort")
         .drop_duplicates(["start", "end"], keep="last")
     )
@@ -715,8 +717,8 @@ def format_sec_candidate_block(matches: pd.DataFrame) -> str:
     for _, row in matches.sort_values(["end", "start", "filed"]).iterrows():
         lines.append(
             "    "
-            f"filed={row['filed']} "
-            f"period={row['start']}..{row['end']} "
+            f"filed={date_str(row['filed'])} "
+            f"period={date_str(row['start'])}..{date_str(row['end'])} "
             f"value={format_source_log_value(row['val'])}"
         )
     return "\n".join(lines)
@@ -733,25 +735,23 @@ def select_sec_fact(
     if df.empty:
         return None
     tolerance = pd.DateOffset(months=1)
-    min_start = date_str(expected_start - tolerance)
-    max_start = date_str(expected_start + tolerance)
-    min_end = date_str(expected_end - tolerance)
-    max_end = date_str(expected_end + tolerance)
+    min_start = expected_start - tolerance
+    max_start = expected_start + tolerance
+    min_end = expected_end - tolerance
+    max_end = expected_end + tolerance
     matches = df[
-        df["start"].gt(min_start)
-        & df["start"].lt(max_start)
-        & df["end"].gt(min_end)
-        & df["end"].lt(max_end)
+        df["start"].between(min_start, max_start, inclusive="neither")
+        & df["end"].between(min_end, max_end, inclusive="neither")
     ]
     if matches.empty:
         if log_errors:
             logger.warning(
                 "SEC fact lookup returned no matches: {} start=({}, {}) end=({}, {})",
                 description,
-                min_start,
-                max_start,
-                min_end,
-                max_end,
+                date_str(min_start),
+                date_str(max_start),
+                date_str(min_end),
+                date_str(max_end),
             )
         return None
     if len(matches) > 1:
@@ -759,10 +759,10 @@ def select_sec_fact(
             logger.warning(
                 "SEC fact lookup returned multiple matches: {} start=({}, {}) end=({}, {}) matches={}\n{}",
                 description,
-                min_start,
-                max_start,
-                min_end,
-                max_end,
+                date_str(min_start),
+                date_str(max_start),
+                date_str(min_end),
+                date_str(max_end),
                 len(matches),
                 format_sec_candidate_block(matches),
             )
@@ -788,12 +788,10 @@ def derive_sec_q4_value(
     if annual is None:
         return None
 
-    annual_start = parse_timestamp(annual["start"])
-    if annual_start is None:
-        return None
+    annual_start = annual["start"]
     q1_to_q3 = select_sec_fact(
         df,
-        description=f"{description_prefix} Q1-Q3 from {annual['start']}",
+        description=f"{description_prefix} Q1-Q3 from {date_str(annual_start)}",
         expected_start=annual_start,
         expected_end=annual_start + pd.DateOffset(months=9),
         log_errors=log_errors,
@@ -857,40 +855,34 @@ async def fetch_sec_concept_rows(cik: str, concept: str, unit: str) -> pd.DataFr
     return dedupe_sec_rows(unit_rows)
 
 
-async def fetch_sec_field_rows(
-    cik: str,
-    spec: SecFieldSpec,
-) -> pd.DataFrame:
-    try:
-        return await fetch_sec_concept_rows(cik, spec.concept, spec.unit)
-    except HTTPStatusError as exc:
-        if exc.response.status_code == 404:
-            logger.warning(
-                "SEC concept {} not found for CIK {}; skipping", spec.concept, cik
-            )
-        else:
-            logger.warning(
-                "SEC concept {} fetch failed for CIK {} status={}; skipping",
-                spec.concept,
-                cik,
-                exc.response.status_code,
-            )
-    except Exception as exc:
-        logger.warning(
-            "SEC concept {} fetch/processing failed for CIK {}: {}; skipping",
-            spec.concept,
-            cik,
-            exc,
-        )
-    return empty_sec_rows()
-
-
 async def fetch_first_available_sec_field(
     cik: str,
     field: str,
 ) -> tuple[SecFieldSpec, pd.DataFrame] | None:
     for spec in SEC_FIELD_SPECS.get(field, ()):
-        sec_rows = await fetch_sec_field_rows(cik, spec)
+        try:
+            sec_rows = await fetch_sec_concept_rows(cik, spec.concept, spec.unit)
+        except HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                logger.warning(
+                    "SEC concept {} not found for CIK {}; skipping", spec.concept, cik
+                )
+            else:
+                logger.warning(
+                    "SEC concept {} fetch failed for CIK {} status={}; skipping",
+                    spec.concept,
+                    cik,
+                    exc.response.status_code,
+                )
+            continue
+        except Exception as exc:
+            logger.warning(
+                "SEC concept {} fetch/processing failed for CIK {}: {}; skipping",
+                spec.concept,
+                cik,
+                exc,
+            )
+            continue
         if not sec_rows.empty:
             return spec, sec_rows
     return None
