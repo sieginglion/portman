@@ -689,27 +689,6 @@ def _sec_fact_window(
     )
 
 
-def sec_quarter_fact_window(end: pd.Timestamp) -> SecFactWindow:
-    return _sec_fact_window(
-        expected_start=end - pd.DateOffset(months=3),
-        expected_end=end,
-    )
-
-
-def sec_annual_fact_window(end: pd.Timestamp) -> SecFactWindow:
-    return _sec_fact_window(
-        expected_start=end - pd.DateOffset(months=12),
-        expected_end=end,
-    )
-
-
-def sec_q1_to_q3_fact_window(annual_start: pd.Timestamp) -> SecFactWindow:
-    return _sec_fact_window(
-        expected_start=annual_start,
-        expected_end=annual_start + pd.DateOffset(months=9),
-    )
-
-
 def format_sec_cik(cik: object) -> str | None:
     if cik is None:
         return None
@@ -807,21 +786,6 @@ def select_sec_fact(
     return matches.iloc[-1]
 
 
-def select_sec_quarter_fact(
-    df: pd.DataFrame,
-    description: str,
-    end: pd.Timestamp,
-    *,
-    log_errors: bool = True,
-) -> pd.Series | None:
-    return select_sec_fact(
-        df,
-        description=description,
-        window=sec_quarter_fact_window(end),
-        log_errors=log_errors,
-    )
-
-
 def derive_sec_q4_value(
     value_kind: SecQ4ValueKind,
     df: pd.DataFrame,
@@ -833,7 +797,7 @@ def derive_sec_q4_value(
     annual = select_sec_fact(
         df,
         description=f"{description_prefix} annual {date_str(end)}",
-        window=sec_annual_fact_window(end),
+        window=_sec_fact_window(end - pd.DateOffset(months=12), end),
         log_errors=log_errors,
     )
     if annual is None:
@@ -845,7 +809,7 @@ def derive_sec_q4_value(
     q1_to_q3 = select_sec_fact(
         df,
         description=f"{description_prefix} Q1-Q3 from {annual['start']}",
-        window=sec_q1_to_q3_fact_window(annual_start),
+        window=_sec_fact_window(annual_start, annual_start + pd.DateOffset(months=9)),
         log_errors=log_errors,
     )
     if q1_to_q3 is None:
@@ -868,10 +832,10 @@ def lookup_sec_field_value(
     if end is None:
         return None
     period = metadata.period
-    datum = select_sec_quarter_fact(
+    datum = select_sec_fact(
         sec_rows,
         description=f"CIK{cik} {field} {date_str(end)}",
-        end=end,
+        window=_sec_fact_window(end - pd.DateOffset(months=3), end),
         log_errors=log_errors and period != "Q4",
     )
     if datum is not None:

@@ -634,47 +634,6 @@ class SecValuationTests(unittest.TestCase):
         )
         self.assertTrue(valuation.dedupe_sec_rows([{"form": "8-K"}]).empty)
 
-    def test_sec_fact_window_builders_use_expected_date_ranges(self):
-        cases = [
-            (
-                "quarter",
-                valuation.sec_quarter_fact_window,
-                pd.Timestamp("2025-03-31"),
-                valuation.SecFactWindow(
-                    min_start="2024-11-30",
-                    max_start="2025-01-31",
-                    min_end="2025-02-28",
-                    max_end="2025-04-30",
-                ),
-            ),
-            (
-                "annual",
-                valuation.sec_annual_fact_window,
-                pd.Timestamp("2025-12-31"),
-                valuation.SecFactWindow(
-                    min_start="2024-11-30",
-                    max_start="2025-01-31",
-                    min_end="2025-11-30",
-                    max_end="2026-01-31",
-                ),
-            ),
-            (
-                "Q1-Q3",
-                valuation.sec_q1_to_q3_fact_window,
-                pd.Timestamp("2025-01-01"),
-                valuation.SecFactWindow(
-                    min_start="2024-12-01",
-                    max_start="2025-02-01",
-                    min_end="2025-09-01",
-                    max_end="2025-11-01",
-                ),
-            ),
-        ]
-
-        for label, build_window, date, expected in cases:
-            with self.subTest(window=label):
-                self.assertEqual(build_window(date), expected)
-
     def test_select_sec_fact_requires_exactly_one_date_window_match(self):
         rows = sec_frame(
             [
@@ -745,24 +704,6 @@ class SecValuationTests(unittest.TestCase):
             )
         )
 
-    def test_select_sec_quarter_fact_uses_quarter_date_window(self):
-        rows = sec_frame(
-            [
-                {
-                    "filed": "2025-04-20",
-                    "val": 10,
-                    "start": "2025-01-01",
-                    "end": "2025-03-31",
-                }
-            ]
-        )
-
-        match = valuation.select_sec_quarter_fact(
-            rows, "quarter", pd.Timestamp("2025-03-31")
-        )
-
-        self.assertEqual(match["val"], 10)
-
     def test_derive_sec_q4_value_uses_annual_less_q1_to_q3(self):
         rows = sec_frame(
             [
@@ -787,6 +728,94 @@ class SecValuationTests(unittest.TestCase):
             ),
             40,
         )
+
+    def test_lookup_sec_field_value_uses_strict_quarter_window(self):
+        fact = {
+            "filed": "2025-04-20",
+            "val": 10,
+            "start": "2025-01-01",
+            "end": "2025-03-31",
+        }
+        cases = (
+            ("start just above minimum", "start", "2024-12-01", 10),
+            ("start at minimum", "start", "2024-11-30", None),
+            ("start just below maximum", "start", "2025-01-30", 10),
+            ("start at maximum", "start", "2025-01-31", None),
+            ("end just above minimum", "end", "2025-03-01", 10),
+            ("end at minimum", "end", "2025-02-28", None),
+            ("end just below maximum", "end", "2025-04-29", 10),
+            ("end at maximum", "end", "2025-04-30", None),
+        )
+        metadata = valuation.SecQuarterMetadata("2025-03-31", "Q1")
+
+        for label, key, value, expected in cases:
+            with self.subTest(boundary=label):
+                self.assertEqual(
+                    valuation.lookup_sec_field_value(
+                        "revenue",
+                        "0000320193",
+                        metadata,
+                        sec_frame([{**fact, key: value}]),
+                        q4_value_kind="flow",
+                    ),
+                    expected,
+                )
+
+    def test_derive_sec_q4_value_uses_strict_annual_and_q1_to_q3_windows(self):
+        annual_fact = {
+            "filed": "2026-02-01",
+            "val": 100,
+            "start": "2025-01-01",
+            "end": "2025-12-31",
+        }
+        q1_to_q3_fact = {
+            "filed": "2025-11-01",
+            "val": 60,
+            "start": "2025-01-01",
+            "end": "2025-09-30",
+        }
+        cases = (
+            ("annual start just above minimum", {"start": "2024-12-01"}, True, {}, 40),
+            ("annual start at minimum", {"start": "2024-11-30"}, False, {}, None),
+            ("annual start just below maximum", {"start": "2025-01-30"}, True, {}, 40),
+            ("annual start at maximum", {"start": "2025-01-31"}, False, {}, None),
+            ("annual end just above minimum", {"end": "2025-12-01"}, False, {}, 40),
+            ("annual end at minimum", {"end": "2025-11-30"}, False, {}, None),
+            ("annual end just below maximum", {"end": "2026-01-30"}, False, {}, 40),
+            ("annual end at maximum", {"end": "2026-01-31"}, False, {}, None),
+            ("Q1-Q3 start just above minimum", {}, False, {"start": "2024-12-02"}, 40),
+            ("Q1-Q3 start at minimum", {}, False, {"start": "2024-12-01"}, None),
+            ("Q1-Q3 start just below maximum", {}, False, {"start": "2025-01-31"}, 40),
+            ("Q1-Q3 start at maximum", {}, False, {"start": "2025-02-01"}, None),
+            ("Q1-Q3 end just above minimum", {}, False, {"end": "2025-09-02"}, 40),
+            ("Q1-Q3 end at minimum", {}, False, {"end": "2025-09-01"}, None),
+            ("Q1-Q3 end just below maximum", {}, False, {"end": "2025-10-31"}, 40),
+            ("Q1-Q3 end at maximum", {}, False, {"end": "2025-11-01"}, None),
+        )
+
+        for label, annual_updates, align_q1_to_q3, q1_to_q3_updates, expected in cases:
+            annual = {**annual_fact, **annual_updates}
+            q1_to_q3 = q1_to_q3_fact.copy()
+            if align_q1_to_q3:
+                q1_to_q3.update(
+                    start=annual["start"],
+                    end=(
+                        pd.Timestamp(annual["start"]) + pd.DateOffset(months=9)
+                    ).strftime("%Y-%m-%d"),
+                )
+            q1_to_q3.update(q1_to_q3_updates)
+
+            with self.subTest(boundary=label):
+                self.assertEqual(
+                    valuation.derive_sec_q4_value(
+                        "flow",
+                        sec_frame([annual, q1_to_q3]),
+                        "q4 revenue",
+                        pd.Timestamp("2025-12-31"),
+                        log_errors=False,
+                    ),
+                    expected,
+                )
 
     def test_derive_sec_q4_value_handles_average_share_count(self):
         rows = sec_frame(
