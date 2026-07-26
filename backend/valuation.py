@@ -412,7 +412,9 @@ def normalize_income_statement_rows(
                     for output_field, source_field in metadata_fields.items()
                 }
             )
-        normalized_rows[row[date_field]] = normalized_row
+        date = parse_timestamp(row.get(date_field))
+        if date is not None:
+            normalized_rows[date_str(date)] = normalized_row
     return normalized_rows
 
 
@@ -967,12 +969,11 @@ async def fetch_finnhub_income_statements(symbol: str, limit: int) -> dict[str, 
         "weightedAverageShsOutDil": "dilutedAverageSharesOutstanding",
         EPS_XPS_FIELD: "dilutedEPS",
     }
-    financials_by_period = [
-        (row["period"], -index, row)
-        for index, row in enumerate(json.loads(text)["financials"] or [])
-    ]
-    financials_by_period.sort(reverse=True)
-    financials = [row for _, _, row in financials_by_period[:limit]]
+    financials = sorted(
+        json.loads(text)["financials"] or [],
+        key=lambda row: row["period"],
+        reverse=True,
+    )[:limit]
     return normalize_income_statement_rows(
         financials,
         field_map=field_map,

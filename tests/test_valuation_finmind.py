@@ -6,6 +6,18 @@ from backend import valuation
 
 
 class FinMindValuationTests(unittest.TestCase):
+    def test_normalize_income_statement_rows_canonicalizes_dates(self):
+        rows = valuation.normalize_income_statement_rows(
+            [
+                {"date": "2025-09-30T00:00:00.000Z", "revenue": 100},
+                {"date": "not-a-date", "revenue": 200},
+            ],
+            field_map={"revenue": "revenue"},
+            date_field="date",
+        )
+
+        self.assertEqual(rows, {"2025-09-30": {"revenue": 100}})
+
     def test_quarterly_start_date_uses_market_timezone_and_buffer(self):
         now = valuation.pd.Timestamp("2026-07-22 15:30:00", tz="UTC")
         with patch.object(valuation.pd.Timestamp, "now", return_value=now) as now_mock:
