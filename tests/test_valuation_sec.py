@@ -584,7 +584,7 @@ class SecValuationTests(unittest.TestCase):
             },
         )
 
-    def test_dedupe_sec_rows_keeps_latest_supported_filing_per_period(self):
+    def test_dedupe_sec_rows_prefers_latest_amendment_per_period(self):
         rows = [
             {
                 "form": "10-Q",
@@ -601,9 +601,9 @@ class SecValuationTests(unittest.TestCase):
                 "end": "2025-03-31",
             },
             {
-                "form": "8-K",
+                "form": "10-Q/A",
                 "filed": "2025-05-02",
-                "val": 99,
+                "val": 13,
                 "start": "2025-01-01",
                 "end": "2025-03-31",
             },
@@ -611,7 +611,7 @@ class SecValuationTests(unittest.TestCase):
                 "form": "10-Q",
                 "filed": "2025-05-03",
                 "val": 12,
-                "start": None,
+                "start": "2025-01-01",
                 "end": "2025-03-31",
             },
         ]
@@ -622,13 +622,35 @@ class SecValuationTests(unittest.TestCase):
             df.to_dict("records"),
             [
                 {
-                    "filed": pd.Timestamp("2025-05-01"),
-                    "val": 11,
+                    "filed": pd.Timestamp("2025-05-02"),
+                    "val": 13,
                     "start": pd.Timestamp("2025-01-01"),
                     "end": pd.Timestamp("2025-03-31"),
                 }
             ],
         )
+
+    def test_dedupe_sec_rows_keeps_first_original_filing_per_period(self):
+        rows = [
+            {
+                "form": "10-Q",
+                "filed": "2025-04-20",
+                "val": 10,
+                "start": "2025-01-01",
+                "end": "2025-03-31",
+            },
+            {
+                "form": "10-Q",
+                "filed": "2025-05-03",
+                "val": 12,
+                "start": "2025-01-01",
+                "end": "2025-03-31",
+            },
+        ]
+
+        df = valuation.dedupe_sec_rows(rows)
+
+        self.assertEqual(df.iloc[0]["val"], 10)
 
     def test_dedupe_sec_rows_returns_expected_empty_shape(self):
         self.assertEqual(

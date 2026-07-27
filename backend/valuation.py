@@ -704,14 +704,16 @@ def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
             missing_columns,
         )
         return empty_sec_rows()
-    df = df.loc[:, SEC_DEDUPE_COLS].copy()
     for column in ("filed", "start", "end"):
         df[column] = pd.to_datetime(df[column], errors="coerce")
-    return (
-        df.dropna(subset=SEC_DEDUPE_COLS)
-        .sort_values("filed", kind="mergesort")
-        .drop_duplicates(["start", "end"], keep="last")
+    df = df.dropna(subset=SEC_DEDUPE_COLS).sort_values("filed", kind="mergesort")
+    is_amendment = df["form"].str.endswith("/A", na=False)
+    has_amendment = is_amendment.groupby([df["start"], df["end"]]).transform("any")
+    originals = df[~is_amendment & ~has_amendment].drop_duplicates(
+        ["start", "end"], keep="first"
     )
+    amendments = df[is_amendment].drop_duplicates(["start", "end"], keep="last")
+    return pd.concat([originals, amendments]).loc[:, SEC_DEDUPE_COLS]
 
 
 def format_sec_candidate_block(matches: pd.DataFrame) -> str:
