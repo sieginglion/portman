@@ -1100,13 +1100,9 @@ async def fetch_eodhd_income_statements(symbol: str, limit: int) -> dict[str, di
 
 
 def field_has_consensus(field: str, lhs: int | float, rhs: int | float) -> bool:
-    log_diff = source_log_diff(lhs, rhs)
-    if field == "epsDiluted":
-        return (
-            source_abs_diff(lhs, rhs) < EPS_ABS_TOLERANCE
-            or log_diff < SOURCE_DIFF_THRESHOLD
-        )
-    return log_diff < SOURCE_DIFF_THRESHOLD
+    if field == EPS_XPS_FIELD and source_abs_diff(lhs, rhs) < EPS_ABS_TOLERANCE:
+        return True
+    return source_log_diff(lhs, rhs) < SOURCE_DIFF_THRESHOLD
 
 
 def usable_source_values(
@@ -1129,15 +1125,13 @@ def build_consensus_groups(
     values: list[tuple[str, int | float]],
 ) -> list[tuple[tuple[str, int | float], ...]]:
     adjacent_sources = {source_name: set() for source_name, _ in values}
-    for i, (lhs_name, lhs_value) in enumerate(values):
-        for rhs_name, rhs_value in values[i + 1 :]:
-            if not field_has_consensus(field, lhs_value, rhs_value):
-                continue
-            adjacent_sources[lhs_name].add(rhs_name)
-            adjacent_sources[rhs_name].add(lhs_name)
+    for (lhs_name, lhs_value), (rhs_name, rhs_value) in combinations(values, 2):
+        if not field_has_consensus(field, lhs_value, rhs_value):
+            continue
+        adjacent_sources[lhs_name].add(rhs_name)
+        adjacent_sources[rhs_name].add(lhs_name)
 
     consensus_groups = []
-    value_by_source = dict(values)
     visited_sources = set()
     for source_name, _ in values:
         if source_name in visited_sources or not adjacent_sources[source_name]:
@@ -1156,11 +1150,7 @@ def build_consensus_groups(
                 pending_sources.append(adjacent_source)
 
         consensus_groups.append(
-            tuple(
-                (name, value_by_source[name])
-                for name in us_income_statement_source_order(include_sec=True)
-                if name in group_names
-            )
+            tuple(item for item in values if item[0] in group_names)
         )
     return consensus_groups
 

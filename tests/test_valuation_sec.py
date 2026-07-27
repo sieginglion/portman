@@ -103,6 +103,14 @@ class SecValuationTests(unittest.TestCase):
         )
         self.assertEqual(consensus, valuation.Consensus(101, ("finnhub", "fmp")))
 
+    def test_consensus_groups_preserve_supplied_value_order(self):
+        values = [("finnhub", 102), ("fmp", 100)]
+
+        self.assertEqual(
+            valuation.build_consensus_groups("revenue", values),
+            [(("finnhub", 102), ("fmp", 100))],
+        )
+
     def test_consensus_helpers_reject_disagreeing_sources(self):
         source_values = {"fmp": 100, "finnhub": 120}
 
@@ -158,6 +166,9 @@ class SecValuationTests(unittest.TestCase):
         self.assertIsNotNone(consensus)
         self.assertAlmostEqual(consensus.value, -0.0045)
         self.assertEqual(consensus.sources, ("fmp", "finnhub"))
+
+    def test_eps_consensus_falls_back_to_relative_tolerance(self):
+        self.assertTrue(valuation.field_has_consensus("epsDiluted", 1, 1.03))
 
     def test_diagnostics_reports_per_vendor_missing_counts(self):
         def row(fmp, finnhub):
