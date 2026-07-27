@@ -630,6 +630,58 @@ class SecValuationTests(unittest.TestCase):
             ],
         )
 
+    def test_dedupe_sec_rows_applies_policy_independently_per_period(self):
+        rows = [
+            {
+                "form": "10-Q",
+                "filed": "2025-04-20",
+                "val": 10,
+                "start": "2025-01-01",
+                "end": "2025-03-31",
+            },
+            {
+                "form": "10-Q/A",
+                "filed": "2025-05-02",
+                "val": 13,
+                "start": "2025-01-01",
+                "end": "2025-03-31",
+            },
+            {
+                "form": "10-Q",
+                "filed": "2025-07-20",
+                "val": 20,
+                "start": "2025-04-01",
+                "end": "2025-06-30",
+            },
+            {
+                "form": "10-Q",
+                "filed": "2025-08-01",
+                "val": 22,
+                "start": "2025-04-01",
+                "end": "2025-06-30",
+            },
+        ]
+
+        df = valuation.dedupe_sec_rows(rows)
+
+        self.assertEqual(
+            df.sort_values(["start", "end"]).to_dict("records"),
+            [
+                {
+                    "filed": pd.Timestamp("2025-05-02"),
+                    "val": 13,
+                    "start": pd.Timestamp("2025-01-01"),
+                    "end": pd.Timestamp("2025-03-31"),
+                },
+                {
+                    "filed": pd.Timestamp("2025-07-20"),
+                    "val": 20,
+                    "start": pd.Timestamp("2025-04-01"),
+                    "end": pd.Timestamp("2025-06-30"),
+                },
+            ],
+        )
+
     def test_dedupe_sec_rows_keeps_first_original_filing_per_period(self):
         rows = [
             {

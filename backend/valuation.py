@@ -693,7 +693,7 @@ def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if df.empty or "form" not in df:
         return empty_sec_rows()
-    df = df[df["form"].isin(SEC_ALLOWED_FORMS)]
+    df = df.loc[df["form"].isin(SEC_ALLOWED_FORMS)].copy()
     if df.empty:
         logger.warning("SEC reference lookup skipped; no supported forms found")
         return empty_sec_rows()
@@ -707,13 +707,16 @@ def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
     for column in ("filed", "start", "end"):
         df[column] = pd.to_datetime(df[column], errors="coerce")
     df = df.dropna(subset=SEC_DEDUPE_COLS).sort_values("filed", kind="mergesort")
-    is_amendment = df["form"].str.endswith("/A", na=False)
-    has_amendment = is_amendment.groupby([df["start"], df["end"]]).transform("any")
-    originals = df[~is_amendment & ~has_amendment].drop_duplicates(
-        ["start", "end"], keep="first"
+    period_columns = ["start", "end"]
+    amendment_mask = df["form"].str.endswith("/A", na=False)
+    period_has_amendment = amendment_mask.groupby(
+        [df[column] for column in period_columns]
+    ).transform("any")
+    unamended_originals = df[~amendment_mask & ~period_has_amendment].drop_duplicates(
+        period_columns, keep="first"
     )
-    amendments = df[is_amendment].drop_duplicates(["start", "end"], keep="last")
-    return pd.concat([originals, amendments]).loc[:, SEC_DEDUPE_COLS]
+    latest_amendments = df[amendment_mask].drop_duplicates(period_columns, keep="last")
+    return pd.concat([unamended_originals, latest_amendments]).loc[:, SEC_DEDUPE_COLS]
 
 
 def format_sec_candidate_block(matches: pd.DataFrame) -> str:
