@@ -134,16 +134,13 @@ class SecValuationTests(unittest.TestCase):
             ),
         )
 
-    def test_choose_consensus_group_prefers_sec_in_a_tie(self):
+    def test_choose_consensus_group_rejects_tie_with_sec(self):
         groups = [
             (("fmp", 100), ("finnhub", 100)),
             (("massive", 200), ("sec", 200)),
         ]
 
-        self.assertEqual(
-            valuation.choose_consensus_group(groups),
-            (("massive", 200), ("sec", 200)),
-        )
+        self.assertIsNone(valuation.choose_consensus_group(groups))
 
     def test_choose_consensus_group_rejects_tie_without_sec(self):
         groups = [

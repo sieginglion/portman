@@ -1173,16 +1173,8 @@ def choose_consensus_group(
 
     largest_group_size = max(len(group) for group in groups)
     largest_groups = [group for group in groups if len(group) == largest_group_size]
-
-    sec_consensus_groups = [
-        group
-        for group in largest_groups
-        if any(source_name in SEC_REFERENCE_SOURCES for source_name, _ in group)
-    ]
     if len(largest_groups) == 1:
         return largest_groups[0]
-    elif len(sec_consensus_groups) == 1:
-        return sec_consensus_groups[0]
     return None
 
 
