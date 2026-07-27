@@ -709,14 +709,13 @@ def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
     df = df.dropna(subset=SEC_DEDUPE_COLS).sort_values("filed", kind="mergesort")
     period_columns = ["start", "end"]
     amendment_mask = df["form"].str.endswith("/A", na=False)
-    period_has_amendment = amendment_mask.groupby(
-        [df[column] for column in period_columns]
-    ).transform("any")
-    unamended_originals = df[~amendment_mask & ~period_has_amendment].drop_duplicates(
-        period_columns, keep="first"
-    )
+    first_originals = df[~amendment_mask].drop_duplicates(period_columns, keep="first")
     latest_amendments = df[amendment_mask].drop_duplicates(period_columns, keep="last")
-    return pd.concat([unamended_originals, latest_amendments]).loc[:, SEC_DEDUPE_COLS]
+    return (
+        pd.concat([first_originals, latest_amendments])
+        .drop_duplicates(period_columns, keep="last")
+        .loc[:, SEC_DEDUPE_COLS]
+    )
 
 
 def format_sec_candidate_block(matches: pd.DataFrame) -> str:
