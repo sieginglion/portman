@@ -491,21 +491,19 @@ def fill_finmind_missing_ordinary_shares(shares: pd.Series) -> pd.Series:
     """Fill isolated FinMind balance-sheet gaps used by income-statement rows."""
     shares = shares.where(shares > 0)
     missing = shares.isna()
-    missing_indexes = np.flatnonzero(missing.to_numpy())
-    if not len(missing_indexes):
+    if not missing.any():
         return shares
 
     known_shares = shares.dropna()
     if known_shares.empty:
         return shares
 
-    hole_starts = missing_indexes[np.r_[True, np.diff(missing_indexes) != 1]]
-    hole_ends = missing_indexes[np.r_[np.diff(missing_indexes) != 1, True]]
-    hole_sizes = hole_ends - hole_starts + 1
-    if (hole_sizes > 1).any():
+    gap_groups = missing.ne(missing.shift()).cumsum()
+    largest_gap = int(missing.groupby(gap_groups).sum().max())
+    if largest_gap > 1:
         raise ValueError(
             "FinMind Taiwan balance sheet has "
-            f"{int(hole_sizes.max())} consecutive missing OrdinaryShare values"
+            f"{largest_gap} consecutive missing OrdinaryShare values"
         )
 
     # A one-quarter interior gap is interpolated. Endpoint gaps use the latest
@@ -513,6 +511,7 @@ def fill_finmind_missing_ordinary_shares(shares: pd.Series) -> pd.Series:
     patched_shares = shares.interpolate(limit_area="inside").fillna(
         known_shares.iloc[-1]
     )
+    missing_indexes = np.flatnonzero(missing.to_numpy())
     for missing_index in missing_indexes:
         method = (
             "linear interpolation"
@@ -565,11 +564,7 @@ def normalize_finmind_taiwan_income_statement_rows(
             "revenue": sanitize_source_field_value("revenue", row["Revenue"]),
             "weightedAverageShsOutDil": sanitize_source_field_value(
                 "weightedAverageShsOutDil",
-                (
-                    ordinary_shares / FINMIND_TAIWAN_SHARE_PAR_VALUE
-                    if pd.notna(ordinary_shares)
-                    else None
-                ),
+                ordinary_shares / FINMIND_TAIWAN_SHARE_PAR_VALUE,
             ),
         }
         normalized_row[EPS_XPS_FIELD] = sanitize_source_field_value(

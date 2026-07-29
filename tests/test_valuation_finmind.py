@@ -255,6 +255,33 @@ class FinMindValuationTests(unittest.TestCase):
 
         warning.assert_not_called()
 
+    def test_normalize_rejects_consecutive_endpoint_balance_sheet_gaps(self):
+        financial_rows = [
+            {"date": date, "type": "Revenue", "value": value}
+            for date, value in [
+                ("2025-03-31", 100),
+                ("2025-06-30", 110),
+                ("2025-09-30", 120),
+                ("2025-12-31", 130),
+            ]
+        ]
+        for reported_dates in (
+            ("2025-09-30", "2025-12-31"),
+            ("2025-03-31", "2025-06-30"),
+        ):
+            with self.subTest(reported_dates=reported_dates):
+                balance_sheet_rows = [
+                    {"date": date, "type": "OrdinaryShare", "value": 200}
+                    for date in reported_dates
+                ]
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"2 consecutive missing OrdinaryShare values",
+                ):
+                    valuation.normalize_finmind_taiwan_income_statement_rows(
+                        financial_rows, balance_sheet_rows
+                    )
+
     def test_fetch_derives_shares_from_finmind_balance_sheet(self):
         finmind_financial_rows = [
             {"date": "2025-03-31", "type": "Revenue", "value": 100},
