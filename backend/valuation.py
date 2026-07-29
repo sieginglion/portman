@@ -370,7 +370,7 @@ def sanitize_source_field_value(
 ) -> int | float | None:
     if value is None or pd.isna(value):
         return None
-    if field in {"revenue", "weightedAverageShsOutDil"} and value <= 0:
+    if field in BASE_XPS_FIELDS and value <= 0:
         return None
     return value
 
@@ -400,6 +400,10 @@ def normalize_income_statement_rows(
 ) -> dict[str, dict]:
     normalized_rows = {}
     for row in rows:
+        date = parse_timestamp(row.get(date_field))
+        if date is None:
+            continue
+
         normalized_row = normalize_source_row(
             row,
             field_map,
@@ -412,9 +416,7 @@ def normalize_income_statement_rows(
                     for output_field, source_field in metadata_fields.items()
                 }
             )
-        date = parse_timestamp(row.get(date_field))
-        if date is not None:
-            normalized_rows[date_str(date)] = normalized_row
+        normalized_rows[date_str(date)] = normalized_row
     return normalized_rows
 
 

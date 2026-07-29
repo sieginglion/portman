@@ -592,6 +592,19 @@ class SecValuationTests(unittest.TestCase):
             },
         )
 
+    def test_sanitize_source_field_value_rejects_non_positive_base_fields(self):
+        for field in valuation.BASE_XPS_FIELDS:
+            for value in (0, -1):
+                with self.subTest(field=field, value=value):
+                    self.assertIsNone(
+                        valuation.sanitize_source_field_value(field, value)
+                    )
+
+        self.assertEqual(
+            valuation.sanitize_source_field_value(valuation.EPS_XPS_FIELD, -1),
+            -1,
+        )
+
     def test_dedupe_sec_rows_prefers_latest_amendment_per_period(self):
         rows = [
             {
