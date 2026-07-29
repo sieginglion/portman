@@ -571,8 +571,8 @@ async def fetch_finmind_taiwan_rows(
             "dataset": dataset,
             "data_id": symbol,
             "start_date": start_date,
-            "token": FINMIND_KEY,
         },
+        headers={"Authorization": f"Bearer {FINMIND_KEY}"},
     )
     return json.loads(text).get("data", [])
 

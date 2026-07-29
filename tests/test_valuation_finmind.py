@@ -6,6 +6,27 @@ from backend import valuation
 
 
 class FinMindValuationTests(unittest.TestCase):
+    def test_fetch_finmind_taiwan_rows_uses_bearer_authentication(self):
+        cached_get = AsyncMock(return_value='{"data": [{"type": "EPS"}]}')
+
+        with patch.object(valuation.shared, "cached_get", cached_get):
+            rows = asyncio.run(
+                valuation.fetch_finmind_taiwan_rows(
+                    "TaiwanStockFinancialStatements", "2330", "2025-01-01"
+                )
+            )
+
+        cached_get.assert_awaited_once_with(
+            valuation.FINMIND_API_URL,
+            {
+                "dataset": "TaiwanStockFinancialStatements",
+                "data_id": "2330",
+                "start_date": "2025-01-01",
+            },
+            headers={"Authorization": f"Bearer {valuation.FINMIND_KEY}"},
+        )
+        self.assertEqual(rows, [{"type": "EPS"}])
+
     def test_normalize_income_statement_rows_canonicalizes_dates(self):
         rows = valuation.normalize_income_statement_rows(
             [
