@@ -196,7 +196,6 @@ TIINGO_FUNDAMENTALS_STATEMENTS_URL = (
     "https://api.tiingo.com/tiingo/fundamentals/{}/statements"
 )
 FINMIND_TAIWAN_QUARTER_BUFFER = 2
-FMP_TAIWAN_QUARTER_BUFFER = 1
 TIINGO_QUARTER_BUFFER = 1
 FINMIND_TAIWAN_SHARE_PAR_VALUE = 10
 SEC_DEDUPE_COLS = ["filed", "val", "start", "end"]
@@ -496,16 +495,10 @@ def normalize_finmind_taiwan_income_statement_rows(
     if financial_statement.empty:
         return {}
 
-    required_financial_statement_fields = ["Revenue"]
-    missing_financial_statement_fields = [
-        field
-        for field in required_financial_statement_fields
-        if field not in financial_statement
-    ]
-    if missing_financial_statement_fields:
+    if "Revenue" not in financial_statement:
         logger.warning(
             "FinMind Taiwan financial statement data missing fields {}; skipping rows",
-            missing_financial_statement_fields,
+            ["Revenue"],
         )
         return {}
     if "OrdinaryShare" not in balance_sheet:
@@ -513,13 +506,11 @@ def normalize_finmind_taiwan_income_statement_rows(
             "FinMind Taiwan balance sheet data missing OrdinaryShare; "
             "leaving share counts empty"
         )
-        balance_sheet = pd.DataFrame(index=financial_statement.index)
-        balance_sheet["OrdinaryShare"] = None
 
     df = financial_statement.reindex(columns=["Revenue", "EPS"]).join(
-        balance_sheet[["OrdinaryShare"]], how="outer"
+        balance_sheet.reindex(columns=["OrdinaryShare"]), how="left"
     )
-    df = df.dropna(subset=required_financial_statement_fields, how="all")
+    df = df.dropna(subset=["Revenue"])
 
     normalized_rows: dict[str, SourceFieldValues] = {}
     for date, row in df.iterrows():
@@ -545,35 +536,8 @@ def normalize_finmind_taiwan_income_statement_rows(
     return normalized_rows
 
 
-def merge_preferred_xps_rows(
-    baseline_rows: dict[str, dict],
-    preferred_rows: dict[str, dict],
-) -> None:
-    for preferred_date, preferred_row in preferred_rows.items():
-        baseline_date = select_closest_date_key(preferred_date, list(baseline_rows))
-        if baseline_date is None:
-            continue
-        baseline_row = baseline_rows[baseline_date]
-        for field_name in ALL_XPS_FIELDS:
-            value = preferred_row.get(field_name)
-            if has_source_field_value(value):
-                baseline_row[field_name] = value
-
-
 def row_has_required_xps_fields(row: dict, required_fields: list[str]) -> bool:
     return all(has_source_field_value(row.get(field)) for field in required_fields)
-
-
-def drop_incomplete_latest_quarter(
-    rows: dict[str, dict], required_fields: list[str]
-) -> dict[str, dict]:
-    dates = sorted(rows)
-    if not dates:
-        return rows
-    latest_date = dates[-1]
-    if row_has_required_xps_fields(rows[latest_date], required_fields):
-        return rows
-    return {date: rows[date] for date in dates[:-1]}
 
 
 def select_latest_clean_required_quarters(
@@ -583,6 +547,10 @@ def select_latest_clean_required_quarters(
     *,
     symbol: str | None = None,
 ) -> dict[str, dict]:
+    dates = sorted(rows)
+    if dates and not row_has_required_xps_fields(rows[dates[-1]], required_fields):
+        rows = {date: rows[date] for date in dates[:-1]}
+
     selected = select_latest_required_quarters(rows, limit, symbol=symbol)
     dirty_dates = [
         date
@@ -616,21 +584,14 @@ async def fetch_finmind_taiwan_income_statements(
 ) -> dict[str, dict]:
     start_date = quarterly_start_date("t", limit, FINMIND_TAIWAN_QUARTER_BUFFER)
     required_fields = required_xps_fields(require_eps)
-    financial_statement_rows, balance_sheet_rows, rows = await asyncio.gather(
+    financial_statement_rows, balance_sheet_rows = await asyncio.gather(
         fetch_finmind_taiwan_rows("TaiwanStockFinancialStatements", symbol, start_date),
         fetch_finmind_taiwan_rows("TaiwanStockBalanceSheet", symbol, start_date),
-        fetch_fmp_income_statements(
-            "t",
-            symbol,
-            limit + FMP_TAIWAN_QUARTER_BUFFER,
-        ),
     )
-    finmind_rows = normalize_finmind_taiwan_income_statement_rows(
+    rows = normalize_finmind_taiwan_income_statement_rows(
         financial_statement_rows,
         balance_sheet_rows,
     )
-    merge_preferred_xps_rows(rows, finmind_rows)
-    rows = drop_incomplete_latest_quarter(rows, required_fields)
     return select_latest_clean_required_quarters(
         rows, limit, required_fields, symbol=symbol
     )

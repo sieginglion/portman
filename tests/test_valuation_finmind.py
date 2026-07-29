@@ -113,52 +113,45 @@ class FinMindValuationTests(unittest.TestCase):
             },
         )
 
-    def test_merge_preferred_xps_rows_uses_nearby_dates_only(self):
-        baseline_rows = {
-            "2025-03-31": {
-                "revenue": 100,
-                "weightedAverageShsOutDil": 20,
-                "epsDiluted": 1.0,
-            }
-        }
-        preferred_rows = {
-            "2025-04-06": {
-                "revenue": 101,
-                "weightedAverageShsOutDil": None,
-                "epsDiluted": 1.1,
-            },
-            "2025-04-07": {
-                "revenue": 999,
-                "weightedAverageShsOutDil": 30,
-                "epsDiluted": 9.9,
-            },
-        }
+    def test_normalize_skips_rows_without_revenue(self):
+        rows = valuation.normalize_finmind_taiwan_income_statement_rows(
+            [{"date": "2025-03-31", "type": "EPS", "value": 1.5}],
+            [],
+        )
 
-        valuation.merge_preferred_xps_rows(baseline_rows, preferred_rows)
+        self.assertEqual(rows, {})
+
+    def test_normalize_ignores_balance_sheet_only_dates(self):
+        rows = valuation.normalize_finmind_taiwan_income_statement_rows(
+            [
+                {"date": "2025-03-31", "type": "Revenue", "value": 100},
+                {"date": "2025-03-31", "type": "EPS", "value": 1.5},
+            ],
+            [
+                {"date": "2025-03-31", "type": "OrdinaryShare", "value": 200},
+                {"date": "2025-06-30", "type": "OrdinaryShare", "value": 300},
+            ],
+        )
 
         self.assertEqual(
-            baseline_rows,
+            rows,
             {
                 "2025-03-31": {
-                    "revenue": 101,
+                    "revenue": 100,
                     "weightedAverageShsOutDil": 20,
-                    "epsDiluted": 1.1,
+                    "epsDiluted": 1.5,
                 }
             },
         )
 
-    def test_fetch_keeps_fmp_shares_when_finmind_balance_sheet_is_empty(self):
+    def test_fetch_derives_shares_from_finmind_balance_sheet(self):
         finmind_financial_rows = [
             {"date": "2025-03-31", "type": "Revenue", "value": 100},
             {"date": "2025-03-31", "type": "EPS", "value": 1.5},
         ]
-        fmp_rows = {
-            "2025-03-31": {
-                "revenue": 90,
-                "weightedAverageShsOutDil": 20,
-                "epsDiluted": 1.0,
-            }
-        }
+        finmind_balance_rows = [
+            {"date": "2025-03-31", "type": "OrdinaryShare", "value": 200}
+        ]
         with (
             patch.object(
                 valuation,
@@ -168,13 +161,10 @@ class FinMindValuationTests(unittest.TestCase):
             patch.object(
                 valuation,
                 "fetch_finmind_taiwan_rows",
-                new=AsyncMock(side_effect=[finmind_financial_rows, []]),
+                new=AsyncMock(
+                    side_effect=[finmind_financial_rows, finmind_balance_rows]
+                ),
             ) as finmind_fetch,
-            patch.object(
-                valuation,
-                "fetch_fmp_income_statements",
-                new=AsyncMock(return_value=fmp_rows),
-            ),
         ):
             rows = asyncio.run(
                 valuation.fetch_finmind_taiwan_income_statements(
@@ -206,24 +196,17 @@ class FinMindValuationTests(unittest.TestCase):
         finmind_financial_rows = [
             {"date": "2025-03-31", "type": "Revenue", "value": 100},
         ]
-        fmp_rows = {
-            "2025-03-31": {
-                "revenue": 90,
-                "weightedAverageShsOutDil": 20,
-                "epsDiluted": None,
-            }
-        }
+        finmind_balance_rows = [
+            {"date": "2025-03-31", "type": "OrdinaryShare", "value": 200}
+        ]
         with (
             patch.object(
                 valuation,
                 "fetch_finmind_taiwan_rows",
-                new=AsyncMock(side_effect=[finmind_financial_rows, []]),
+                new=AsyncMock(
+                    side_effect=[finmind_financial_rows, finmind_balance_rows]
+                ),
             ),
-            patch.object(
-                valuation,
-                "fetch_fmp_income_statements",
-                new=AsyncMock(return_value=fmp_rows),
-            ) as fmp_fetch,
         ):
             rows = asyncio.run(
                 valuation.fetch_finmind_taiwan_income_statements(
@@ -231,7 +214,6 @@ class FinMindValuationTests(unittest.TestCase):
                 )
             )
 
-        fmp_fetch.assert_awaited_once_with("t", "2330", 2)
         self.assertEqual(
             rows,
             {
@@ -242,3 +224,89 @@ class FinMindValuationTests(unittest.TestCase):
                 }
             },
         )
+
+    def test_fetch_drops_latest_quarter_missing_required_eps(self):
+        financial_rows = [
+            {"date": "2025-03-31", "type": "Revenue", "value": 100},
+            {"date": "2025-03-31", "type": "EPS", "value": 1.5},
+            {"date": "2025-06-30", "type": "Revenue", "value": 110},
+        ]
+        balance_sheet_rows = [
+            {"date": "2025-03-31", "type": "OrdinaryShare", "value": 200},
+            {"date": "2025-06-30", "type": "OrdinaryShare", "value": 220},
+        ]
+        with patch.object(
+            valuation,
+            "fetch_finmind_taiwan_rows",
+            new=AsyncMock(side_effect=[financial_rows, balance_sheet_rows]),
+        ):
+            rows = asyncio.run(
+                valuation.fetch_finmind_taiwan_income_statements(
+                    "2330", limit=1, require_eps=True
+                )
+            )
+
+        self.assertEqual(list(rows), ["2025-03-31"])
+
+    def test_fetch_keeps_latest_quarter_when_eps_is_not_required(self):
+        financial_rows = [
+            {"date": "2025-03-31", "type": "Revenue", "value": 100},
+            {"date": "2025-03-31", "type": "EPS", "value": 1.5},
+            {"date": "2025-06-30", "type": "Revenue", "value": 110},
+        ]
+        balance_sheet_rows = [
+            {"date": "2025-03-31", "type": "OrdinaryShare", "value": 200},
+            {"date": "2025-06-30", "type": "OrdinaryShare", "value": 220},
+        ]
+        with patch.object(
+            valuation,
+            "fetch_finmind_taiwan_rows",
+            new=AsyncMock(side_effect=[financial_rows, balance_sheet_rows]),
+        ):
+            rows = asyncio.run(
+                valuation.fetch_finmind_taiwan_income_statements(
+                    "2330", limit=1, require_eps=False
+                )
+            )
+
+        self.assertEqual(list(rows), ["2025-06-30"])
+
+    def test_select_latest_clean_required_quarters_rejects_older_incomplete_rows(self):
+        rows = {
+            "2025-03-31": {
+                "revenue": 100,
+                "weightedAverageShsOutDil": 20,
+                "epsDiluted": 1.0,
+            },
+            "2025-06-30": {
+                "revenue": 110,
+                "weightedAverageShsOutDil": None,
+                "epsDiluted": 1.1,
+            },
+            "2025-09-30": {
+                "revenue": 120,
+                "weightedAverageShsOutDil": 24,
+                "epsDiluted": 1.2,
+            },
+        }
+
+        with self.assertRaisesRegex(
+            ValueError, r"incomplete quarters: \['2025-06-30'\]"
+        ):
+            valuation.select_latest_clean_required_quarters(
+                rows, 2, valuation.required_xps_fields(True)
+            )
+
+    def test_select_latest_clean_required_quarters_fails_when_latest_drop_leaves_too_few(self):
+        rows = {
+            "2025-03-31": {
+                "revenue": 100,
+                "weightedAverageShsOutDil": None,
+                "epsDiluted": 1.0,
+            }
+        }
+
+        with self.assertRaisesRegex(ValueError, r"need 1 quarters, found 0"):
+            valuation.select_latest_clean_required_quarters(
+                rows, 1, valuation.required_xps_fields(True)
+            )
