@@ -9,6 +9,7 @@ from datetime import date
 from itertools import combinations
 from typing import Literal, TypeGuard
 
+import numpy as np
 import pandas as pd
 from httpx import HTTPStatusError
 from loguru import logger
@@ -486,6 +487,47 @@ def pivot_finmind_taiwan_rows(rows: list[dict]) -> pd.DataFrame:
     ).sort_index()
 
 
+def fill_finmind_missing_ordinary_shares(shares: pd.Series) -> pd.Series:
+    """Fill isolated FinMind balance-sheet gaps used by income-statement rows."""
+    shares = shares.where(shares > 0)
+    missing = shares.isna()
+    missing_indexes = np.flatnonzero(missing.to_numpy())
+    if not len(missing_indexes):
+        return shares
+
+    known_shares = shares.dropna()
+    if known_shares.empty:
+        return shares
+
+    hole_starts = missing_indexes[np.r_[True, np.diff(missing_indexes) != 1]]
+    hole_ends = missing_indexes[np.r_[np.diff(missing_indexes) != 1, True]]
+    hole_sizes = hole_ends - hole_starts + 1
+    if (hole_sizes > 1).any():
+        raise ValueError(
+            "FinMind Taiwan balance sheet has "
+            f"{int(hole_sizes.max())} consecutive missing OrdinaryShare values"
+        )
+
+    # A one-quarter interior gap is interpolated. Endpoint gaps use the latest
+    # reported share count because there is no value on both sides to interpolate.
+    patched_shares = shares.interpolate(limit_area="inside").fillna(
+        known_shares.iloc[-1]
+    )
+    for missing_index in missing_indexes:
+        method = (
+            "linear interpolation"
+            if 0 < missing_index < len(shares) - 1
+            else "latest reported value"
+        )
+        logger.warning(
+            "!!! PATCHING FINMIND OrdinaryShare gap: date={} method={} patched_value={} !!!",
+            shares.index[missing_index],
+            method,
+            patched_shares.iloc[missing_index],
+        )
+    return patched_shares
+
+
 def normalize_finmind_taiwan_income_statement_rows(
     financial_statement_rows: list[dict],
     balance_sheet_rows: list[dict],
@@ -511,6 +553,7 @@ def normalize_finmind_taiwan_income_statement_rows(
         balance_sheet.reindex(columns=["OrdinaryShare"]), how="left"
     )
     df = df.dropna(subset=["Revenue"])
+    df["OrdinaryShare"] = fill_finmind_missing_ordinary_shares(df["OrdinaryShare"])
 
     normalized_rows: dict[str, SourceFieldValues] = {}
     for date, row in df.iterrows():

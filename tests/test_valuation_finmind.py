@@ -165,6 +165,96 @@ class FinMindValuationTests(unittest.TestCase):
             },
         )
 
+    def test_normalize_interpolates_one_missing_balance_sheet_quarter(self):
+        with patch.object(valuation.logger, "warning") as warning:
+            rows = valuation.normalize_finmind_taiwan_income_statement_rows(
+                [
+                    {"date": "2025-03-31", "type": "Revenue", "value": 100},
+                    {"date": "2025-06-30", "type": "Revenue", "value": 110},
+                    {"date": "2025-09-30", "type": "Revenue", "value": 120},
+                ],
+                [
+                    {"date": "2025-03-31", "type": "OrdinaryShare", "value": 200},
+                    {"date": "2025-09-30", "type": "OrdinaryShare", "value": 400},
+                ],
+            )
+
+        self.assertEqual(
+            rows["2025-06-30"]["weightedAverageShsOutDil"],
+            30,
+        )
+        warning.assert_called_once()
+        self.assertIn("!!! PATCHING FINMIND", warning.call_args.args[0])
+        self.assertEqual(
+            warning.call_args.args[1:3], ("2025-06-30", "linear interpolation")
+        )
+
+    def test_normalize_fills_endpoint_balance_sheet_gaps_with_latest_value(self):
+        with patch.object(valuation.logger, "warning") as warning:
+            rows = valuation.normalize_finmind_taiwan_income_statement_rows(
+                [
+                    {"date": "2025-03-31", "type": "Revenue", "value": 100},
+                    {"date": "2025-06-30", "type": "Revenue", "value": 110},
+                    {"date": "2025-09-30", "type": "Revenue", "value": 120},
+                ],
+                [
+                    {"date": "2025-06-30", "type": "OrdinaryShare", "value": 200},
+                ],
+            )
+
+        self.assertEqual(
+            [row["weightedAverageShsOutDil"] for row in rows.values()],
+            [20, 20, 20],
+        )
+        warning.assert_has_calls(
+            [
+                call(
+                    "!!! PATCHING FINMIND OrdinaryShare gap: "
+                    "date={} method={} patched_value={} !!!",
+                    "2025-03-31",
+                    "latest reported value",
+                    200.0,
+                ),
+                call(
+                    "!!! PATCHING FINMIND OrdinaryShare gap: "
+                    "date={} method={} patched_value={} !!!",
+                    "2025-09-30",
+                    "latest reported value",
+                    200.0,
+                ),
+            ]
+        )
+        self.assertEqual(warning.call_count, 2)
+
+    def test_normalize_rejects_multiple_missing_balance_sheet_quarters(self):
+        with patch.object(valuation.logger, "warning") as warning:
+            with self.assertRaisesRegex(
+                ValueError,
+                r"2 consecutive missing OrdinaryShare values",
+            ):
+                valuation.normalize_finmind_taiwan_income_statement_rows(
+                    [
+                        {"date": "2025-03-31", "type": "Revenue", "value": 100},
+                        {"date": "2025-06-30", "type": "Revenue", "value": 110},
+                        {"date": "2025-09-30", "type": "Revenue", "value": 120},
+                        {"date": "2025-12-31", "type": "Revenue", "value": 130},
+                    ],
+                    [
+                        {
+                            "date": "2025-03-31",
+                            "type": "OrdinaryShare",
+                            "value": 200,
+                        },
+                        {
+                            "date": "2025-12-31",
+                            "type": "OrdinaryShare",
+                            "value": 400,
+                        },
+                    ],
+                )
+
+        warning.assert_not_called()
+
     def test_fetch_derives_shares_from_finmind_balance_sheet(self):
         finmind_financial_rows = [
             {"date": "2025-03-31", "type": "Revenue", "value": 100},
@@ -199,9 +289,7 @@ class FinMindValuationTests(unittest.TestCase):
         finmind_fetch.assert_any_await(
             "TaiwanStockFinancialStatements", "2330", "2024-01-01"
         )
-        finmind_fetch.assert_any_await(
-            "TaiwanStockBalanceSheet", "2330", "2024-01-01"
-        )
+        finmind_fetch.assert_any_await("TaiwanStockBalanceSheet", "2330", "2024-01-01")
         self.assertEqual(
             rows,
             {
@@ -318,7 +406,9 @@ class FinMindValuationTests(unittest.TestCase):
                 rows, 2, valuation.required_xps_fields(True)
             )
 
-    def test_select_latest_clean_required_quarters_fails_when_latest_drop_leaves_too_few(self):
+    def test_select_latest_clean_required_quarters_fails_when_latest_drop_leaves_too_few(
+        self,
+    ):
         rows = {
             "2025-03-31": {
                 "revenue": 100,
