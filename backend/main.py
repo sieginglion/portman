@@ -279,23 +279,21 @@ async def get_px(
 
 
 @app.get("/prices")
-async def get_prices(
-    market: Literal["c", "j", "t", "u"], symbol: str, n: int, ema7: bool = False
-):
-    return (await shared.get_prices(market, symbol, n, False, ema7)).tolist()
+async def get_prices(market: Literal["c", "j", "t", "u"], symbol: str, n: int):
+    return (await shared.get_prices(market, symbol, n, False)).tolist()
 
 
 @app.get("/extremum")
 async def get_extremum(
     market: Literal["c", "j", "t", "u"], symbol: str, n: int, max: bool = False
 ):
-    ema = await shared.get_prices(market, symbol, n, True, True)
-    i = ema.argmax() if max else ema.argmin()
+    prices = await shared.get_prices(market, symbol, n, True)
+    i = prices.argmax() if max else prices.argmin()
     dates = pd.date_range(
         end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date(),
-        periods=len(ema),
+        periods=len(prices),
     )
-    return dates[i].strftime("%Y-%m-%d"), ema[i]
+    return dates[i].strftime("%Y-%m-%d"), prices[i]
 
 
 @app.get("/BTCXAU")

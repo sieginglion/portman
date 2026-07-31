@@ -186,23 +186,26 @@ def post_process(prices: Array[f8], n: int, limited: bool = False):
     return prices[-n:]
 
 
-@cached(43200)
+PRICE_CACHE_TTL = 43200
+
+
 async def get_prices(
     market: Literal["c", "j", "t", "u"],
     symbol: str,
     n: int,
     to_usd: bool,
-    ema7: bool = False,
 ):
-    from . import crypto, stock
-    from .position import calc_ema, calc_k
+    cache_key = (__name__, "get_prices", market, symbol, to_usd)
+    cached_prices = cache.get(cache_key)
+    if cached_prices is not None and len(cached_prices) >= n:
+        return cached_prices[-n:]
 
-    w = 7
-    k = calc_k(w, 0.01)
-    n_ = n + k - 1 if ema7 else n
+    from . import crypto, stock
+
     prices = await (
-        crypto.get_prices(symbol, n_)
+        crypto.get_prices(symbol, n)
         if market == "c"
-        else stock.get_prices(market, symbol, n_, to_usd)
+        else stock.get_prices(market, symbol, n, to_usd)
     )
-    return calc_ema(prices, 2 / (w + 1), k) if ema7 else prices
+    cache.set(cache_key, prices, PRICE_CACHE_TTL)
+    return prices
