@@ -6,12 +6,16 @@ import os
 import sys
 from collections import Counter
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import httpx
 from dotenv import load_dotenv
 
-import quadrant
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+import quadrant  # noqa: E402
 
 FMP_INCOME_STATEMENT_URL = (
     "https://financialmodelingprep.com/stable/income-statement-as-reported"
@@ -19,14 +23,14 @@ FMP_INCOME_STATEMENT_URL = (
 MIN_FIELD_OCCURRENCES = quadrant.RESULT_LIMIT // 8
 
 
-def count_data_fields(response_data: Any) -> Counter[str]:
-    """Return field occurrence counts from each response row's ``data`` object."""
+def extract_data_fields(response_data: Any) -> set[str]:
+    """Return the distinct fields present in a ticker response's ``data`` objects."""
     if not isinstance(response_data, list):
         raise ValueError(
             f"expected a list response, got {type(response_data).__name__}"
         )
 
-    counts: Counter[str] = Counter()
+    fields: set[str] = set()
     for row in response_data:
         if not isinstance(row, Mapping):
             raise ValueError(
@@ -37,8 +41,8 @@ def count_data_fields(response_data: Any) -> Counter[str]:
             raise ValueError(
                 f"expected row['data'] to be an object, got {type(data).__name__}"
             )
-        counts.update(data.keys())
-    return counts
+        fields.update(data.keys())
+    return fields
 
 
 def fetch_field_counts(tickers: list[str], api_key: str) -> Counter[str]:
@@ -55,7 +59,7 @@ def fetch_field_counts(tickers: list[str], api_key: str) -> Counter[str]:
                     ("apikey", api_key),
                 ],
             )
-            counts.update(count_data_fields(response_data))
+            counts.update(extract_data_fields(response_data))
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             print(f"Skipping {ticker}: {exc}", file=sys.stderr)
 

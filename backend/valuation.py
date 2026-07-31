@@ -873,22 +873,9 @@ async def fetch_first_available_sec_field(
     for spec in SEC_FIELD_SPECS.get(field, ()):
         try:
             sec_rows = await fetch_sec_concept_rows(cik, spec.concept, spec.unit)
-        except HTTPStatusError as exc:
-            if exc.response.status_code == 404:
-                logger.warning(
-                    "SEC concept {} not found for CIK {}; skipping", spec.concept, cik
-                )
-            else:
-                logger.warning(
-                    "SEC concept {} fetch failed for CIK {} status={}; skipping",
-                    spec.concept,
-                    cik,
-                    exc.response.status_code,
-                )
-            continue
         except Exception as exc:
             logger.warning(
-                "SEC concept {} fetch/processing failed for CIK {}: {}; skipping",
+                "SEC concept {} fetch/processing failed for CIK {}; skipping: {}",
                 spec.concept,
                 cik,
                 exc,
@@ -1288,13 +1275,13 @@ async def fetch_sec_values_for_quarters(
     fields: list[str],
 ) -> dict[str, dict[str, int | float]]:
     """Fetch usable SEC field values keyed by aligned quarter."""
-    values_by_quarter = {}
-    for field_name in dict.fromkeys(fields):
+    async def fetch_field_values(field_name: str) -> dict[str, int | float]:
         available = await fetch_first_available_sec_field(cik, field_name)
         if available is None:
-            continue
+            return {}
         spec, sec_rows = available
 
+        values = {}
         for quarter_key, metadata in metadata_by_quarter.items():
             value = lookup_sec_field_value(
                 field_name,
@@ -1305,7 +1292,17 @@ async def fetch_sec_values_for_quarters(
             )
             value = sanitize_source_field_value(field_name, value)
             if value is not None:
-                values_by_quarter.setdefault(quarter_key, {})[field_name] = value
+                values[quarter_key] = value
+        return values
+
+    values_by_quarter = {}
+    field_names = dict.fromkeys(fields)
+    field_values = await asyncio.gather(
+        *(fetch_field_values(field_name) for field_name in field_names)
+    )
+    for field_name, values in zip(field_names, field_values, strict=True):
+        for quarter_key, value in values.items():
+            values_by_quarter.setdefault(quarter_key, {})[field_name] = value
     return values_by_quarter
 
 
