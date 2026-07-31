@@ -38,7 +38,6 @@ type XpsValue = int | float | None
 type SourceFieldValues = dict[str, XpsValue]
 type SecQ4ValueKind = Literal["flow", "average"]
 type SecFiscalQuarter = Literal["Q1", "Q2", "Q3", "Q4"]
-FISCAL_QUARTERS: tuple[SecFiscalQuarter, ...] = ("Q1", "Q2", "Q3", "Q4")
 
 
 @dataclass
@@ -669,18 +668,16 @@ def format_sec_cik(cik: object) -> str | None:
 def normalize_fiscal_quarter(value: object) -> SecFiscalQuarter | None:
     if isinstance(value, str):
         value = value.upper().removeprefix("Q")
-    if not isinstance(value, (str, int, float)) or value not in (
-        1,
-        2,
-        3,
-        4,
-        "1",
-        "2",
-        "3",
-        "4",
-    ):
-        return None
-    return FISCAL_QUARTERS[int(value) - 1]
+    match value:
+        case 1 | "1":
+            return "Q1"
+        case 2 | "2":
+            return "Q2"
+        case 3 | "3":
+            return "Q3"
+        case 4 | "4":
+            return "Q4"
+    return None
 
 
 def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:
@@ -1209,26 +1206,25 @@ def format_source_fetch_error(error: Exception) -> str:
     return type(error).__name__
 
 
+US_INCOME_STATEMENT_FETCHERS = {
+    "fmp": lambda symbol, limit: fetch_fmp_income_statements("u", symbol, limit),
+    "massive": lambda symbol, limit: fetch_massive_income_statements(symbol, limit),
+    "eodhd": lambda symbol, limit: fetch_eodhd_income_statements(symbol, limit),
+    "finnhub": lambda symbol, limit: fetch_finnhub_income_statements(symbol, limit),
+    "tiingo": lambda symbol, limit: fetch_tiingo_income_statements(symbol, limit),
+}
+
+
 async def fetch_us_income_statement_source(
     source: USIncomeStatementSource,
     symbol: str,
     limit: int,
 ) -> tuple[str, SourceIncomeStatementRows | None]:
     try:
-        match source.name:
-            case "fmp":
-                rows = await fetch_fmp_income_statements("u", symbol, limit)
-            case "massive":
-                rows = await fetch_massive_income_statements(symbol, limit)
-            case "eodhd":
-                rows = await fetch_eodhd_income_statements(symbol, limit)
-            case "finnhub":
-                rows = await fetch_finnhub_income_statements(symbol, limit)
-            case "tiingo":
-                rows = await fetch_tiingo_income_statements(symbol, limit)
-            case _:
-                raise ValueError(f"unknown income statement source: {source.name}")
-        return source.name, rows
+        fetcher = US_INCOME_STATEMENT_FETCHERS.get(source.name)
+        if fetcher is None:
+            raise ValueError(f"unknown income statement source: {source.name}")
+        return source.name, await fetcher(symbol, limit)
     except Exception as error:
         logger.warning(
             "{} income statements unavailable for {}: {}; skipping source",
