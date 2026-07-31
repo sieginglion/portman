@@ -135,6 +135,7 @@ def us_income_statement_source_order(
 BASE_XPS_FIELDS = ("revenue", "weightedAverageShsOutDil")
 EPS_XPS_FIELD = "epsDiluted"
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
+SERIES_FALLBACK_FIELDS = ("revenue", EPS_XPS_FIELD)
 
 
 def xps_field_map(shares_field: str, eps_field: str) -> dict[str, str]:
@@ -1387,11 +1388,15 @@ def resolve_us_quarter_consensus(
             resolved_quarter[field_name] = consensus.value
             continue
         logger.warning(
-            "Aborting {} quarter {}: no consensus\n{}",
+            "No consensus for {} quarter {} field={}\n{}",
             symbol,
             anchor_date,
+            field_name,
             format_source_field_block(field_name, source_values, anchor_date),
         )
+        if field_name in SERIES_FALLBACK_FIELDS:
+            resolved_quarter[field_name] = None
+            continue
         raise ValueError(f"no consensus for {symbol} {anchor_date} field={field_name}")
     return resolved_quarter
 
@@ -1435,12 +1440,30 @@ async def resolve_us_income_statement_quarters(
         )
 
     # 5. Reduce each field to the mean of its winning consensus group.
-    return {
+    resolved_quarters = {
         anchor_date: resolve_us_quarter_consensus(
             symbol, anchor_date, quarter, required_fields
         )
         for anchor_date, quarter in selected_quarters.items()
     }
+
+    # 6. Revenue and EPS are only useful as complete series. If either field lacks
+    # consensus in one selected quarter, disable it for every returned quarter.
+    for field_name in SERIES_FALLBACK_FIELDS:
+        if field_name not in required_fields or not any(
+            quarter[field_name] is None for quarter in resolved_quarters.values()
+        ):
+            continue
+        for quarter in resolved_quarters.values():
+            quarter[field_name] = None
+        logger.warning(
+            "Disabled {} for the entire {} returned series: "
+            "no consensus in at least one selected quarter",
+            field_name,
+            symbol,
+        )
+
+    return resolved_quarters
 
 
 async def fetch_resolved_income_statement_quarters(

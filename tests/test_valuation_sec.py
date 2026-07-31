@@ -599,6 +599,183 @@ class SecValuationTests(unittest.TestCase):
         self.assertEqual(list(resolved), ["2025-06-30"])
         self.assertEqual(diagnostics_state.seen, {("AAPL", "2025-06-30")})
 
+    def test_revenue_consensus_failure_disables_entire_selected_series(self):
+        source_rows = {
+            "fmp": {
+                "2025-03-31": {
+                    "revenue": 100,
+                    "weightedAverageShsOutDil": 10,
+                    "epsDiluted": 1,
+                },
+                "2025-06-30": {
+                    "revenue": 100,
+                    "weightedAverageShsOutDil": 10,
+                    "epsDiluted": 1,
+                },
+            },
+            "finnhub": {
+                "2025-03-31": {
+                    "revenue": 100,
+                    "weightedAverageShsOutDil": 10,
+                    "epsDiluted": 1,
+                },
+                "2025-06-30": {
+                    "revenue": 120,
+                    "weightedAverageShsOutDil": 10,
+                    "epsDiluted": 1,
+                },
+            },
+        }
+
+        with (
+            patch.object(
+                valuation,
+                "ENABLED_US_INCOME_STATEMENT_SOURCES",
+                selected_sources("fmp", "finnhub"),
+            ),
+            patch.object(valuation, "add_sec_reference_values", new=AsyncMock()),
+            patch.object(valuation.logger, "warning") as warning,
+        ):
+            resolved = asyncio.run(
+                valuation.resolve_us_income_statement_quarters(
+                    "AAPL", source_rows, limit=2, include_eps=True
+                )
+            )
+
+        self.assertEqual(
+            [quarter["revenue"] for quarter in resolved.values()], [None, None]
+        )
+        self.assertEqual(
+            [quarter["weightedAverageShsOutDil"] for quarter in resolved.values()],
+            [10, 10],
+        )
+        rendered_logs = [
+            call.args[0].format(*call.args[1:]) for call in warning.call_args_list
+        ]
+        failure_log = next(log for log in rendered_logs if "field=revenue" in log)
+        self.assertIn("AAPL quarter 2025-06-30", failure_log)
+        self.assertIn("FMP      date=2025-06-30 value=100", failure_log)
+        self.assertIn("Finnhub  date=2025-06-30 value=120", failure_log)
+        self.assertIn("SEC      date=2025-06-30 value=missing", failure_log)
+        self.assertTrue(
+            any(
+                "Disabled revenue for the entire AAPL returned series" in log
+                for log in rendered_logs
+            )
+        )
+
+    def test_eps_consensus_failure_disables_entire_selected_series(self):
+        source_rows = {
+            "fmp": {
+                "2025-03-31": {
+                    "revenue": 100,
+                    "weightedAverageShsOutDil": 10,
+                    "epsDiluted": 1,
+                },
+                "2025-06-30": {
+                    "revenue": 110,
+                    "weightedAverageShsOutDil": 10,
+                    "epsDiluted": 1,
+                },
+            },
+            "finnhub": {
+                "2025-03-31": {
+                    "revenue": 100,
+                    "weightedAverageShsOutDil": 10,
+                    "epsDiluted": 1,
+                },
+                "2025-06-30": {
+                    "revenue": 110,
+                    "weightedAverageShsOutDil": 10,
+                    "epsDiluted": 2,
+                },
+            },
+        }
+
+        with (
+            patch.object(
+                valuation,
+                "ENABLED_US_INCOME_STATEMENT_SOURCES",
+                selected_sources("fmp", "finnhub"),
+            ),
+            patch.object(valuation, "add_sec_reference_values", new=AsyncMock()),
+            patch.object(valuation.logger, "warning") as warning,
+        ):
+            resolved = asyncio.run(
+                valuation.resolve_us_income_statement_quarters(
+                    "MSFT", source_rows, limit=2, include_eps=True
+                )
+            )
+
+        self.assertEqual(
+            [quarter["epsDiluted"] for quarter in resolved.values()], [None, None]
+        )
+        self.assertEqual(
+            [quarter["revenue"] for quarter in resolved.values()], [100, 110]
+        )
+        rendered_logs = [
+            call.args[0].format(*call.args[1:]) for call in warning.call_args_list
+        ]
+        failure_log = next(log for log in rendered_logs if "field=epsDiluted" in log)
+        self.assertIn("MSFT quarter 2025-06-30", failure_log)
+        self.assertIn("FMP      date=2025-06-30 value=1", failure_log)
+        self.assertIn("Finnhub  date=2025-06-30 value=2", failure_log)
+        self.assertIn("SEC      date=2025-06-30 value=missing", failure_log)
+        self.assertTrue(
+            any(
+                "Disabled epsDiluted for the entire MSFT returned series" in log
+                for log in rendered_logs
+            )
+        )
+
+    def test_diluted_share_consensus_failure_remains_fatal(self):
+        source_rows = {
+            "fmp": {
+                "2025-03-31": {
+                    "revenue": 100,
+                    "weightedAverageShsOutDil": 10,
+                    "epsDiluted": 1,
+                }
+            },
+            "finnhub": {
+                "2025-03-31": {
+                    "revenue": 100,
+                    "weightedAverageShsOutDil": 20,
+                    "epsDiluted": 1,
+                }
+            },
+        }
+
+        with (
+            patch.object(
+                valuation,
+                "ENABLED_US_INCOME_STATEMENT_SOURCES",
+                selected_sources("fmp", "finnhub"),
+            ),
+            patch.object(valuation, "add_sec_reference_values", new=AsyncMock()),
+            patch.object(valuation.logger, "warning") as warning,
+            self.assertRaisesRegex(
+                ValueError,
+                r"no consensus for AAPL 2025-03-31 field=weightedAverageShsOutDil",
+            ),
+        ):
+            asyncio.run(
+                valuation.resolve_us_income_statement_quarters(
+                    "AAPL", source_rows, limit=1, include_eps=True
+                )
+            )
+
+        rendered_logs = [
+            call.args[0].format(*call.args[1:]) for call in warning.call_args_list
+        ]
+        failure_log = next(
+            log for log in rendered_logs if "field=weightedAverageShsOutDil" in log
+        )
+        self.assertIn("AAPL quarter 2025-03-31", failure_log)
+        self.assertIn("FMP      date=2025-03-31 value=10", failure_log)
+        self.assertIn("Finnhub  date=2025-03-31 value=20", failure_log)
+        self.assertIn("SEC      date=2025-03-31 value=missing", failure_log)
+
     def test_select_latest_required_quarters_reports_symbol_and_available_dates(self):
         with self.assertRaisesRegex(
             ValueError,
