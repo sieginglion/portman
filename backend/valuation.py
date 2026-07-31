@@ -1275,6 +1275,7 @@ async def fetch_sec_values_for_quarters(
     fields: list[str],
 ) -> dict[str, dict[str, int | float]]:
     """Fetch usable SEC field values keyed by aligned quarter."""
+
     async def fetch_field_values(field_name: str) -> dict[str, int | float]:
         available = await fetch_first_available_sec_field(cik, field_name)
         if available is None:
