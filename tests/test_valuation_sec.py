@@ -577,7 +577,7 @@ class SecValuationTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIsNone(valuation.normalize_fiscal_quarter(value))
 
-    def test_normalize_source_row_applies_scales_only_to_configured_fields(self):
+    def test_normalize_source_row_scales_base_fields_only(self):
         row = valuation.normalize_source_row(
             {"revenue": 2, "shares": 3, "eps": 1.5},
             {
@@ -585,7 +585,7 @@ class SecValuationTests(unittest.TestCase):
                 "weightedAverageShsOutDil": "shares",
                 valuation.EPS_XPS_FIELD: "eps",
             },
-            field_scales=dict.fromkeys(valuation.BASE_XPS_FIELDS, 1_000_000),
+            base_field_scale=1_000_000,
         )
 
         self.assertEqual(

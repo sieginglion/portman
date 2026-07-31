@@ -22,7 +22,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EDGES = PROJECT_ROOT / "portman-valuation-call-edges.json"
 DEFAULT_SOURCE = PROJECT_ROOT / "backend/valuation.py"
 DEFAULT_ROOT = "fetch_resolved_income_statement_quarters"
-TRANSPARENT_CALLABLES = {"<dictcomp>", "<genexpr>", "<listcomp>", "<setcomp>"}
+TRANSPARENT_CALLABLES = {
+    "<dictcomp>",
+    "<genexpr>",
+    "<lambda>",
+    "<listcomp>",
+    "<setcomp>",
+}
 
 
 class CallableLineCollector(ast.NodeVisitor):
@@ -157,7 +163,7 @@ def collect_source_callables(source: Path) -> CallableLineCollector:
 
 
 def is_transparent_callable(name: str) -> bool:
-    """Return whether ``name`` is a compiler-generated comprehension."""
+    """Return whether ``name`` is an implementation-detail callable."""
     return name.rsplit(".", maxsplit=1)[-1] in TRANSPARENT_CALLABLES
 
 

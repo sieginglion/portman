@@ -199,6 +199,40 @@ def a():
 
         self.assertEqual(result.stdout, "a\nc\n")
 
+    def test_lambdas_are_transparent_to_reports(self):
+        result = self._run(
+            """
+def c():
+    return 1
+
+fetch = lambda: c()
+
+def a():
+    return fetch()
+""".lstrip(),
+            [["a", "<lambda>"], ["<lambda>", "c"]],
+            "a",
+            extra_args=["--all"],
+        )
+
+        self.assertEqual(result.stdout, "a\nc\n")
+
+        result = self._run(
+            """
+def c():
+    return 1
+
+fetch = lambda: c()
+
+def a():
+    return fetch()
+""".lstrip(),
+            [["a", "<lambda>"], ["<lambda>", "c"]],
+            "a",
+        )
+
+        self.assertEqual(result.stdout, "c 2\n")
+
     def test_rejects_a_disconnected_recorded_callable_missing_from_source(self):
         result = self._run(
             """

@@ -130,6 +130,14 @@ EPS_XPS_FIELD = "epsDiluted"
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
 
 
+def xps_field_map(shares_field: str, eps_field: str) -> dict[str, str]:
+    return {
+        "revenue": "revenue",
+        "weightedAverageShsOutDil": shares_field,
+        EPS_XPS_FIELD: eps_field,
+    }
+
+
 def new_xps_missing_counts() -> dict[str, dict[str, int]]:
     return {
         field: {source: 0 for source in us_income_statement_source_order()}
@@ -363,13 +371,13 @@ def normalize_source_row(
     row: dict,
     field_map: dict[str, str],
     *,
-    field_scales: dict[str, int | float] | None = None,
+    base_field_scale: int | float = 1,
 ) -> dict[str, int | float | None]:
     normalized_row = {}
     for field_name, source_field in field_map.items():
         value = row.get(source_field)
-        if value is not None and field_scales is not None:
-            value *= field_scales.get(field_name, 1)
+        if value is not None and field_name in BASE_XPS_FIELDS:
+            value *= base_field_scale
         normalized_row[field_name] = sanitize_source_field_value(field_name, value)
     return normalized_row
 
@@ -380,7 +388,7 @@ def normalize_income_statement_rows(
     field_map: dict[str, str],
     date_field: str,
     metadata_fields: dict[str, str] | None = None,
-    field_scales: dict[str, int | float] | None = None,
+    base_field_scale: int | float = 1,
 ) -> dict[str, dict]:
     normalized_rows = {}
     for row in rows:
@@ -391,7 +399,7 @@ def normalize_income_statement_rows(
         normalized_row = normalize_source_row(
             row,
             field_map,
-            field_scales=field_scales,
+            base_field_scale=base_field_scale,
         )
         normalized_row.update(
             {
@@ -905,15 +913,10 @@ async def fetch_fmp_income_statements(
             f"{add_suffix(market, symbol)}"
         )
         eps_field = "epsdiluted"
-    field_map = {
-        "revenue": "revenue",
-        "weightedAverageShsOutDil": "weightedAverageShsOutDil",
-        EPS_XPS_FIELD: eps_field,
-    }
     text = await shared.cached_get(url, params)
     return normalize_income_statement_rows(
         json.loads(text),
-        field_map=field_map,
+        field_map=xps_field_map("weightedAverageShsOutDil", eps_field),
         date_field="date",
         metadata_fields={
             "cik": "cik",
@@ -933,14 +936,11 @@ async def fetch_massive_income_statements(symbol: str, limit: int) -> dict[str, 
     text = await shared.cached_get(
         "https://api.massive.com/stocks/financials/v1/income-statements", params
     )
-    field_map = {
-        "revenue": "revenue",
-        "weightedAverageShsOutDil": "diluted_shares_outstanding",
-        EPS_XPS_FIELD: "diluted_earnings_per_share",
-    }
     return normalize_income_statement_rows(
         json.loads(text)["results"] or [],
-        field_map=field_map,
+        field_map=xps_field_map(
+            "diluted_shares_outstanding", "diluted_earnings_per_share"
+        ),
         date_field="period_end",
         metadata_fields={
             "cik": "cik",
@@ -959,11 +959,6 @@ async def fetch_finnhub_income_statements(symbol: str, limit: int) -> dict[str, 
     }
     text = await shared.cached_get("https://finnhub.io/api/v1/stock/financials", params)
 
-    field_map = {
-        "revenue": "revenue",
-        "weightedAverageShsOutDil": "dilutedAverageSharesOutstanding",
-        EPS_XPS_FIELD: "dilutedEPS",
-    }
     financials = sorted(
         json.loads(text)["financials"] or [],
         key=lambda row: row["period"],
@@ -971,20 +966,16 @@ async def fetch_finnhub_income_statements(symbol: str, limit: int) -> dict[str, 
     )[:limit]
     return normalize_income_statement_rows(
         financials,
-        field_map=field_map,
+        field_map=xps_field_map("dilutedAverageSharesOutstanding", "dilutedEPS"),
         date_field="period",
-        field_scales=dict.fromkeys(BASE_XPS_FIELDS, FINNHUB_MILLION_SCALE),
+        base_field_scale=FINNHUB_MILLION_SCALE,
     )
 
 
 def normalize_tiingo_income_statement_rows(statements: list[dict]) -> dict[str, dict]:
     """Normalize Tiingo's nested quarterly income-statement response."""
     rows = {}
-    field_map = {
-        "revenue": "revenue",
-        "weightedAverageShsOutDil": "shareswaDil",
-        EPS_XPS_FIELD: "epsDil",
-    }
+    field_map = xps_field_map("shareswaDil", "epsDil")
     for statement in statements:
         if normalize_fiscal_quarter(statement.get("quarter")) is None:
             continue
