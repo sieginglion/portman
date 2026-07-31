@@ -259,6 +259,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
                 "fetch_massive_income_statements",
                 new=AsyncMock(side_effect=RuntimeError),
             ),
+            patch.object(valuation.logger, "exception") as exception_log,
         ):
             fetched = asyncio.run(
                 valuation.fetch_us_income_statement_sources("HOOD", 8)
@@ -266,6 +267,49 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
 
         self.assertEqual(fetched.rows, {"fmp": fmp_rows, "massive": {}})
         self.assertEqual(fetched.unavailable_sources, frozenset({"massive"}))
+        exception_log.assert_called_once()
+
+    def test_expected_source_errors_are_logged_as_warnings(self):
+        request = Request(
+            "GET",
+            "https://api.tiingo.com/tiingo/fundamentals/HOOD/statements?token=secret",
+        )
+        errors = (
+            (
+                HTTPStatusError(
+                    "Client error",
+                    request=request,
+                    response=Response(400, request=request),
+                ),
+                "HTTP 400",
+            ),
+            (json.JSONDecodeError("Invalid JSON", "{", 1), "JSONDecodeError"),
+        )
+        source = selected_sources("fmp")[0]
+
+        for error, error_summary in errors:
+            with (
+                self.subTest(error=type(error).__name__),
+                patch.object(
+                    valuation,
+                    "fetch_fmp_income_statements",
+                    new=AsyncMock(side_effect=error),
+                ),
+                patch.object(valuation.logger, "warning") as warning_log,
+                patch.object(valuation.logger, "exception") as exception_log,
+            ):
+                result = asyncio.run(
+                    valuation.fetch_us_income_statement_source(source, "HOOD", 8)
+                )
+
+            self.assertEqual(result, ("fmp", None))
+            warning_log.assert_called_once_with(
+                "{} income statements unavailable for {}: {}; skipping source",
+                "FMP",
+                "HOOD",
+                error_summary,
+            )
+            exception_log.assert_not_called()
 
     def test_cancelled_source_propagates(self):
         with (

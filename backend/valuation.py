@@ -1,7 +1,7 @@
 import asyncio
 import json
 import math
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import date
 from itertools import combinations
@@ -9,7 +9,7 @@ from typing import Literal, TypeGuard
 
 import numpy as np
 import pandas as pd
-from httpx import HTTPStatusError
+from httpx import HTTPError, HTTPStatusError
 from loguru import logger
 
 from . import shared
@@ -33,6 +33,7 @@ FINNHUB_MILLION_SCALE = 1_000_000
 type IncomeStatementRow = dict[str, object]
 type SourceIncomeStatementRows = dict[str, IncomeStatementRow]
 type IncomeStatementSources = dict[str, SourceIncomeStatementRows]
+type IncomeStatementFetcher = Callable[[str, int], Awaitable[SourceIncomeStatementRows]]
 
 type XpsValue = int | float | None
 type SourceFieldValues = dict[str, XpsValue]
@@ -79,6 +80,7 @@ class USIncomeStatementSource:
     name: str
     label: str
     enabled: bool
+    fetcher: IncomeStatementFetcher
 
 
 US_INCOME_STATEMENT_SOURCES = (
@@ -86,26 +88,31 @@ US_INCOME_STATEMENT_SOURCES = (
         "fmp",
         "FMP",
         True,
+        lambda symbol, limit: fetch_fmp_income_statements("u", symbol, limit),
     ),
     USIncomeStatementSource(
         "massive",
         "Massive",
         shared.ENABLE_MASSIVE_FUNDAMENTALS,
+        lambda symbol, limit: fetch_massive_income_statements(symbol, limit),
     ),
     USIncomeStatementSource(
         "eodhd",
         "EODHD",
         shared.ENABLE_EODHD_FUNDAMENTALS,
+        lambda symbol, limit: fetch_eodhd_income_statements(symbol, limit),
     ),
     USIncomeStatementSource(
         "finnhub",
         "Finnhub",
         True,
+        lambda symbol, limit: fetch_finnhub_income_statements(symbol, limit),
     ),
     USIncomeStatementSource(
         "tiingo",
         "Tiingo",
         shared.ENABLE_TIINGO_FUNDAMENTALS,
+        lambda symbol, limit: fetch_tiingo_income_statements(symbol, limit),
     ),
 )
 ENABLED_US_INCOME_STATEMENT_SOURCES = tuple(
@@ -247,10 +254,9 @@ def source_log_diff(lhs: int | float, rhs: int | float) -> float:
         return 0.0
     if lhs == 0 or rhs == 0:
         return math.inf
-    ratio = lhs / rhs
-    if ratio <= 0:
+    if (lhs < 0) != (rhs < 0):
         return math.inf
-    return abs(math.log(ratio))
+    return abs(math.log(abs(lhs)) - math.log(abs(rhs)))
 
 
 def source_abs_diff(lhs: int | float, rhs: int | float) -> float:
@@ -1166,7 +1172,7 @@ def resolve_source_consensus(
 
 
 def format_source_log_value(value: int | float | None) -> str:
-    if value is None:
+    if not has_source_field_value(value):
         return "missing"
     value = float(value)
     if value.is_integer():
@@ -1197,31 +1203,26 @@ def format_source_fetch_error(error: Exception) -> str:
     return type(error).__name__
 
 
-US_INCOME_STATEMENT_FETCHERS = {
-    "fmp": lambda symbol, limit: fetch_fmp_income_statements("u", symbol, limit),
-    "massive": lambda symbol, limit: fetch_massive_income_statements(symbol, limit),
-    "eodhd": lambda symbol, limit: fetch_eodhd_income_statements(symbol, limit),
-    "finnhub": lambda symbol, limit: fetch_finnhub_income_statements(symbol, limit),
-    "tiingo": lambda symbol, limit: fetch_tiingo_income_statements(symbol, limit),
-}
-
-
 async def fetch_us_income_statement_source(
     source: USIncomeStatementSource,
     symbol: str,
     limit: int,
 ) -> tuple[str, SourceIncomeStatementRows | None]:
     try:
-        fetcher = US_INCOME_STATEMENT_FETCHERS.get(source.name)
-        if fetcher is None:
-            raise ValueError(f"unknown income statement source: {source.name}")
-        return source.name, await fetcher(symbol, limit)
-    except Exception as error:
+        return source.name, await source.fetcher(symbol, limit)
+    except (HTTPError, json.JSONDecodeError) as error:
         logger.warning(
             "{} income statements unavailable for {}: {}; skipping source",
             source.label,
             symbol,
             format_source_fetch_error(error),
+        )
+        return source.name, None
+    except Exception:
+        logger.exception(
+            "{} income statement fetch failed unexpectedly for {}; skipping source",
+            source.label,
+            symbol,
         )
         return source.name, None
 
@@ -1410,11 +1411,12 @@ async def resolve_us_income_statement_quarters(
     aligned_quarters = build_aligned_source_quarters(source_rows)
 
     # 2. Add SEC revenue/shares/EPS reference values before validation.
-    await add_sec_reference_values(
-        symbol,
-        aligned_quarters,
-        required_fields,
-    )
+    if shared.ENABLE_SEC_REFERENCE:
+        await add_sec_reference_values(
+            symbol,
+            aligned_quarters,
+            required_fields,
+        )
 
     # 3. Ignore an under-supported newest quarter, then retain the requested window.
     eligible_quarters = drop_incomplete_latest_us_quarter(

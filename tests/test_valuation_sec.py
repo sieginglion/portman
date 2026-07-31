@@ -67,6 +67,20 @@ class SecValuationTests(unittest.TestCase):
         self.assertEqual(valuation.source_abs_diff(math.inf, 1), math.inf)
         self.assertEqual(valuation.source_abs_diff(1, math.nan), math.inf)
 
+    def test_source_log_diff_handles_extreme_finite_values(self):
+        self.assertAlmostEqual(
+            valuation.source_log_diff(1e308, 1e-308), 616 * math.log(10)
+        )
+
+    def test_source_log_diff_handles_negative_values(self):
+        self.assertAlmostEqual(
+            valuation.source_log_diff(-100, -102), math.log(1.02)
+        )
+        self.assertEqual(valuation.source_log_diff(-1, 1), math.inf)
+
+    def test_format_source_log_value_treats_nan_as_missing(self):
+        self.assertEqual(valuation.format_source_log_value(math.nan), "missing")
+
     def test_consensus_helpers_resolve_agreeing_sources(self):
         source_values = {"fmp": 100, "finnhub": 102, "sec": None}
 
@@ -400,6 +414,45 @@ class SecValuationTests(unittest.TestCase):
             ["revenue", "weightedAverageShsOutDil"],
         )
         diagnostics.assert_not_called()
+        self.assertEqual(
+            resolved,
+            {
+                "2025-03-31": {
+                    "revenue": 100,
+                    "weightedAverageShsOutDil": 10,
+                }
+            },
+        )
+
+    def test_resolve_us_income_statement_quarters_skips_sec_when_disabled(self):
+        source_rows = {
+            "fmp": {
+                "2025-03-31": {
+                    "revenue": 100,
+                    "weightedAverageShsOutDil": 10,
+                }
+            },
+            "finnhub": {
+                "2025-03-31": {
+                    "revenue": 100,
+                    "weightedAverageShsOutDil": 10,
+                }
+            },
+        }
+
+        with (
+            patch.object(valuation.shared, "ENABLE_SEC_REFERENCE", False),
+            patch.object(
+                valuation, "add_sec_reference_values", new=AsyncMock()
+            ) as add_sec_values,
+        ):
+            resolved = asyncio.run(
+                valuation.resolve_us_income_statement_quarters(
+                    "AAPL", source_rows, limit=1, include_eps=False
+                )
+            )
+
+        add_sec_values.assert_not_awaited()
         self.assertEqual(
             resolved,
             {
