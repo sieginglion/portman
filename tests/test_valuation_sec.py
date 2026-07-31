@@ -563,14 +563,19 @@ class SecValuationTests(unittest.TestCase):
         self.assertIsNone(valuation.format_sec_cik("not-a-cik"))
 
     def test_normalize_fiscal_quarter(self):
-        for value in (1, 1.0, "1", "Q1", "q1"):
+        for expected, values in {
+            "Q1": (1, 1.0, "1", "Q1", "q1"),
+            "Q2": (2, 2.0, "2", "Q2", "q2"),
+            "Q3": (3, 3.0, "3", "Q3", "q3"),
+            "Q4": (4, 4.0, "4", "Q4", "q4"),
+        }.items():
+            for value in values:
+                with self.subTest(value=value):
+                    self.assertEqual(valuation.normalize_fiscal_quarter(value), expected)
+
+        for value in (0, 2.9, 5, "FY", None):
             with self.subTest(value=value):
-                self.assertEqual(valuation.normalize_fiscal_quarter(value), "Q1")
-        self.assertEqual(valuation.normalize_fiscal_quarter("q4"), "Q4")
-        self.assertIsNone(valuation.normalize_fiscal_quarter(2.9))
-        self.assertIsNone(valuation.normalize_fiscal_quarter(5))
-        self.assertIsNone(valuation.normalize_fiscal_quarter("FY"))
-        self.assertIsNone(valuation.normalize_fiscal_quarter(None))
+                self.assertIsNone(valuation.normalize_fiscal_quarter(value))
 
     def test_normalize_source_row_applies_scales_only_to_configured_fields(self):
         row = valuation.normalize_source_row(

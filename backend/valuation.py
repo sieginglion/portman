@@ -1,5 +1,3 @@
-# WARNING: No indirect calls.
-
 import asyncio
 import json
 import math
@@ -40,20 +38,7 @@ type XpsValue = int | float | None
 type SourceFieldValues = dict[str, XpsValue]
 type SecQ4ValueKind = Literal["flow", "average"]
 type SecFiscalQuarter = Literal["Q1", "Q2", "Q3", "Q4"]
-FISCAL_QUARTER_BY_VALUE: dict[str | int | float, SecFiscalQuarter] = {
-    1: "Q1",
-    2: "Q2",
-    3: "Q3",
-    4: "Q4",
-    "1": "Q1",
-    "2": "Q2",
-    "3": "Q3",
-    "4": "Q4",
-    "Q1": "Q1",
-    "Q2": "Q2",
-    "Q3": "Q3",
-    "Q4": "Q4",
-}
+FISCAL_QUARTERS: tuple[SecFiscalQuarter, ...] = ("Q1", "Q2", "Q3", "Q4")
 
 
 @dataclass
@@ -409,13 +394,12 @@ def normalize_income_statement_rows(
             field_map,
             field_scales=field_scales,
         )
-        if metadata_fields is not None:
-            normalized_row.update(
-                {
-                    output_field: row.get(source_field)
-                    for output_field, source_field in metadata_fields.items()
-                }
-            )
+        normalized_row.update(
+            {
+                output_field: row.get(source_field)
+                for output_field, source_field in (metadata_fields or {}).items()
+            }
+        )
         normalized_rows[date_str(date)] = normalized_row
     return normalized_rows
 
@@ -684,10 +668,19 @@ def format_sec_cik(cik: object) -> str | None:
 
 def normalize_fiscal_quarter(value: object) -> SecFiscalQuarter | None:
     if isinstance(value, str):
-        value = value.upper()
-    if not isinstance(value, (str, int, float)):
+        value = value.upper().removeprefix("Q")
+    if not isinstance(value, (str, int, float)) or value not in (
+        1,
+        2,
+        3,
+        4,
+        "1",
+        "2",
+        "3",
+        "4",
+    ):
         return None
-    return FISCAL_QUARTER_BY_VALUE.get(value)
+    return FISCAL_QUARTERS[int(value) - 1]
 
 
 def dedupe_sec_rows(rows: list[dict]) -> pd.DataFrame:

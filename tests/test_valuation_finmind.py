@@ -39,6 +39,32 @@ class FinMindValuationTests(unittest.TestCase):
 
         self.assertEqual(rows, {"2025-09-30": {"revenue": 100}})
 
+    def test_normalize_income_statement_rows_keeps_metadata(self):
+        rows = valuation.normalize_income_statement_rows(
+            [
+                {
+                    "date": "2025-09-30",
+                    "revenue": 100,
+                    "cikValue": "320193",
+                    "fiscalQuarter": "Q3",
+                }
+            ],
+            field_map={"revenue": "revenue"},
+            date_field="date",
+            metadata_fields={"cik": "cikValue", "quarter": "fiscalQuarter"},
+        )
+
+        self.assertEqual(
+            rows,
+            {
+                "2025-09-30": {
+                    "revenue": 100,
+                    "cik": "320193",
+                    "quarter": "Q3",
+                }
+            },
+        )
+
     def test_quarterly_start_date_uses_market_timezone_and_buffer(self):
         now = valuation.pd.Timestamp("2026-07-22 15:30:00", tz="UTC")
         with patch.object(valuation.pd.Timestamp, "now", return_value=now) as now_mock:
