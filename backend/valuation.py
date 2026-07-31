@@ -1108,7 +1108,7 @@ def usable_source_values(
     return values
 
 
-def build_consensus_groups(
+def build_connected_consensus_groups(
     field: str,
     values: list[tuple[str, int | float]],
 ) -> list[tuple[tuple[str, int | float], ...]]:
@@ -1161,7 +1161,9 @@ def resolve_source_consensus(
     source_values: dict[str, int | float | None],
 ) -> Consensus | None:
     values = usable_source_values(source_values)
-    consensus_group = choose_consensus_group(build_consensus_groups(field, values))
+    consensus_group = choose_consensus_group(
+        build_connected_consensus_groups(field, values)
+    )
     if consensus_group is None:
         return None
 

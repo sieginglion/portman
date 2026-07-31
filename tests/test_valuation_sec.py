@@ -85,7 +85,7 @@ class SecValuationTests(unittest.TestCase):
         source_values = {"fmp": 100, "finnhub": 102, "sec": None}
 
         values = valuation.usable_source_values(source_values)
-        groups = valuation.build_consensus_groups("revenue", values)
+        groups = valuation.build_connected_consensus_groups("revenue", values)
         group = valuation.choose_consensus_group(groups)
 
         self.assertEqual(values, [("fmp", 100), ("finnhub", 102)])
@@ -121,7 +121,7 @@ class SecValuationTests(unittest.TestCase):
         values = [("finnhub", 102), ("fmp", 100)]
 
         self.assertEqual(
-            valuation.build_consensus_groups("revenue", values),
+            valuation.build_connected_consensus_groups("revenue", values),
             [(("finnhub", 102), ("fmp", 100))],
         )
 
@@ -130,7 +130,9 @@ class SecValuationTests(unittest.TestCase):
 
         values = valuation.usable_source_values(source_values)
 
-        self.assertEqual(valuation.build_consensus_groups("revenue", values), [])
+        self.assertEqual(
+            valuation.build_connected_consensus_groups("revenue", values), []
+        )
         self.assertIsNone(valuation.choose_consensus_group([]))
         self.assertIsNone(valuation.resolve_source_consensus("revenue", source_values))
 
@@ -397,6 +399,7 @@ class SecValuationTests(unittest.TestCase):
         }
 
         with (
+            patch.object(valuation.shared, "ENABLE_SEC_REFERENCE", True),
             patch.object(
                 valuation, "add_sec_reference_values", new=AsyncMock()
             ) as add_sec_values,
@@ -488,9 +491,12 @@ class SecValuationTests(unittest.TestCase):
             },
         }
 
-        with patch.object(
-            valuation, "add_sec_reference_values", new=AsyncMock()
-        ) as add_sec_values:
+        with (
+            patch.object(valuation.shared, "ENABLE_SEC_REFERENCE", True),
+            patch.object(
+                valuation, "add_sec_reference_values", new=AsyncMock()
+            ) as add_sec_values,
+        ):
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
                     "AAPL", source_rows, limit=1, include_eps=True
@@ -533,11 +539,14 @@ class SecValuationTests(unittest.TestCase):
             latest_quarter.fields["weightedAverageShsOutDil"]["sec"] = 10
             latest_quarter.fields["epsDiluted"]["sec"] = 1.2
 
-        with patch.object(
-            valuation,
-            "add_sec_reference_values",
-            new=AsyncMock(side_effect=add_sec_fields),
-        ) as add_sec_values:
+        with (
+            patch.object(valuation.shared, "ENABLE_SEC_REFERENCE", True),
+            patch.object(
+                valuation,
+                "add_sec_reference_values",
+                new=AsyncMock(side_effect=add_sec_fields),
+            ) as add_sec_values,
+        ):
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
                     "AAPL", source_rows, limit=1, include_eps=True
