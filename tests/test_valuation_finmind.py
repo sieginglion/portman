@@ -140,6 +140,93 @@ class FinMindValuationTests(unittest.TestCase):
         )
         self.assertEqual(without_eps["rps"].tolist(), [41.0, 41.0])
 
+    def test_calc_px_allows_rps_with_insufficient_initial_coverage(self):
+        prices = [20.0, 21.0, 22.0, 23.0]
+        xps = valuation.pd.DataFrame(
+            {
+                "rps": [None, 10.0],
+                "eps": [2.0, 2.0],
+            },
+            index=valuation.pd.to_datetime(["2026-01-01", "2026-01-02"]),
+        )
+
+        with (
+            patch.object(valuation.shared, "get_prices", return_value=prices),
+            patch.object(valuation, "fetch_xps", return_value=xps),
+            patch.object(
+                valuation.pd.Timestamp,
+                "now",
+                return_value=valuation.pd.Timestamp("2026-01-04", tz="UTC"),
+            ),
+        ):
+            px = asyncio.run(valuation.calc_px("u", "A", 1))
+
+        self.assertTrue(valuation.pd.isna(px["ps"].iloc[0]))
+        self.assertEqual(px["ps"].iloc[1:].tolist(), [2.1, 2.2, 2.3])
+        self.assertEqual(px["pe"].tolist(), [10.0, 10.5, 11.0, 11.5])
+
+    def test_calc_px_allows_eps_with_insufficient_initial_coverage(self):
+        prices = [20.0, 21.0, 22.0, 23.0]
+        xps = valuation.pd.DataFrame(
+            {
+                "rps": [10.0, 10.0],
+                "eps": [None, 2.0],
+            },
+            index=valuation.pd.to_datetime(["2026-01-01", "2026-01-02"]),
+        )
+
+        with (
+            patch.object(valuation.shared, "get_prices", return_value=prices),
+            patch.object(valuation, "fetch_xps", return_value=xps),
+            patch.object(
+                valuation.pd.Timestamp,
+                "now",
+                return_value=valuation.pd.Timestamp("2026-01-04", tz="UTC"),
+            ),
+        ):
+            px = asyncio.run(valuation.calc_px("u", "A", 1))
+
+        self.assertEqual(px["ps"].tolist(), [2.0, 2.1, 2.2, 2.3])
+        self.assertTrue(valuation.pd.isna(px["pe"].iloc[0]))
+        self.assertEqual(px["pe"].iloc[1:].tolist(), [10.5, 11.0, 11.5])
+
+    def test_calc_px_rejects_both_metrics_with_insufficient_initial_coverage(self):
+        prices = [20.0, 21.0]
+        xps = valuation.pd.DataFrame(
+            {"rps": [None, 10.0], "eps": [None, 2.0]},
+            index=valuation.pd.to_datetime(["2026-01-01", "2026-01-02"]),
+        )
+
+        with (
+            patch.object(valuation.shared, "get_prices", return_value=prices),
+            patch.object(valuation, "fetch_xps", return_value=xps),
+            patch.object(
+                valuation.pd.Timestamp,
+                "now",
+                return_value=valuation.pd.Timestamp("2026-01-02", tz="UTC"),
+            ),
+            self.assertRaises(ValueError),
+        ):
+            asyncio.run(valuation.calc_px("u", "A", 1))
+
+    def test_calc_px_rejects_missing_initial_price(self):
+        xps = valuation.pd.DataFrame(
+            {"rps": [10.0], "eps": [2.0]},
+            index=valuation.pd.to_datetime(["2026-01-01"]),
+        )
+
+        with (
+            patch.object(valuation.shared, "get_prices", return_value=[None, 21.0]),
+            patch.object(valuation, "fetch_xps", return_value=xps),
+            patch.object(
+                valuation.pd.Timestamp,
+                "now",
+                return_value=valuation.pd.Timestamp("2026-01-02", tz="UTC"),
+            ),
+            self.assertRaises(ValueError),
+        ):
+            asyncio.run(valuation.calc_px("u", "A", 1))
+
     def test_income_statement_rows_are_kept_without_balance_sheet_data(self):
         rows = valuation.normalize_finmind_taiwan_income_statement_rows(
             [

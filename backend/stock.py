@@ -35,7 +35,11 @@ async def _fetch_fmp_price_history(sess: AsyncClient, symbol: str, start):
             "serietype": "line",
         },
     )
-    return res.json()["historical"]
+    res.raise_for_status()
+    historical = res.json().get("historical")
+    if not isinstance(historical, list):
+        raise ValueError(f"No price history for {symbol}")
+    return historical
 
 
 def _normalize_fmp_price_history(historical, start, end, n: int, limited: bool):
@@ -63,8 +67,8 @@ async def get_fmp_unadjusted(
         return await get_fmp_series(
             sess, add_suffix(market, symbol), start, now, n, market == "t"
         )
-    except AssertionError:
-        raise AssertionError(symbol)
+    except AssertionError as exc:
+        raise ValueError(f"Invalid price history for {symbol}") from exc
 
 
 async def get_fmp_dividends(
@@ -78,9 +82,11 @@ async def get_fmp_dividends(
         ),
         get_today_dividend(market, symbol),
     )
-    date_to_dividend = daily_values(
-        start, now, res.json().get("historical", []), "adjDividend"
-    )
+    res.raise_for_status()
+    historical = res.json().get("historical")
+    if not isinstance(historical, list):
+        raise ValueError(f"No dividend history for {symbol}")
+    date_to_dividend = daily_values(start, now, historical, "adjDividend")
     date_to_dividend[max(date_to_dividend)] = today
     return get_sorted_values(date_to_dividend)[-n:]
 

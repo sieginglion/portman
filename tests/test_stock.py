@@ -17,19 +17,24 @@ class AsyncClientStub:
 
 
 class ResponseStub:
-    def __init__(self, payload):
+    def __init__(self, payload, status_error=None):
         self.payload = payload
+        self.status_error = status_error
 
     def json(self):
         return self.payload
 
+    def raise_for_status(self):
+        if self.status_error:
+            raise self.status_error
+
 
 class RequestClientStub:
-    def __init__(self, payload):
-        self.response = ResponseStub(payload)
+    def __init__(self, payload, status_error=None):
+        self.response = ResponseStub(payload, status_error)
         self.requests = []
 
-    async def get(self, url, params):
+    async def get(self, url, params=None):
         self.requests.append((url, params))
         return self.response
 
@@ -107,9 +112,62 @@ class StockTests(unittest.TestCase):
 
         with (
             patch.object(stock, "get_fmp_series", new=get_fmp_series),
-            self.assertRaisesRegex(AssertionError, "2330"),
+            self.assertRaisesRegex(ValueError, "2330"),
         ):
             asyncio.run(stock.get_fmp_unadjusted(object(), "t", "2330", 2))
+
+    def test_fetch_fmp_price_history_rejects_invalid_payload(self):
+        client = RequestClientStub({"Error Message": "Invalid API key"})
+
+        with self.assertRaisesRegex(ValueError, "AAPL"):
+            asyncio.run(
+                stock._fetch_fmp_price_history(client, "AAPL", arrow.get("2026-01-01"))
+            )
+
+    def test_fetch_fmp_price_history_propagates_http_errors(self):
+        client = RequestClientStub({"historical": []}, RuntimeError("rate limited"))
+
+        with self.assertRaisesRegex(RuntimeError, "rate limited"):
+            asyncio.run(
+                stock._fetch_fmp_price_history(client, "AAPL", arrow.get("2026-01-01"))
+            )
+
+    def test_get_fmp_dividends_rejects_invalid_payload(self):
+        client = RequestClientStub({"Error Message": "Invalid API key"})
+
+        with (
+            patch.object(stock, "get_today_dividend", new=AsyncMock(return_value=0.0)),
+            self.assertRaisesRegex(ValueError, "AAPL"),
+        ):
+            asyncio.run(stock.get_fmp_dividends(client, "u", "AAPL", 1))
+
+    def test_get_fmp_dividends_propagates_http_errors(self):
+        client = RequestClientStub({"historical": []}, RuntimeError("rate limited"))
+
+        with (
+            patch.object(stock, "get_today_dividend", new=AsyncMock(return_value=0.0)),
+            self.assertRaisesRegex(RuntimeError, "rate limited"),
+        ):
+            asyncio.run(stock.get_fmp_dividends(client, "u", "AAPL", 1))
+
+    def test_get_fmp_dividends_uses_history_and_today_value(self):
+        now = arrow.get("2026-01-03T12:00:00+00:00")
+        client = RequestClientStub(
+            {
+                "historical": [
+                    {"date": "2026-01-02", "adjDividend": 1.5},
+                    {"date": "2026-01-03", "adjDividend": 1.0},
+                ]
+            }
+        )
+
+        with (
+            patch.object(stock.arrow, "now", return_value=now),
+            patch.object(stock, "get_today_dividend", new=AsyncMock(return_value=2.0)),
+        ):
+            result = asyncio.run(stock.get_fmp_dividends(client, "u", "AAPL", 2))
+
+        np.testing.assert_allclose(result, [1.5, 2.0])
 
     def test_market_window_uses_market_timezone_and_lookback(self):
         now = arrow.get("2026-01-15T12:00:00+08:00")

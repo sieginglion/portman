@@ -81,6 +81,33 @@ class PlotValuationSeriesTests(unittest.TestCase):
         ax.spines[["top", "right"]].set_visible.assert_called_once_with(False)
 
 
+class PxRouteTests(unittest.TestCase):
+    def test_stock_px_passes_an_unavailable_ps_series_as_empty_to_the_plotter(self):
+        px = pd.DataFrame(
+            {
+                "ps": [None, None],
+                "pe": [10.0, 11.0],
+            },
+            index=pd.to_datetime(["2026-01-01", "2026-01-02"]),
+        )
+
+        def close_and_return(fig, plt):
+            plt.close(fig)
+            return "response"
+
+        with (
+            patch.object(valuation, "calc_px", return_value=px),
+            patch.object(main, "plot_valuation_series") as plot,
+            patch.object(main, "figure_to_png_response", side_effect=close_and_return),
+        ):
+            response = asyncio.run(main.get_px("u", "A", 16))
+
+        self.assertEqual(response, "response")
+        ps, pe = (call.args[1] for call in plot.call_args_list)
+        self.assertTrue(ps.empty)
+        self.assertTrue(pe.equals(px["pe"]))
+
+
 class FigureToPngResponseTests(unittest.TestCase):
     def test_returns_a_png_response_and_closes_the_figure(self):
         fig = Mock()
@@ -128,6 +155,27 @@ class ScoresRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), [1.0, 1.0])
         calc_px.assert_awaited_once_with("u", "A", 16)
+
+    def test_stock_scores_allow_either_multiple_to_be_unavailable(self):
+        cases = (
+            ({"ps": [None, 1], "pe": [1, 1]}, [None, 0.0]),
+            ({"ps": [1, 1], "pe": [None, 1]}, [0.0, None]),
+        )
+
+        for values, expected in cases:
+            with (
+                self.subTest(values=values),
+                patch.object(
+                    valuation, "calc_px", return_value=pd.DataFrame(values)
+                ),
+            ):
+                response = TestClient(main.app).get(
+                    "/scores",
+                    params={"market": "u", "symbol": "A", "q": 16, "u": 0.8},
+                )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), expected)
 
     def test_bitcoin_scores_forward_the_requested_upper_quantile(self):
         with patch.object(main, "calc_btc_score", return_value=1.25) as calc_btc_score:

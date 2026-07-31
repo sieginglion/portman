@@ -1530,7 +1530,7 @@ async def calc_px(market: Literal["j", "t", "u"], symbol: str, q: int) -> pd.Dat
         .ffill()
         .tail(len(index))
     )
-    if (pd.isna(df["price"].iloc[0])) or pd.isna(df["rps"].iloc[0]):
+    if pd.isna(df["price"].iloc[0]) or df[["rps", "eps"]].iloc[0].isna().all():
         raise ValueError
     df["ps"] = df["price"] / df["rps"]
     df["pe"] = df["price"] / df["eps"].where(df["eps"] > 0)

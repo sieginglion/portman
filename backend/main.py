@@ -185,9 +185,10 @@ async def get_scores(
         raise fastapi.HTTPException(422, "Only BTC is supported for crypto /scores")
 
     df = await valuation.calc_px(market, symbol, q)
-    pe = df["pe"]
-    return calc_downside_score(df["ps"], u), (
-        None if not pe.notna().all() else calc_downside_score(pe, u)
+    ps, pe = df["ps"], df["pe"]
+    return (
+        None if pd.isna(ps.iloc[0]) else calc_downside_score(ps, u),
+        None if pd.isna(pe.iloc[0]) else calc_downside_score(pe, u),
     )
 
 
@@ -266,7 +267,7 @@ async def get_px(
         return figure_to_png_response(fig, plt)
 
     px = await valuation.calc_px(market, symbol, q)
-    ps = px["ps"]
+    ps = px["ps"].dropna()
     pe = px["pe"].dropna()
 
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), dpi=160, sharex=True)
