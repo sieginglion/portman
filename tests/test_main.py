@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pandas as pd
 from backend import main, valuation
@@ -15,6 +15,100 @@ class DownsideScoreTests(unittest.TestCase):
         score = main.calc_downside_score(series, valuation_score_upper=0.8)
 
         self.assertEqual(score, 1)
+
+
+class QuarterEndLineTests(unittest.TestCase):
+    def test_adds_a_line_for_each_quarter_end_within_the_series_range(self):
+        ax = Mock()
+        series = pd.Series(
+            [1, 2], index=pd.to_datetime(["2025-01-15", "2025-10-10"])
+        )
+
+        main.add_quarter_end_lines(ax, series)
+
+        self.assertEqual(
+            [call.args[0] for call in ax.axvline.call_args_list],
+            list(pd.to_datetime(["2025-03-31", "2025-06-30", "2025-09-30"])),
+        )
+
+
+class PlotValuationSeriesTests(unittest.TestCase):
+    def test_draws_a_non_empty_series_and_applies_axis_labels(self):
+        ax = MagicMock()
+        series = pd.Series(
+            [1.0, 2.0], index=pd.to_datetime(["2025-01-01", "2025-01-02"])
+        )
+
+        with (
+            patch.object(main, "add_percentile_bands") as add_percentile_bands,
+            patch.object(main, "add_quarter_end_lines") as add_quarter_end_lines,
+        ):
+            main.plot_valuation_series(ax, series, "AAPL", "P/S", 16, "#2563eb")
+
+        add_percentile_bands.assert_called_once_with(ax, series)
+        add_quarter_end_lines.assert_called_once_with(ax, series)
+        ax.plot.assert_called_once_with(
+            series.index, series, color="#2563eb", linewidth=1.5, zorder=2
+        )
+        ax.scatter.assert_called_once()
+        scatter_args = ax.scatter.call_args
+        self.assertTrue(scatter_args.args[0].equals(series.index[-1:]))
+        self.assertTrue(scatter_args.args[1].equals(series.iloc[-1:]))
+        self.assertEqual(
+            scatter_args.kwargs,
+            {"s": 28, "color": "#2563eb", "linewidths": 0, "zorder": 3},
+        )
+        ax.set_title.assert_called_once_with("AAPL historical P/S, last 16 quarters")
+        ax.set_ylabel.assert_called_once_with("P/S")
+        ax.spines[["top", "right"]].set_visible.assert_called_once_with(False)
+
+    def test_skips_drawing_an_empty_series_but_applies_axis_labels(self):
+        ax = MagicMock()
+        series = pd.Series(dtype=float)
+
+        with (
+            patch.object(main, "add_percentile_bands") as add_percentile_bands,
+            patch.object(main, "add_quarter_end_lines") as add_quarter_end_lines,
+        ):
+            main.plot_valuation_series(ax, series, "AAPL", "P/E", 16, "#dc2626")
+
+        add_percentile_bands.assert_not_called()
+        add_quarter_end_lines.assert_not_called()
+        ax.plot.assert_not_called()
+        ax.scatter.assert_not_called()
+        ax.set_title.assert_called_once_with("AAPL historical P/E, last 16 quarters")
+        ax.set_ylabel.assert_called_once_with("P/E")
+        ax.spines[["top", "right"]].set_visible.assert_called_once_with(False)
+
+
+class FigureToPngResponseTests(unittest.TestCase):
+    def test_returns_a_png_response_and_closes_the_figure(self):
+        fig = Mock()
+        plt = Mock()
+
+        def savefig(buf, format):
+            self.assertEqual(format, "png")
+            buf.write(b"png")
+
+        fig.savefig.side_effect = savefig
+
+        response = main.figure_to_png_response(fig, plt)
+
+        self.assertEqual(response.media_type, "image/png")
+        self.assertEqual(response.body, b"png")
+        fig.autofmt_xdate.assert_called_once_with()
+        fig.tight_layout.assert_called_once_with()
+        plt.close.assert_called_once_with(fig)
+
+    def test_closes_the_figure_when_png_rendering_fails(self):
+        fig = Mock()
+        plt = Mock()
+        fig.savefig.side_effect = RuntimeError("render failed")
+
+        with self.assertRaisesRegex(RuntimeError, "render failed"):
+            main.figure_to_png_response(fig, plt)
+
+        plt.close.assert_called_once_with(fig)
 
 
 class ScoresRouteTests(unittest.TestCase):

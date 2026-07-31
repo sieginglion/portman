@@ -109,6 +109,57 @@ def add_percentile_bands(ax, series: pd.Series):
         ax.axhline(level, color="#111827", linewidth=0.8, alpha=0.35, zorder=1)
 
 
+def add_quarter_end_lines(ax, series: pd.Series):
+    quarter_ends = pd.date_range(series.index.min(), series.index.max(), freq="QE")
+    for quarter_end in quarter_ends:
+        ax.axvline(
+            quarter_end,
+            color="#111827",
+            linewidth=0.8,
+            linestyle=":",
+            alpha=0.35,
+            zorder=1,
+        )
+
+
+def plot_valuation_series(
+    ax,
+    series: pd.Series,
+    symbol: str,
+    multiple: str,
+    q: int,
+    color: str,
+):
+    if not series.empty:
+        add_percentile_bands(ax, series)
+        add_quarter_end_lines(ax, series)
+        ax.plot(series.index, series, color=color, linewidth=1.5, zorder=2)
+        ax.scatter(
+            series.index[-1:],
+            series.iloc[-1:],
+            s=28,
+            color=color,
+            linewidths=0,
+            zorder=3,
+        )
+
+    ax.set_title(f"{symbol} historical {multiple}, last {q} quarters")
+    ax.set_ylabel(multiple)
+    ax.spines[["top", "right"]].set_visible(False)
+
+
+def figure_to_png_response(fig, plt) -> fastapi.Response:
+    fig.autofmt_xdate()
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    try:
+        fig.savefig(buf, format="png")
+        return fastapi.Response(buf.getvalue(), media_type="image/png")
+    finally:
+        plt.close(fig)
+
+
 def calc_downside_score(s: pd.Series, valuation_score_upper: float) -> float:
     if s.empty or s.isna().any() or (s <= 0).any():
         raise ValueError
@@ -210,27 +261,9 @@ async def get_px(
         ps = await get_btc_valuation_proxy(q)
 
         fig, ax = plt.subplots(1, 1, figsize=(8, 4), dpi=160)
-        add_percentile_bands(ax, ps)
-        ax.plot(ps.index, ps, color="#f97316", linewidth=1.5, zorder=2)
-        ax.scatter(
-            ps.index[-1:],
-            ps.iloc[-1:],
-            s=28,
-            color="#f97316",
-            linewidths=0,
-            zorder=3,
-        )
-        ax.set_title(f"BTC historical P/S, last {q} quarters")
-        ax.set_ylabel("P/S")
-        ax.spines[["top", "right"]].set_visible(False)
+        plot_valuation_series(ax, ps, "BTC", "P/S", q, "#f97316")
 
-        fig.autofmt_xdate()
-        fig.tight_layout()
-
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png")
-        plt.close(fig)
-        return fastapi.Response(buf.getvalue(), media_type="image/png")
+        return figure_to_png_response(fig, plt)
 
     px = await valuation.calc_px(market, symbol, q)
     ps = px["ps"]
@@ -239,33 +272,10 @@ async def get_px(
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), dpi=160, sharex=True)
     ps_ax, pe_ax = axes
 
-    add_percentile_bands(ps_ax, ps)
-    ps_ax.plot(ps.index, ps, color="#2563eb", linewidth=1.5, zorder=2)
-    ps_ax.scatter(
-        ps.index[-1:], ps.iloc[-1:], s=28, color="#2563eb", linewidths=0, zorder=3
-    )
-    ps_ax.set_title(f"{symbol} historical P/S, last {q} quarters")
-    ps_ax.set_ylabel("P/S")
-    ps_ax.spines[["top", "right"]].set_visible(False)
+    plot_valuation_series(ps_ax, ps, symbol, "P/S", q, "#2563eb")
+    plot_valuation_series(pe_ax, pe, symbol, "P/E", q, "#dc2626")
 
-    if not pe.empty:
-        add_percentile_bands(pe_ax, pe)
-        pe_ax.plot(pe.index, pe, color="#dc2626", linewidth=1.5, zorder=2)
-        pe_ax.scatter(
-            pe.index[-1:], pe.iloc[-1:], s=28, color="#dc2626", linewidths=0, zorder=3
-        )
-
-    pe_ax.set_title(f"{symbol} historical P/E, last {q} quarters")
-    pe_ax.set_ylabel("P/E")
-    pe_ax.spines[["top", "right"]].set_visible(False)
-
-    fig.autofmt_xdate()
-    fig.tight_layout()
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png")
-    plt.close(fig)
-    return fastapi.Response(buf.getvalue(), media_type="image/png")
+    return figure_to_png_response(fig, plt)
 
 
 @app.get("/prices")
