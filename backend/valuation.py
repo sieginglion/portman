@@ -252,27 +252,8 @@ def source_log_diff(lhs: int | float, rhs: int | float) -> float:
     return abs(math.log(abs(lhs)) - math.log(abs(rhs)))
 
 
-def source_abs_diff(lhs: int | float, rhs: int | float) -> float:
-    lhs = float(lhs)
-    rhs = float(rhs)
-    if not (math.isfinite(lhs) and math.isfinite(rhs)):
-        return math.inf
-    return abs(lhs - rhs)
-
-
 def has_source_field_value(value: XpsValue) -> TypeGuard[int | float]:
     return value is not None and not pd.isna(value) and math.isfinite(value)
-
-
-def xps_sources_with_value(
-    quarter: AlignedQuarter,
-    field: str,
-) -> list[str]:
-    return [
-        source
-        for source in us_income_statement_source_order()
-        if has_source_field_value(quarter.fields.get(field, {}).get(source))
-    ]
 
 
 def record_xps_diagnostics(
@@ -286,21 +267,22 @@ def record_xps_diagnostics(
         if key in diagnostics.seen:
             continue
 
-        sources_by_field = {
-            field_name: xps_sources_with_value(data, field_name)
+        peer_values_by_field = {
+            field_name: usable_source_values(
+                data.fields.get(field_name, {}), include_sec=False
+            )
             for field_name in ALL_XPS_FIELDS
         }
-        if not any(sources_by_field.values()):
+        if not any(peer_values_by_field.values()):
             continue
 
         diagnostics.seen.add(key)
         for field_name in ALL_XPS_FIELDS:
             counts = diagnostics.quarters[field_name]
-            for source in sources_by_field[field_name]:
+            peer_values = peer_values_by_field[field_name]
+            for source, _ in peer_values:
                 counts[source] += 1
 
-            source_values = data.fields.get(field_name, {})
-            peer_values = usable_source_values(source_values, include_sec=False)
             pair_counts = diagnostics.consensus_pairs[field_name]
             for (left_source, left_value), (right_source, right_value) in combinations(
                 peer_values, 2
@@ -1069,7 +1051,7 @@ async def fetch_eodhd_income_statements(symbol: str, limit: int) -> dict[str, di
 
 
 def field_has_consensus(field: str, lhs: int | float, rhs: int | float) -> bool:
-    if field == EPS_XPS_FIELD and source_abs_diff(lhs, rhs) < EPS_ABS_TOLERANCE:
+    if field == EPS_XPS_FIELD and abs(float(lhs) - float(rhs)) < EPS_ABS_TOLERANCE:
         return True
     return source_log_diff(lhs, rhs) < SOURCE_DIFF_THRESHOLD
 

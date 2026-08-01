@@ -64,8 +64,14 @@ class SecValuationTests(unittest.TestCase):
     def test_source_diffs_reject_nonfinite_values(self):
         self.assertEqual(valuation.source_log_diff(math.inf, 1), math.inf)
         self.assertEqual(valuation.source_log_diff(1, math.nan), math.inf)
-        self.assertEqual(valuation.source_abs_diff(math.inf, 1), math.inf)
-        self.assertEqual(valuation.source_abs_diff(1, math.nan), math.inf)
+
+    def test_eps_consensus_rejects_nonfinite_values(self):
+        self.assertFalse(
+            valuation.field_has_consensus(valuation.EPS_XPS_FIELD, math.nan, 1)
+        )
+        self.assertFalse(
+            valuation.field_has_consensus(valuation.EPS_XPS_FIELD, math.inf, 1)
+        )
 
     def test_has_source_field_value_rejects_nonfinite_values(self):
         self.assertTrue(valuation.has_source_field_value(1))
