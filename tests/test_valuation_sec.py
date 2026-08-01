@@ -67,6 +67,13 @@ class SecValuationTests(unittest.TestCase):
         self.assertEqual(valuation.source_abs_diff(math.inf, 1), math.inf)
         self.assertEqual(valuation.source_abs_diff(1, math.nan), math.inf)
 
+    def test_has_source_field_value_rejects_nonfinite_values(self):
+        self.assertTrue(valuation.has_source_field_value(1))
+        self.assertFalse(valuation.has_source_field_value(None))
+        self.assertFalse(valuation.has_source_field_value(math.nan))
+        self.assertFalse(valuation.has_source_field_value(math.inf))
+        self.assertFalse(valuation.has_source_field_value(-math.inf))
+
     def test_source_log_diff_handles_extreme_finite_values(self):
         self.assertAlmostEqual(
             valuation.source_log_diff(1e308, 1e-308), 616 * math.log(10)
@@ -93,6 +100,28 @@ class SecValuationTests(unittest.TestCase):
         self.assertEqual(
             valuation.resolve_source_consensus("revenue", source_values),
             valuation.Consensus(101, ("fmp", "finnhub")),
+        )
+
+    def test_usable_source_values_can_exclude_sec(self):
+        source_values = {"fmp": 100, "finnhub": 102, "sec": 101}
+
+        self.assertEqual(
+            valuation.usable_source_values(source_values, include_sec=False),
+            [("fmp", 100), ("finnhub", 102)],
+        )
+
+    def test_latest_quarter_drops_nonfinite_second_source(self):
+        quarters = {
+            "2025-03-31": aligned_quarter(
+                {"revenue": {"fmp": 100, "finnhub": math.inf}}
+            )
+        }
+
+        self.assertEqual(
+            valuation.drop_incomplete_latest_us_quarter(
+                "AAPL", quarters, ["revenue"]
+            ),
+            {},
         )
 
     def test_configured_source_order_drives_alignment_and_consensus(self):

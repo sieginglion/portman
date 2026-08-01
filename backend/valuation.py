@@ -269,7 +269,7 @@ def source_abs_diff(lhs: int | float, rhs: int | float) -> float:
 
 
 def has_source_field_value(value: XpsValue) -> TypeGuard[int | float]:
-    return value is not None and not pd.isna(value)
+    return value is not None and not pd.isna(value) and math.isfinite(value)
 
 
 def missing_xps_sources(
@@ -305,9 +305,7 @@ def record_xps_diagnostics(
                 counts[source] += 1
 
             source_values = data.fields.get(field_name, {})
-            peer_values = usable_source_values(
-                source_values, us_income_statement_source_order()
-            )
+            peer_values = usable_source_values(source_values, include_sec=False)
             pair_counts = diagnostics.consensus_pairs[field_name]
             for (left_source, left_value), (right_source, right_value) in combinations(
                 peer_values, 2
@@ -1083,10 +1081,10 @@ def field_has_consensus(field: str, lhs: int | float, rhs: int | float) -> bool:
 
 def usable_source_values(
     source_values: dict[str, int | float | None],
-    source_names: tuple[str, ...] | None = None,
+    *,
+    include_sec: bool = True,
 ) -> list[tuple[str, int | float]]:
-    if source_names is None:
-        source_names = us_income_statement_source_order(include_sec=True)
+    source_names = us_income_statement_source_order(include_sec=include_sec)
     values: list[tuple[str, int | float]] = []
     for source_name in source_names:
         value = source_values.get(source_name)
