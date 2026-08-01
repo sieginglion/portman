@@ -146,7 +146,7 @@ def xps_field_map(shares_field: str, eps_field: str) -> dict[str, str]:
     }
 
 
-def new_xps_missing_counts() -> dict[str, dict[str, int]]:
+def new_xps_quarter_counts() -> dict[str, dict[str, int]]:
     return {
         field: {source: 0 for source in us_income_statement_source_order()}
         for field in ALL_XPS_FIELDS
@@ -168,14 +168,14 @@ def new_xps_consensus_pair_counts() -> dict[str, dict[str, int]]:
 @dataclass
 class XpsDiagnostics:
     seen: set[tuple[str, str]]
-    missing: dict[str, dict[str, int]]
+    quarters: dict[str, dict[str, int]]
     consensus_pairs: dict[str, dict[str, int]]
 
 
 def new_xps_diagnostics() -> XpsDiagnostics:
     return XpsDiagnostics(
         seen=set(),
-        missing=new_xps_missing_counts(),
+        quarters=new_xps_quarter_counts(),
         consensus_pairs=new_xps_consensus_pair_counts(),
     )
 
@@ -234,14 +234,6 @@ SEC_FIELD_SPECS = {
 }
 
 
-@dataclass(frozen=True)
-class IncomeStatementFetch:
-    """Fetched source rows together with provider-level availability metadata."""
-
-    rows: IncomeStatementSources
-    unavailable_sources: frozenset[str]
-
-
 def empty_sec_rows() -> pd.DataFrame:
     return pd.DataFrame(columns=pd.Index(SEC_DEDUPE_COLS))
 
@@ -272,36 +264,39 @@ def has_source_field_value(value: XpsValue) -> TypeGuard[int | float]:
     return value is not None and not pd.isna(value) and math.isfinite(value)
 
 
-def missing_xps_sources(
+def xps_sources_with_value(
     quarter: AlignedQuarter,
     field: str,
-    unavailable_sources: frozenset[str],
 ) -> list[str]:
     return [
         source
         for source in us_income_statement_source_order()
-        if source not in unavailable_sources
-        and not has_source_field_value(quarter.fields.get(field, {}).get(source))
+        if has_source_field_value(quarter.fields.get(field, {}).get(source))
     ]
 
 
 def record_xps_diagnostics(
     symbol: str,
     aligned_quarters: AlignedQuarters,
-    *,
-    unavailable_sources: frozenset[str] = frozenset(),
 ) -> None:
-    """Record missing values and pairwise consensus for selected quarters."""
+    """Record provider field-quarter counts and pairwise consensus."""
     diagnostics = _xps_diagnostics
     for quarter, data in aligned_quarters.items():
         key = (symbol, quarter)
         if key in diagnostics.seen:
             continue
 
+        sources_by_field = {
+            field_name: xps_sources_with_value(data, field_name)
+            for field_name in ALL_XPS_FIELDS
+        }
+        if not any(sources_by_field.values()):
+            continue
+
         diagnostics.seen.add(key)
         for field_name in ALL_XPS_FIELDS:
-            counts = diagnostics.missing[field_name]
-            for source in missing_xps_sources(data, field_name, unavailable_sources):
+            counts = diagnostics.quarters[field_name]
+            for source in sources_by_field[field_name]:
                 counts[source] += 1
 
             source_values = data.fields.get(field_name, {})
@@ -315,10 +310,10 @@ def record_xps_diagnostics(
 
 
 def get_xps_diagnostics() -> dict:
-    """Return missing-value and pairwise-consensus counts."""
+    """Return provider field-quarter and pairwise-consensus counts."""
     return {
         "total_quarters": len(_xps_diagnostics.seen),
-        "missing": _xps_diagnostics.missing,
+        "quarters": _xps_diagnostics.quarters,
         "consensus_pairs": _xps_diagnostics.consensus_pairs,
     }
 
@@ -1217,17 +1212,14 @@ async def fetch_us_income_statement_source(
 
 async def fetch_us_income_statement_sources(
     symbol: str, limit: int
-) -> IncomeStatementFetch:
+) -> IncomeStatementSources:
     results = await asyncio.gather(
         *(
             fetch_us_income_statement_source(source, symbol, limit)
             for source in ENABLED_US_INCOME_STATEMENT_SOURCES
         )
     )
-    return IncomeStatementFetch(
-        rows={name: rows if rows is not None else {} for name, rows in results},
-        unavailable_sources=frozenset(name for name, rows in results if rows is None),
-    )
+    return {name: rows if rows is not None else {} for name, rows in results}
 
 
 def iter_sec_metadata_periods(
@@ -1404,8 +1396,6 @@ async def resolve_us_income_statement_quarters(
     source_rows: IncomeStatementSources,
     limit: int,
     include_eps: bool,
-    *,
-    unavailable_sources: frozenset[str] = frozenset(),
 ) -> ResolvedQuarters:
     """Align US provider data, add SEC references, then resolve consensus values."""
     required_fields = required_xps_fields(include_eps)
@@ -1431,11 +1421,7 @@ async def resolve_us_income_statement_quarters(
 
     # 4. Record diagnostics for the same quarters that will be returned.
     if include_eps:
-        record_xps_diagnostics(
-            symbol,
-            selected_quarters,
-            unavailable_sources=unavailable_sources,
-        )
+        record_xps_diagnostics(symbol, selected_quarters)
 
     # 5. Reduce each field to the mean of its winning consensus group.
     resolved_quarters = {
@@ -1479,13 +1465,12 @@ async def fetch_resolved_income_statement_quarters(
         fmp_rows = await fetch_fmp_income_statements(market, symbol, limit)
         return select_latest_required_quarters(fmp_rows, limit, symbol=symbol)
 
-    fetched = await fetch_us_income_statement_sources(symbol, limit + 1)
+    source_rows = await fetch_us_income_statement_sources(symbol, limit + 1)
     return await resolve_us_income_statement_quarters(
         symbol,
-        fetched.rows,
+        source_rows,
         limit,
         include_eps,
-        unavailable_sources=fetched.unavailable_sources,
     )
 
 

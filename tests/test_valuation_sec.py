@@ -215,7 +215,7 @@ class SecValuationTests(unittest.TestCase):
     def test_eps_consensus_falls_back_to_relative_tolerance(self):
         self.assertTrue(valuation.field_has_consensus("epsDiluted", 1, 1.03))
 
-    def test_diagnostics_reports_per_vendor_missing_counts(self):
+    def test_diagnostics_reports_per_vendor_quarter_counts(self):
         def row(fmp, finnhub):
             return aligned_quarter(
                 {
@@ -227,20 +227,23 @@ class SecValuationTests(unittest.TestCase):
         rows = {
             "2025-03-31": row(100, 100),
             "2025-06-30": row(100, None),
-            "2025-09-30": row(None, 100),
+            "2025-09-30": row(100, None),
             "2025-12-31": row(None, None),
         }
         with patch_xps_diagnostics():
-            valuation.record_xps_diagnostics("MISSINGNESS-TEST", rows)
+            valuation.record_xps_diagnostics("QUARTER-TEST", rows)
             diagnostics = valuation.get_xps_diagnostics()
 
-        self.assertEqual(diagnostics["total_quarters"], 4)
-        revenue = diagnostics["missing"]["revenue"]
+        self.assertEqual(diagnostics["total_quarters"], 3)
+        revenue = diagnostics["quarters"]["revenue"]
         self.assertNotIn("sec", revenue)
-        self.assertEqual(revenue["fmp"], 2)
-        self.assertEqual(revenue["finnhub"], 2)
-        self.assertEqual(diagnostics["missing"]["weightedAverageShsOutDil"], revenue)
-        self.assertEqual(diagnostics["missing"]["epsDiluted"], revenue)
+        self.assertEqual(
+            set(revenue), set(valuation.us_income_statement_source_order())
+        )
+        self.assertEqual(revenue["fmp"], 3)
+        self.assertEqual(revenue["finnhub"], 1)
+        self.assertEqual(diagnostics["quarters"]["weightedAverageShsOutDil"], revenue)
+        self.assertEqual(diagnostics["quarters"]["epsDiluted"], revenue)
         self.assertEqual(diagnostics["consensus_pairs"]["revenue"]["fmp:finnhub"], 1)
         self.assertEqual(
             diagnostics["consensus_pairs"]["weightedAverageShsOutDil"]["fmp:finnhub"],
@@ -248,23 +251,26 @@ class SecValuationTests(unittest.TestCase):
         )
         self.assertEqual(diagnostics["consensus_pairs"]["epsDiluted"]["fmp:finnhub"], 1)
 
-    def test_missing_counts_exclude_unavailable_sources(self):
+    def test_quarter_counts_valid_values(self):
         with patch_xps_diagnostics():
             valuation.record_xps_diagnostics(
-                "UNAVAILABLE-SOURCE-TEST",
+                "VALID-VALUE-TEST",
                 {
                     "2025-03-31": aligned_quarter(
-                        {"revenue": {"fmp": None, "finnhub": None}}
+                        {"revenue": {"fmp": 100, "finnhub": None}}
                     )
                 },
-                unavailable_sources=frozenset({"fmp"}),
             )
             diagnostics = valuation.get_xps_diagnostics()
 
         self.assertEqual(diagnostics["total_quarters"], 1)
-        revenue = diagnostics["missing"]["revenue"]
-        self.assertEqual(revenue["fmp"], 0)
-        self.assertEqual(revenue["finnhub"], 1)
+        revenue = diagnostics["quarters"]["revenue"]
+        self.assertEqual(revenue["fmp"], 1)
+        self.assertEqual(revenue["finnhub"], 0)
+        self.assertEqual(
+            diagnostics["quarters"]["weightedAverageShsOutDil"]["fmp"], 0
+        )
+        self.assertEqual(diagnostics["quarters"]["epsDiluted"]["fmp"], 0)
         self.assertTrue(
             all(
                 count == 0
@@ -318,7 +324,7 @@ class SecValuationTests(unittest.TestCase):
 
         self.assertEqual(diagnostics["consensus_pairs"]["revenue"], {"fmp:finnhub": 1})
 
-    def test_diagnostics_deduplicates_missing_and_pair_counts(self):
+    def test_diagnostics_deduplicates_quarters_and_pair_counts(self):
         rows = {
             "2025-03-31": aligned_quarter({"revenue": {"fmp": 100, "finnhub": 100}})
         }
@@ -335,7 +341,14 @@ class SecValuationTests(unittest.TestCase):
             diagnostics = valuation.get_xps_diagnostics()
 
         self.assertEqual(diagnostics["total_quarters"], 1)
-        self.assertEqual(diagnostics["missing"]["revenue"], {"fmp": 0, "finnhub": 0})
+        self.assertEqual(diagnostics["quarters"]["revenue"], {"fmp": 1, "finnhub": 1})
+        self.assertEqual(
+            diagnostics["quarters"]["weightedAverageShsOutDil"],
+            {"fmp": 0, "finnhub": 0},
+        )
+        self.assertEqual(
+            diagnostics["quarters"]["epsDiluted"], {"fmp": 0, "finnhub": 0}
+        )
         self.assertEqual(diagnostics["consensus_pairs"]["revenue"], {"fmp:finnhub": 1})
 
     def test_diagnostics_skips_request_that_falls_short_after_latest_drop(self):
@@ -372,7 +385,7 @@ class SecValuationTests(unittest.TestCase):
             )
 
         self.assertEqual(diagnostics_state.seen, set())
-        self.assertEqual(diagnostics_state.missing["revenue"]["finnhub"], 0)
+        self.assertEqual(diagnostics_state.quarters["revenue"]["finnhub"], 0)
 
     def test_resolve_us_income_statement_quarters_accepts_source_rows(self):
         source_rows = {

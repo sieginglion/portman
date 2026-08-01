@@ -191,7 +191,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
                 valuation.fetch_us_income_statement_sources("HOOD", 8)
             )
 
-        self.assertEqual(set(fetched.rows), {"fmp", "massive", "eodhd", "finnhub"})
+        self.assertEqual(set(fetched), {"fmp", "massive", "eodhd", "finnhub"})
         tiingo_fetch.assert_not_awaited()
 
     def test_enabled_sources_are_fetched_in_registry_order(self):
@@ -232,7 +232,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
             )
 
         self.assertEqual(
-            list(fetched.rows),
+            list(fetched),
             ["fmp", "massive", "eodhd", "finnhub", "tiingo"],
         )
         fmp_fetch.assert_awaited_once_with("u", "HOOD", 8)
@@ -241,7 +241,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
         finnhub_fetch.assert_awaited_once_with("HOOD", 8)
         tiingo_fetch.assert_awaited_once_with("HOOD", 8)
 
-    def test_failed_source_is_empty_and_marked_unavailable(self):
+    def test_failed_source_is_empty(self):
         fmp_rows = {"2025-03-31": {"revenue": 100}}
         with (
             patch.object(
@@ -265,8 +265,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
                 valuation.fetch_us_income_statement_sources("HOOD", 8)
             )
 
-        self.assertEqual(fetched.rows, {"fmp": fmp_rows, "massive": {}})
-        self.assertEqual(fetched.unavailable_sources, frozenset({"massive"}))
+        self.assertEqual(fetched, {"fmp": fmp_rows, "massive": {}})
         exception_log.assert_called_once()
 
     def test_expected_source_errors_are_logged_as_warnings(self):
@@ -327,15 +326,14 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
             with self.assertRaises(asyncio.CancelledError):
                 asyncio.run(valuation.fetch_us_income_statement_sources("HOOD", 8))
 
-    def test_us_resolution_receives_fetched_rows_and_availability(self):
+    def test_us_resolution_receives_fetched_rows(self):
         rows = {"fmp": {"2025-03-31": {"revenue": 100}}}
-        fetched = valuation.IncomeStatementFetch(rows, frozenset({"massive"}))
         resolved = {"2025-03-31": {"revenue": 100}}
         with (
             patch.object(
                 valuation,
                 "fetch_us_income_statement_sources",
-                new=AsyncMock(return_value=fetched),
+                new=AsyncMock(return_value=rows),
             ) as fetch_sources,
             patch.object(
                 valuation,
@@ -354,17 +352,15 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
             rows,
             8,
             True,
-            unavailable_sources=frozenset({"massive"}),
         )
 
     def test_us_resolution_preserves_disabled_eps_after_fetch(self):
         rows = {"fmp": {"2025-03-31": {"revenue": 100}}}
-        fetched = valuation.IncomeStatementFetch(rows, frozenset())
         with (
             patch.object(
                 valuation,
                 "fetch_us_income_statement_sources",
-                new=AsyncMock(return_value=fetched),
+                new=AsyncMock(return_value=rows),
             ) as fetch_sources,
             patch.object(
                 valuation,
@@ -380,7 +376,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
 
         fetch_sources.assert_awaited_once_with("HOOD", 9)
         resolve_quarters.assert_awaited_once_with(
-            "HOOD", rows, 8, False, unavailable_sources=frozenset()
+            "HOOD", rows, 8, False
         )
 
     def test_disabled_massive_is_not_fetched(self):
@@ -415,7 +411,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
                 valuation.fetch_us_income_statement_sources("HOOD", 8)
             )
 
-        self.assertNotIn("massive", fetched.rows)
+        self.assertNotIn("massive", fetched)
         massive_fetch.assert_not_awaited()
 
     def test_disabled_eodhd_is_not_fetched(self):
@@ -450,7 +446,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
                 valuation.fetch_us_income_statement_sources("HOOD", 8)
             )
 
-        self.assertNotIn("eodhd", fetched.rows)
+        self.assertNotIn("eodhd", fetched)
         eodhd_fetch.assert_not_awaited()
 
     def test_source_fetch_error_redacts_request_url_and_token(self):
