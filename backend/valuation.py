@@ -168,15 +168,15 @@ def new_xps_consensus_pair_counts() -> dict[str, dict[str, int]]:
 @dataclass
 class XpsDiagnostics:
     seen: set[tuple[str, str]]
-    quarters: dict[str, dict[str, int]]
-    consensus_pairs: dict[str, dict[str, int]]
+    coverage: dict[str, dict[str, int]]
+    agreement: dict[str, dict[str, int]]
 
 
 def new_xps_diagnostics() -> XpsDiagnostics:
     return XpsDiagnostics(
         seen=set(),
-        quarters=new_xps_quarter_counts(),
-        consensus_pairs=new_xps_consensus_pair_counts(),
+        coverage=new_xps_quarter_counts(),
+        agreement=new_xps_consensus_pair_counts(),
     )
 
 
@@ -278,12 +278,12 @@ def record_xps_diagnostics(
 
         diagnostics.seen.add(key)
         for field_name in ALL_XPS_FIELDS:
-            counts = diagnostics.quarters[field_name]
+            counts = diagnostics.coverage[field_name]
             peer_values = peer_values_by_field[field_name]
             for source, _ in peer_values:
                 counts[source] += 1
 
-            pair_counts = diagnostics.consensus_pairs[field_name]
+            pair_counts = diagnostics.agreement[field_name]
             for (left_source, left_value), (right_source, right_value) in combinations(
                 peer_values, 2
             ):
@@ -292,11 +292,11 @@ def record_xps_diagnostics(
 
 
 def get_xps_diagnostics() -> dict:
-    """Return provider field-quarter and pairwise-consensus counts."""
+    """Return provider coverage and pairwise-agreement counts."""
     return {
         "total_quarters": len(_xps_diagnostics.seen),
-        "quarters": _xps_diagnostics.quarters,
-        "consensus_pairs": _xps_diagnostics.consensus_pairs,
+        "coverage": _xps_diagnostics.coverage,
+        "agreement": _xps_diagnostics.agreement,
     }
 
 

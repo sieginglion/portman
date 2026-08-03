@@ -201,8 +201,8 @@ class DiagnosticsRouteTests(unittest.TestCase):
     def test_diagnostics_returns_the_payload(self):
         payload = {
             "total_quarters": 7,
-            "quarters": {"revenue": {"fmp": 7}},
-            "consensus_pairs": {},
+            "coverage": {"revenue": {"fmp": 7}},
+            "agreement": {},
         }
         with patch.object(valuation, "get_xps_diagnostics", return_value=payload):
             client = TestClient(main.app)
