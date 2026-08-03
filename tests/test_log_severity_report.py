@@ -60,16 +60,13 @@ def fail():
             result.stdout,
         )
         self.assertIn("Warnings from backend.valuation: 1", result.stdout)
-        self.assertIn(
-            f"warn:{warning_line} - Dynamic warning {{}}",
-            result.stdout,
-        )
+        self.assertIn(f"     1  warn:{warning_line}\n", result.stdout)
         self.assertIn("Errors from backend.valuation: 2", result.stdout)
-        self.assertIn(
-            f"logged_error:{logged_error_line} - Dynamic failure {{}}",
-            result.stdout,
-        )
-        self.assertIn(f"fail:{raise_line} - LookupError: boom", result.stdout)
+        self.assertIn(f"     1  logged_error:{logged_error_line}\n", result.stdout)
+        self.assertIn(f"     1  fail:{raise_line} - LookupError\n", result.stdout)
+        self.assertNotIn("Dynamic warning {}", result.stdout)
+        self.assertNotIn("Dynamic failure {}", result.stdout)
+        self.assertNotIn("LookupError: boom", result.stdout)
 
     def test_tracks_nested_async_and_module_level_source_sites(self):
         source_text = '''
@@ -144,7 +141,8 @@ logger.warning("after functions")
         self.assertIn("inner", result.stdout)
         self.assertIn("async_worker", result.stdout)
         self.assertIn(
-            f"inner:{lines['raise ValueError(\"inner failure\")']} - ValueError: inner failure",
+            "     1  "
+            f"inner:{lines['raise ValueError(\"inner failure\")']} - ValueError\n",
             result.stdout,
         )
 
@@ -174,7 +172,7 @@ def warn():
         self.assertIn("Warnings from backend.valuation: 0", result.stdout)
         self.assertIn("Errors from backend.valuation: 0", result.stdout)
 
-    def test_preserves_f_string_expression_and_multiline_templates(self):
+    def test_classifies_dynamic_and_multiline_messages_by_source_location(self):
         source_text = '''
 from loguru import logger
 
@@ -214,9 +212,14 @@ def multiline():
             result = self._run(log, source)
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(f"f_string:{f_string_line} - f'Value: {{value!r:>8}}'", result.stdout)
-        self.assertIn(f"expression:{expression_line} - message", result.stdout)
-        self.assertIn(f"multiline:{multiline_line} - first\\nsecond", result.stdout)
+        self.assertIn(f"     1  f_string:{f_string_line}\n", result.stdout)
+        self.assertIn(f"     1  expression:{expression_line}\n", result.stdout)
+        self.assertIn(f"     1  multiline:{multiline_line}\n", result.stdout)
+        self.assertNotIn("f'Value: {value!r:>8}'", result.stdout)
+        self.assertNotIn(
+            f"     1  expression:{expression_line} - message", result.stdout
+        )
+        self.assertNotIn("first\\nsecond", result.stdout)
 
     def test_classifies_all_explicit_raise_forms(self):
         source_text = """
@@ -277,10 +280,15 @@ def reraise():
             result = self._run(log, source)
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn(f"raise_class:{class_line} - ValueError", result.stdout)
-        self.assertIn(f"raise_without_message:{empty_line} - RuntimeError", result.stdout)
         self.assertIn(
-            f"raise_qualified:{qualified_line} - errors.DomainError: bad", result.stdout
+            f"     1  raise_class:{class_line} - ValueError\n", result.stdout
+        )
+        self.assertIn(
+            f"     1  raise_without_message:{empty_line} - RuntimeError\n", result.stdout
+        )
+        self.assertIn(
+            f"     1  raise_qualified:{qualified_line} - errors.DomainError\n",
+            result.stdout,
         )
         self.assertIn(
             f"Unknown error source: reraise:{reraise_line} - ValueError", result.stdout
@@ -474,8 +482,8 @@ raise ValueError("boom")
             result = self._run(log, source)
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("<module>:2 - warning", result.stdout)
-        self.assertIn("<module>:3 - ValueError: boom", result.stdout)
+        self.assertIn("     1  <module>:2\n", result.stdout)
+        self.assertIn("     1  <module>:3 - ValueError\n", result.stdout)
 
     def _run(self, log: Path, source: Path, *extra_args: str):
         return subprocess.run(

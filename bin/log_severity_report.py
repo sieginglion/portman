@@ -5,13 +5,13 @@ Logging call sites are discovered directly from ``backend/valuation.py`` using
 its syntax tree.  The log location embedded by Loguru is then matched against
 the discovered ``logger.warning``, ``logger.error``, and ``logger.exception``
 calls.  This keeps the report synchronized when logging calls are added,
-removed, or moved, without depending on dynamic message values such as a CIK,
+removed, or moved, without depending on dynamic log values such as a CIK,
 symbol, or date.
 
 Explicit ``raise`` statements are discovered as error sites too.  Uncaught
 errors are identified from traceback frames in ``valuation.py`` and grouped by
-their deepest validated valuation frame, source message template, and terminal
-exception type.  Warnings and errors from all other modules are ignored.
+their deepest validated valuation frame and terminal exception type.  Warnings
+and errors from all other modules are ignored.
 
 Examples:
     uv run python bin/log_severity_report.py
@@ -29,7 +29,6 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOG = PROJECT_ROOT / "portman.log"
@@ -57,26 +56,16 @@ LOGGER_LEVELS = {
 
 
 @dataclass(frozen=True)
-class FunctionLocation:
-    """The source range occupied by a function."""
-
-    name: str
-    first_line: int
-    last_line: int
-
-
-@dataclass(frozen=True)
 class LogSite:
     """A logging call discovered in the valuation source."""
 
     level: str
     function: str
     line: int
-    template: str
 
     @property
     def category(self) -> str:
-        return f"{self.function}:{self.line} - {self.template}"
+        return f"{self.function}:{self.line}"
 
 
 @dataclass(frozen=True)
@@ -86,21 +75,18 @@ class RaiseSite:
     exception: str
     function: str
     line: int
-    template: str | None
 
     def category(self, terminal_exception: str) -> str:
-        message = f": {self.template}" if self.template is not None else ""
-        return f"{self.function}:{self.line} - {terminal_exception}{message}"
+        return f"{self.function}:{self.line} - {terminal_exception}"
 
 
 @dataclass(frozen=True)
 class SourceMetadata:
-    """Logging and function locations discovered from the valuation source."""
+    """Logging and function mappings discovered from the valuation source."""
 
     log_sites: dict[tuple[str, int], LogSite]
     raise_sites: dict[int, RaiseSite]
-    functions: tuple[FunctionLocation, ...]
-    line_count: int
+    functions_by_line: dict[int, str]
 
 
 @dataclass
@@ -134,56 +120,27 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def enclosing_function(line: int, functions: tuple[FunctionLocation, ...]) -> str:
-    """Return the innermost function containing ``line``."""
-    matches = [
-        function
-        for function in functions
-        if function.first_line <= line <= function.last_line
-    ]
-    if not matches:
-        return "<module>"
-    return min(
-        matches, key=lambda function: function.last_line - function.first_line
-    ).name
-
-
-def string_template(message: ast.expr) -> str:
-    """Return a compact display form of a string or f-string expression."""
-    if isinstance(message, ast.Constant) and isinstance(message.value, str):
-        return message.value.replace("\n", r"\n")
-    return ast.unparse(message).replace("\n", r"\n")
-
-
-def log_template(call: ast.Call) -> str:
-    """Return a logging call's source message template."""
-    if not call.args:
-        return "<no message>"
-    return string_template(call.args[0])
-
-
 def raise_site(node: ast.Raise, function: str) -> RaiseSite:
     """Describe an explicit raise statement from its syntax tree node."""
     if isinstance(node.exc, ast.Call):
-        expression, arguments = node.exc.func, node.exc.args
+        expression = node.exc.func
     else:
-        expression, arguments = node.exc, ()
+        expression = node.exc
     exception = ast.unparse(expression) if expression else "<reraised exception>"
     return RaiseSite(
         exception=exception,
         function=function,
         line=node.lineno,
-        template=string_template(arguments[0]) if arguments else None,
     )
 
 
 class SourceVisitor(ast.NodeVisitor):
     """Collect source metadata while tracking the enclosing function."""
 
-    def __init__(self) -> None:
-        self.functions: list[FunctionLocation] = []
+    def __init__(self, line_count: int) -> None:
         self.log_sites: dict[tuple[str, int], LogSite] = {}
         self.raise_sites: dict[int, RaiseSite] = {}
+        self.functions_by_line = {line: "<module>" for line in range(1, line_count + 1)}
         self.function_stack: list[str] = []
 
     @property
@@ -191,9 +148,8 @@ class SourceVisitor(ast.NodeVisitor):
         return self.function_stack[-1] if self.function_stack else "<module>"
 
     def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        self.functions.append(
-            FunctionLocation(node.name, node.lineno, node.end_lineno or node.lineno)
-        )
+        for line in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+            self.functions_by_line[line] = node.name
         self.function_stack.append(node.name)
         self.generic_visit(node)
         self.function_stack.pop()
@@ -216,7 +172,6 @@ class SourceVisitor(ast.NodeVisitor):
                 level=level,
                 function=self.function,
                 line=line,
-                template=log_template(node),
             )
         self.generic_visit(node)
 
@@ -225,13 +180,12 @@ def load_source_metadata(source: Path) -> SourceMetadata:
     """Discover functions and warning/error logging call sites in ``source``."""
     source_text = source.read_text(encoding="utf-8")
     tree = ast.parse(source_text, filename=str(source))
-    visitor = SourceVisitor()
+    visitor = SourceVisitor(len(source_text.splitlines()))
     visitor.visit(tree)
     return SourceMetadata(
         log_sites=visitor.log_sites,
         raise_sites=visitor.raise_sites,
-        functions=tuple(visitor.functions),
-        line_count=len(source_text.splitlines()),
+        functions_by_line=visitor.functions_by_line,
     )
 
 
@@ -286,8 +240,7 @@ def classify_error_block(
         return None
 
     source_line, traceback_function = error_block.valuation_frames[-1]
-    current_function = enclosing_function(source_line, metadata.functions)
-    if source_line > metadata.line_count or current_function != traceback_function:
+    if metadata.functions_by_line.get(source_line) != traceback_function:
         return "Stale traceback source location", True
     if error_block.terminal_exception is None:
         return "ERROR without terminal exception", True
