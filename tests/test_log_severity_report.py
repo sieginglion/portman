@@ -238,6 +238,96 @@ def warn():
             result.stdout,
         )
 
+    def test_stale_traceback_location_fails(self):
+        source_text = """
+def fail():
+    raise ValueError("boom")
+""".lstrip()
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "backend/valuation.py"
+            source.parent.mkdir()
+            source.write_text(source_text, encoding="utf-8")
+            log = Path(directory) / "app.log"
+            log.write_text(
+                "\n".join(
+                    (
+                        "ERROR: Exception in application",
+                        f'  File "{source}", line 999, in fail',
+                        "ValueError: boom",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = self._run(log, source)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Stale traceback source location", result.stdout)
+        self.assertIn(
+            "Failed: 1 unknown or stale valuation entries (0 warnings, 1 errors).",
+            result.stdout,
+        )
+
+    def test_traceback_without_terminal_exception_fails(self):
+        source_text = """
+def fail():
+    raise ValueError("boom")
+""".lstrip()
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "backend/valuation.py"
+            source.parent.mkdir()
+            source.write_text(source_text, encoding="utf-8")
+            raise_line = self._line_containing(source_text, "raise ValueError")
+            log = Path(directory) / "app.log"
+            log.write_text(
+                "\n".join(
+                    (
+                        "ERROR: Exception in application",
+                        f'  File "{source}", line {raise_line}, in fail',
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = self._run(log, source)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ERROR without terminal exception", result.stdout)
+        self.assertIn(
+            "Failed: 1 unknown or stale valuation entries (0 warnings, 1 errors).",
+            result.stdout,
+        )
+
+    def test_ignores_traceback_without_a_valuation_frame(self):
+        source_text = "def valuation():\n    pass\n"
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "backend/valuation.py"
+            source.parent.mkdir()
+            source.write_text(source_text, encoding="utf-8")
+            other_source = Path(directory) / "backend/other.py"
+            log = Path(directory) / "app.log"
+            log.write_text(
+                "\n".join(
+                    (
+                        "ERROR: Exception in application",
+                        f'  File "{other_source}", line 1, in fail',
+                        "ValueError: boom",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = self._run(log, source)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Errors from backend.valuation: 0", result.stdout)
+
     def test_unknown_propagated_error_fails(self):
         source_text = """
 def accidental_error():

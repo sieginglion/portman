@@ -27,7 +27,7 @@ import argparse
 import ast
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -101,6 +101,14 @@ class SourceMetadata:
     raise_sites: dict[int, RaiseSite]
     functions: tuple[FunctionLocation, ...]
     line_count: int
+
+
+@dataclass
+class ErrorBlock:
+    """Traceback details collected after an ``ERROR:`` log marker."""
+
+    terminal_exception: str | None = None
+    valuation_frames: list[tuple[int, str]] = field(default_factory=list)
 
 
 def parse_args() -> argparse.Namespace:
@@ -250,6 +258,36 @@ def valuation_traceback_frame(
     return int(match.group("line")), match.group("function")
 
 
+def classify_error_block(
+    error_block: ErrorBlock, metadata: SourceMetadata
+) -> tuple[str, bool] | None:
+    """Return an error category and whether it is unknown or stale."""
+    if not error_block.valuation_frames:
+        return None
+
+    source_line, traceback_function = error_block.valuation_frames[-1]
+    current_function = enclosing_function(source_line, metadata.functions)
+    if source_line > metadata.line_count or current_function != traceback_function:
+        return "Stale traceback source location", True
+    if error_block.terminal_exception is None:
+        return "ERROR without terminal exception", True
+
+    site = metadata.raise_sites.get(source_line)
+    terminal_exception = error_block.terminal_exception
+    terminal_name = terminal_exception.rsplit(".", 1)[-1]
+    if (
+        site is not None
+        and site.function == traceback_function
+        and site.exception.rsplit(".", 1)[-1] == terminal_name
+    ):
+        return site.category(terminal_exception), False
+    return (
+        "Unknown error source: "
+        f"{traceback_function}:{source_line} - {terminal_exception}",
+        True,
+    )
+
+
 def summarize(
     log: Path,
     valuation_source: Path,
@@ -261,46 +299,17 @@ def summarize(
     errors: Counter[str] = Counter()
     unknown_warnings = 0
     unknown_errors = 0
-    terminal_exception: str | None = None
-    valuation_frames: list[tuple[int, str]] = []
-    in_error_block = False
+    error_block: ErrorBlock | None = None
 
     def finish_error_block() -> None:
-        nonlocal terminal_exception, valuation_frames, in_error_block
-        nonlocal unknown_errors
-        if not in_error_block:
+        nonlocal error_block, unknown_errors
+        if error_block is None:
             return
-        if valuation_frames:
-            source_line, traceback_function = valuation_frames[-1]
-            current_function = enclosing_function(source_line, metadata.functions)
-            if (
-                source_line > metadata.line_count
-                or current_function != traceback_function
-            ):
-                errors["Stale traceback source location"] += 1
-                unknown_errors += 1
-            elif terminal_exception is None:
-                errors["ERROR without terminal exception"] += 1
-                unknown_errors += 1
-            else:
-                site = metadata.raise_sites.get(source_line)
-                terminal_name = terminal_exception.rsplit(".", 1)[-1]
-                if (
-                    site is not None
-                    and site.function == traceback_function
-                    and site.exception.rsplit(".", 1)[-1] == terminal_name
-                ):
-                    category = site.category(terminal_exception)
-                else:
-                    category = (
-                        "Unknown error source: "
-                        f"{traceback_function}:{source_line} - {terminal_exception}"
-                    )
-                    unknown_errors += 1
-                errors[category] += 1
-        terminal_exception = None
-        valuation_frames = []
-        in_error_block = False
+        if result := classify_error_block(error_block, metadata):
+            category, is_unknown = result
+            errors[category] += 1
+            unknown_errors += is_unknown
+        error_block = None
 
     with log.open(encoding="utf-8", errors="replace") as file:
         for line in file:
@@ -318,14 +327,14 @@ def summarize(
 
             if ERROR_BLOCK_MARKER.match(line):
                 finish_error_block()
-                in_error_block = True
+                error_block = ErrorBlock()
                 continue
 
-            if in_error_block:
+            if error_block is not None:
                 if frame := valuation_traceback_frame(line, valuation_source):
-                    valuation_frames.append(frame)
+                    error_block.valuation_frames.append(frame)
                 if match := EXCEPTION_LINE.match(line.rstrip()):
-                    terminal_exception = match.group("name")
+                    error_block.terminal_exception = match.group("name")
 
     finish_error_block()
     return warnings, errors, unknown_warnings, unknown_errors
