@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
-"""Summarize warning and error types emitted by ``backend/valuation.py``.
+"""Summarize warnings and errors emitted by ``backend/valuation.py``.
 
-Warning types are identified from the ``backend.valuation:function:line``
-location embedded by Loguru, then checked against ``backend/valuation.py``.
-This avoids depending on dynamic values inside a warning message, such as a
-CIK, symbol, or date.
+Logging call sites are discovered directly from ``backend/valuation.py`` using
+its syntax tree.  The log location embedded by Loguru is then matched against
+the discovered ``logger.warning``, ``logger.error``, and ``logger.exception``
+calls.  This keeps the report synchronized when logging calls are added,
+removed, or moved, without depending on dynamic message values such as a CIK,
+symbol, or date.
+
+Explicit ``raise`` statements are discovered as error sites too.  Uncaught
+errors are identified from traceback frames in ``valuation.py`` and grouped by
+their deepest validated valuation frame, source message template, and terminal
+exception type.  Warnings and errors from all other modules are ignored.
 
 Examples:
     uv run python bin/log_severity_report.py
     uv run python bin/log_severity_report.py backend.log
-    uv run python bin/log_severity_report.py portman.log --strict
+    uv run python bin/log_severity_report.py portman.log
 
-Warnings and errors from all other modules are ignored.  ``--strict`` returns
-a non-zero status if a valuation entry does not match a known type or no
-longer points at a valid source location.
+Unknown or stale valuation warnings and errors always return a non-zero status.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,79 +34,73 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOG = PROJECT_ROOT / "portman.log"
 DEFAULT_VALUATION_SOURCE = PROJECT_ROOT / "backend/valuation.py"
-WARNING_MARKER = re.compile(r"\| WARNING\s+\|")
-WARNING_SOURCE = re.compile(
-    r"\| WARNING\s+\|\s+"
+DEFAULT_MODULE = "backend.valuation"
+LOG_RECORD = re.compile(
+    r"\|\s+(?P<level>WARNING|ERROR)\s+\|\s+"
     r"(?P<module>[A-Za-z_][A-Za-z0-9_.]*):"
-    r"(?P<function>[A-Za-z_][A-Za-z0-9_]*):(?P<line>\d+)\s+-"
+    r"(?P<function>[^:]+):(?P<line>\d+)\s+-"
 )
-ERROR_MARKER = re.compile(r"^ERROR:")
-TRACEBACK_FRAME = re.compile(r'^\s*File "(?P<file>.+)", line (?P<line>\d+), in ')
+ERROR_BLOCK_MARKER = re.compile(r"^ERROR:")
+TRACEBACK_FRAME = re.compile(
+    r'^\s*File "(?P<file>.+)", line (?P<line>\d+), in (?P<function>\S+)'
+)
 EXCEPTION_LINE = re.compile(
-    r"^(?P<name>[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)):\s*(?P<message>.*)$"
+    r"^(?P<name>[A-Za-z_][A-Za-z0-9_.]*"
+    r"(?:Error|Exception|KeyboardInterrupt|SystemExit|GeneratorExit))"
+    r"(?::\s*(?P<message>.*))?$"
 )
-CONSENSUS_FIELD = re.compile(r"^no consensus .*\bfield=(?P<field>\w+)$")
-ALIGNED_QUARTERS = re.compile(r"^need (?P<quarters>\d+) aligned quarters")
+LOGGER_LEVELS = {
+    "warning": "WARNING",
+    "error": "ERROR",
+    "exception": "ERROR",
+}
 
 
 @dataclass(frozen=True)
-class WarningType:
-    """A warning's semantic type and its emitting valuation function."""
+class FunctionLocation:
+    """The source range occupied by a function."""
 
     name: str
+    first_line: int
+    last_line: int
+
+
+@dataclass(frozen=True)
+class LogSite:
+    """A logging call discovered in the valuation source."""
+
+    level: str
     function: str
-    description: str
+    line: int
+    template: str
+
+    @property
+    def category(self) -> str:
+        return f"{self.function}:{self.line} - {self.template}"
 
 
-WARNING_TYPES = (
-    WarningType(
-        "SEC concept fetch failed",
-        "fetch_first_available_sec_field",
-        "An SEC XBRL concept request failed (usually a 404); the concept is skipped and other sources remain usable.",
-    ),
-    WarningType(
-        "SEC concept returned empty units",
-        "fetch_sec_concept_rows",
-        "The SEC response contained the concept but no values in the expected unit; that concept is skipped.",
-    ),
-    WarningType(
-        "Latest quarter dropped (insufficient sources)",
-        "drop_incomplete_latest_us_quarter",
-        "The newest reported quarter had fewer than two usable data sources, so it is excluded from valuation inputs.",
-    ),
-    WarningType(
-        "Quarter consensus unavailable",
-        "resolve_us_quarter_consensus",
-        "No usable consensus could be formed for a required field in a quarter; downstream quarter resolution may fail.",
-    ),
-    WarningType(
-        "SEC lookup skipped (unsupported forms)",
-        "dedupe_sec_rows",
-        "The available SEC facts used unsupported filing forms, so no SEC reference values were added.",
-    ),
-    WarningType(
-        "SEC reference unavailable (missing CIK)",
-        "add_sec_reference_values",
-        "No CIK was available from FMP or Massive, so SEC reference data could not be requested.",
-    ),
-)
-WARNING_TYPE_BY_FUNCTION = {warning_type.function: warning_type for warning_type in WARNING_TYPES}
-WARNING_DESCRIPTIONS = {
-    warning_type.name: warning_type.description for warning_type in WARNING_TYPES
-}
-ERROR_DESCRIPTIONS = {
-    "ValueError: no consensus": (
-        "A required field had no usable cross-source consensus for its quarter; the endpoint request fails."
-    ),
-    "ValueError: insufficient aligned quarters": (
-        "Fewer resolved quarters were available than the requested growth calculation requires; the endpoint request fails."
-    ),
-    "ValueError: other": "A valuation ValueError did not match a known failure mode.",
-    "ERROR without terminal exception": "The valuation traceback ended without a recognizable exception line.",
-    "Stale valuation traceback location": (
-        "The traceback references a line beyond the current valuation source, suggesting the log and source revision differ."
-    ),
-}
+@dataclass(frozen=True)
+class RaiseSite:
+    """An explicit raise statement discovered in the valuation source."""
+
+    exception: str
+    function: str
+    line: int
+    template: str | None
+
+    def category(self, terminal_exception: str) -> str:
+        message = f": {self.template}" if self.template is not None else ""
+        return f"{self.function}:{self.line} - {terminal_exception}{message}"
+
+
+@dataclass(frozen=True)
+class SourceMetadata:
+    """Logging and function locations discovered from the valuation source."""
+
+    log_sites: dict[tuple[str, int], LogSite]
+    raise_sites: dict[int, RaiseSite]
+    functions: tuple[FunctionLocation, ...]
+    line_count: int
 
 
 def parse_args() -> argparse.Namespace:
@@ -113,153 +113,247 @@ def parse_args() -> argparse.Namespace:
         help=f"log file to analyze (default: {DEFAULT_LOG})",
     )
     parser.add_argument(
-        "--strict",
-        action="store_true",
-        help="exit 1 when a warning or error has no known type or source",
-    )
-    parser.add_argument(
         "--valuation-source",
         type=Path,
         default=DEFAULT_VALUATION_SOURCE,
-        help=f"source used to verify warning locations (default: {DEFAULT_VALUATION_SOURCE})",
+        help=f"source used to discover log sites (default: {DEFAULT_VALUATION_SOURCE})",
+    )
+    parser.add_argument(
+        "--module",
+        default=DEFAULT_MODULE,
+        help=f"module name expected in Loguru records (default: {DEFAULT_MODULE})",
     )
     return parser.parse_args()
 
 
-def load_source_metadata(source: Path) -> tuple[set[int], int]:
-    """Return ``logger.warning`` lines and the total line count in ``source``."""
-    source_lines = source.read_text(encoding="utf-8").splitlines()
-    warning_lines = {
-        line_number
-        for line_number, line in enumerate(source_lines, 1)
-        if "logger.warning" in line
-    }
-    return warning_lines, len(source_lines)
+def enclosing_function(line: int, functions: tuple[FunctionLocation, ...]) -> str:
+    """Return the innermost function containing ``line``."""
+    matches = [
+        function
+        for function in functions
+        if function.first_line <= line <= function.last_line
+    ]
+    if not matches:
+        return "<module>"
+    return min(
+        matches, key=lambda function: function.last_line - function.first_line
+    ).name
 
 
-def classify_warning(line: str, source_warning_lines: set[int]) -> str | None:
-    """Classify a valuation warning by its validated call site, or ignore it."""
-    match = WARNING_SOURCE.search(line)
-    if match is None or match.group("module") != "backend.valuation":
+def string_template(message: ast.expr) -> str:
+    """Return a compact display form of a string or f-string expression."""
+    if isinstance(message, ast.Constant) and isinstance(message.value, str):
+        template = message.value
+    elif isinstance(message, ast.JoinedStr):
+        parts = []
+        for value in message.values:
+            if isinstance(value, ast.Constant):
+                parts.append(str(value.value))
+            elif isinstance(value, ast.FormattedValue):
+                formatted = ast.unparse(value.value)
+                if value.conversion != -1:
+                    formatted += f"!{chr(value.conversion)}"
+                if value.format_spec is not None:
+                    formatted += f":{string_template(value.format_spec)}"
+                parts.append("{" + formatted + "}")
+        template = "".join(parts)
+    else:
+        template = ast.unparse(message)
+    return template.replace("\n", r"\n")
+
+
+def log_template(call: ast.Call) -> str:
+    """Return a logging call's source message template."""
+    if not call.args:
+        return "<no message>"
+    return string_template(call.args[0])
+
+
+def raise_site(node: ast.Raise, functions: tuple[FunctionLocation, ...]) -> RaiseSite:
+    """Describe an explicit raise statement from its syntax tree node."""
+    exception = "<reraised exception>"
+    template = None
+    if isinstance(node.exc, ast.Call):
+        exception = ast.unparse(node.exc.func)
+        if node.exc.args:
+            template = string_template(node.exc.args[0])
+    elif node.exc is not None:
+        exception = ast.unparse(node.exc)
+    return RaiseSite(
+        exception=exception,
+        function=enclosing_function(node.lineno, functions),
+        line=node.lineno,
+        template=template,
+    )
+
+
+def load_source_metadata(source: Path) -> SourceMetadata:
+    """Discover functions and warning/error logging call sites in ``source``."""
+    source_text = source.read_text(encoding="utf-8")
+    tree = ast.parse(source_text, filename=str(source))
+    functions = tuple(
+        FunctionLocation(node.name, node.lineno, node.end_lineno or node.lineno)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+    log_sites: dict[tuple[str, int], LogSite] = {}
+    raise_sites: dict[int, RaiseSite] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Raise):
+            raise_sites[node.lineno] = raise_site(node, functions)
+            continue
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if not isinstance(node.func.value, ast.Name) or node.func.value.id != "logger":
+            continue
+        level = LOGGER_LEVELS.get(node.func.attr)
+        if level is None:
+            continue
+        line = node.func.lineno
+        function = enclosing_function(line, functions)
+        log_sites[level, line] = LogSite(
+            level=level,
+            function=function,
+            line=line,
+            template=log_template(node),
+        )
+    return SourceMetadata(
+        log_sites=log_sites,
+        raise_sites=raise_sites,
+        functions=functions,
+        line_count=len(source_text.splitlines()),
+    )
+
+
+def classify_log_record(
+    line: str,
+    module: str,
+    metadata: SourceMetadata,
+) -> tuple[str, str] | None:
+    """Classify a Loguru valuation record by its discovered source call site."""
+    match = LOG_RECORD.search(line)
+    if match is None or match.group("module") != module:
         return None
 
-    warning_type = WARNING_TYPE_BY_FUNCTION.get(match.group("function"))
-    if warning_type is None:
-        return "Unknown warning source"
-
-    if int(match.group("line")) not in source_warning_lines:
-        return "Stale warning source location"
-
-    return warning_type.name
+    level = match.group("level")
+    source_line = int(match.group("line"))
+    site = metadata.log_sites.get((level, source_line))
+    if site is None or site.function != match.group("function"):
+        return level, f"Stale {level.lower()} source location"
+    return level, site.category
 
 
-def classify_error(exception: tuple[str, str] | None) -> tuple[str, str | None]:
-    """Return an error type and optional subtype from a traceback's final exception."""
-    if exception is None:
-        return "ERROR without terminal exception", None
-
-    name, message = exception
-    if name != "ValueError":
-        return name, None
-
-    consensus = CONSENSUS_FIELD.match(message)
-    if consensus:
-        return "ValueError: no consensus", consensus.group("field")
-
-    quarters = ALIGNED_QUARTERS.match(message)
-    if quarters:
-        return "ValueError: insufficient aligned quarters", quarters.group("quarters")
-
-    return "ValueError: other", None
-
-
-def valuation_traceback_line(line: str, valuation_source: Path) -> int | None:
-    """Return a valuation traceback line number, if ``line`` is such a frame."""
-    match = TRACEBACK_FRAME.match(line)
-    if match is None:
-        return None
+def traceback_source_matches(frame_file: str, valuation_source: Path) -> bool:
+    """Return whether a traceback path refers to the valuation source."""
+    frame_path = Path(frame_file)
     try:
-        frame_source = Path(match.group("file")).resolve()
+        if frame_path.resolve() == valuation_source:
+            return True
     except OSError:
+        pass
+    # Logs remain recognizable after the project checkout has been moved.
+    source_parts = valuation_source.parts[-2:]
+    return len(frame_path.parts) >= 2 and frame_path.parts[-2:] == source_parts
+
+
+def valuation_traceback_frame(
+    line: str, valuation_source: Path
+) -> tuple[int, str] | None:
+    """Return a valuation traceback line and function, if present."""
+    match = TRACEBACK_FRAME.match(line)
+    if match is None or not traceback_source_matches(
+        match.group("file"), valuation_source
+    ):
         return None
-    if frame_source != valuation_source:
-        return None
-    return int(match.group("line"))
+    return int(match.group("line")), match.group("function")
 
 
 def summarize(
     log: Path,
     valuation_source: Path,
-    source_warning_lines: set[int],
-    source_line_count: int,
-) -> tuple[Counter[str], Counter[str], dict[str, Counter[str]]]:
-    """Classify valuation warning lines and ERROR traceback blocks in ``log``."""
+    module: str,
+    metadata: SourceMetadata,
+) -> tuple[Counter[str], Counter[str], int, int]:
+    """Classify valuation Loguru records and uncaught error traceback blocks."""
     warnings: Counter[str] = Counter()
     errors: Counter[str] = Counter()
-    subtypes: dict[str, Counter[str]] = defaultdict(Counter)
-    terminal_exception: tuple[str, str] | None = None
+    unknown_warnings = 0
+    unknown_errors = 0
+    terminal_exception: str | None = None
+    valuation_frames: list[tuple[int, str]] = []
     in_error_block = False
-    has_valuation_frame = False
-    has_stale_valuation_frame = False
 
     def finish_error_block() -> None:
-        nonlocal terminal_exception, in_error_block, has_valuation_frame, has_stale_valuation_frame
+        nonlocal terminal_exception, valuation_frames, in_error_block
+        nonlocal unknown_errors
         if not in_error_block:
             return
-        if has_valuation_frame:
-            if has_stale_valuation_frame:
-                errors["Stale valuation traceback location"] += 1
+        if valuation_frames:
+            source_line, traceback_function = valuation_frames[-1]
+            current_function = enclosing_function(source_line, metadata.functions)
+            if (
+                source_line > metadata.line_count
+                or current_function != traceback_function
+            ):
+                errors["Stale traceback source location"] += 1
+                unknown_errors += 1
+            elif terminal_exception is None:
+                errors["ERROR without terminal exception"] += 1
+                unknown_errors += 1
             else:
-                category, subtype = classify_error(terminal_exception)
+                site = metadata.raise_sites.get(source_line)
+                terminal_name = terminal_exception.rsplit(".", 1)[-1]
+                if (
+                    site is not None
+                    and site.function == traceback_function
+                    and site.exception.rsplit(".", 1)[-1] == terminal_name
+                ):
+                    category = site.category(terminal_exception)
+                else:
+                    category = (
+                        "Unknown error source: "
+                        f"{traceback_function}:{source_line} - {terminal_exception}"
+                    )
+                    unknown_errors += 1
                 errors[category] += 1
-                if subtype is not None:
-                    subtypes[category][subtype] += 1
         terminal_exception = None
+        valuation_frames = []
         in_error_block = False
-        has_valuation_frame = False
-        has_stale_valuation_frame = False
 
     with log.open(encoding="utf-8", errors="replace") as file:
         for line in file:
-            if WARNING_MARKER.search(line):
-                category = classify_warning(line, source_warning_lines)
-                if category is not None:
+            record = classify_log_record(line, module, metadata)
+            if record is not None:
+                level, category = record
+                if level == "WARNING":
                     warnings[category] += 1
+                    if category.startswith("Stale "):
+                        unknown_warnings += 1
+                else:
+                    errors[category] += 1
+                    if category.startswith("Stale "):
+                        unknown_errors += 1
 
-            if ERROR_MARKER.match(line):
+            if ERROR_BLOCK_MARKER.match(line):
                 finish_error_block()
                 in_error_block = True
                 continue
 
             if in_error_block:
-                frame_line = valuation_traceback_line(line, valuation_source)
-                if frame_line is not None:
-                    has_valuation_frame = True
-                    if frame_line > source_line_count:
-                        has_stale_valuation_frame = True
-
+                if frame := valuation_traceback_frame(line, valuation_source):
+                    valuation_frames.append(frame)
                 if match := EXCEPTION_LINE.match(line.rstrip()):
-                    terminal_exception = match.group("name"), match.group("message")
+                    terminal_exception = match.group("name")
 
     finish_error_block()
-    return warnings, errors, subtypes
+    return warnings, errors, unknown_warnings, unknown_errors
 
 
-def print_counts(
-    title: str,
-    counts: Counter[str],
-    subtypes: dict[str, Counter[str]],
-    descriptions: dict[str, str],
-) -> None:
-    """Print categories in descending frequency, with any available subtypes."""
-    total = sum(counts.values())
-    print(f"{title}: {total}")
+def print_counts(title: str, counts: Counter[str]) -> None:
+    """Print categories in descending frequency."""
+    print(f"{title}: {sum(counts.values())}")
     for name, count in counts.most_common():
         print(f"  {count:>4}  {name}")
-        if description := descriptions.get(name):
-            print(f"        {description}")
-        for subtype, subtype_count in subtypes.get(name, Counter()).most_common():
-            print(f"        {subtype_count:>4}  {subtype}")
 
 
 def main() -> int:
@@ -271,28 +365,27 @@ def main() -> int:
     if not valuation_source.is_file():
         raise SystemExit(f"valuation source does not exist: {valuation_source}")
 
-    source_warning_lines, source_line_count = load_source_metadata(valuation_source)
-    warnings, errors, subtypes = summarize(
-        log, valuation_source, source_warning_lines, source_line_count
+    metadata = load_source_metadata(valuation_source)
+    warnings, errors, unknown_warnings, unknown_errors = summarize(
+        log, valuation_source, args.module, metadata
     )
     print(f"Log: {log}")
     print(f"Source: {valuation_source}")
-    print_counts(
-        "Warnings from backend/valuation.py", warnings, {}, WARNING_DESCRIPTIONS
+    print(
+        "Discovered source sites: "
+        f"{sum(site.level == 'WARNING' for site in metadata.log_sites.values())} warnings, "
+        f"{sum(site.level == 'ERROR' for site in metadata.log_sites.values())} logged errors, "
+        f"{len(metadata.raise_sites)} raises"
     )
-    print_counts(
-        "Errors from backend/valuation.py", errors, subtypes, ERROR_DESCRIPTIONS
-    )
+    print_counts(f"Warnings from {args.module}", warnings)
+    print_counts(f"Errors from {args.module}", errors)
 
-    unknown = (
-        warnings["Unknown warning source"]
-        + warnings["Stale warning source location"]
-        + errors["Stale valuation traceback location"]
-        + errors["ERROR without terminal exception"]
-        + errors["ValueError: other"]
-    )
-    if args.strict and unknown:
-        print(f"\nStrict mode failed: {unknown} unclassified or ambiguous entries.")
+    unknown = unknown_warnings + unknown_errors
+    if unknown:
+        print(
+            f"\nFailed: {unknown} unknown or stale valuation entries "
+            f"({unknown_warnings} warnings, {unknown_errors} errors)."
+        )
         return 1
     return 0
 
