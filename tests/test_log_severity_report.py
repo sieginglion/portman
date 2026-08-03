@@ -97,6 +97,118 @@ def warn():
         self.assertIn("Warnings from backend.valuation: 0", result.stdout)
         self.assertIn("Errors from backend.valuation: 0", result.stdout)
 
+    def test_preserves_f_string_expression_and_multiline_templates(self):
+        source_text = '''
+from loguru import logger
+
+def f_string(value):
+    logger.warning(f"Value: {value!r:>8}")
+
+def expression(message):
+    logger.warning(message)
+
+def multiline():
+    logger.warning("first\\nsecond")
+'''.lstrip()
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "backend/valuation.py"
+            source.parent.mkdir()
+            source.write_text(source_text, encoding="utf-8")
+            f_string_line = self._line_containing(source_text, 'f"Value')
+            expression_line = self._line_containing(source_text, "logger.warning(message)")
+            multiline_line = self._line_containing(source_text, '"first\\nsecond"')
+            log = Path(directory) / "app.log"
+            log.write_text(
+                "\n".join(
+                    (
+                        "2026-01-01 | WARNING | "
+                        f"backend.valuation:f_string:{f_string_line} - Value: 123",
+                        "2026-01-01 | WARNING | "
+                        f"backend.valuation:expression:{expression_line} - Dynamic value",
+                        "2026-01-01 | WARNING | "
+                        f"backend.valuation:multiline:{multiline_line} - first second",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = self._run(log, source)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"f_string:{f_string_line} - f'Value: {{value!r:>8}}'", result.stdout)
+        self.assertIn(f"expression:{expression_line} - message", result.stdout)
+        self.assertIn(f"multiline:{multiline_line} - first\\nsecond", result.stdout)
+
+    def test_classifies_all_explicit_raise_forms(self):
+        source_text = """
+class errors:
+    class DomainError(Exception):
+        pass
+
+def raise_class():
+    raise ValueError
+
+def raise_without_message():
+    raise RuntimeError()
+
+def raise_qualified():
+    raise errors.DomainError("bad")
+
+def reraise():
+    try:
+        raise ValueError("original")
+    except ValueError:
+        raise
+""".lstrip()
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "backend/valuation.py"
+            source.parent.mkdir()
+            source.write_text(source_text, encoding="utf-8")
+            class_line = self._line_containing(source_text, "raise ValueError")
+            empty_line = self._line_containing(source_text, "raise RuntimeError()")
+            qualified_line = self._line_containing(source_text, "raise errors.DomainError")
+            reraise_line = next(
+                line_number
+                for line_number, line in enumerate(source_text.splitlines(), 1)
+                if line.strip() == "raise"
+            )
+            log = Path(directory) / "app.log"
+            log.write_text(
+                "\n".join(
+                    (
+                        "ERROR: Exception in application",
+                        f'  File "{source}", line {class_line}, in raise_class',
+                        "ValueError",
+                        "ERROR: Exception in application",
+                        f'  File "{source}", line {empty_line}, in raise_without_message',
+                        "RuntimeError",
+                        "ERROR: Exception in application",
+                        f'  File "{source}", line {qualified_line}, in raise_qualified',
+                        "errors.DomainError: bad",
+                        "ERROR: Exception in application",
+                        f'  File "{source}", line {reraise_line}, in reraise',
+                        "ValueError: original",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = self._run(log, source)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"raise_class:{class_line} - ValueError", result.stdout)
+        self.assertIn(f"raise_without_message:{empty_line} - RuntimeError", result.stdout)
+        self.assertIn(
+            f"raise_qualified:{qualified_line} - errors.DomainError: bad", result.stdout
+        )
+        self.assertIn(
+            f"Unknown error source: reraise:{reraise_line} - ValueError", result.stdout
+        )
+
     def test_stale_logging_location_fails(self):
         source_text = """
 from loguru import logger

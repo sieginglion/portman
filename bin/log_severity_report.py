@@ -143,23 +143,8 @@ def enclosing_function(line: int, functions: tuple[FunctionLocation, ...]) -> st
 def string_template(message: ast.expr) -> str:
     """Return a compact display form of a string or f-string expression."""
     if isinstance(message, ast.Constant) and isinstance(message.value, str):
-        template = message.value
-    elif isinstance(message, ast.JoinedStr):
-        parts = []
-        for value in message.values:
-            if isinstance(value, ast.Constant):
-                parts.append(str(value.value))
-            elif isinstance(value, ast.FormattedValue):
-                formatted = ast.unparse(value.value)
-                if value.conversion != -1:
-                    formatted += f"!{chr(value.conversion)}"
-                if value.format_spec is not None:
-                    formatted += f":{string_template(value.format_spec)}"
-                parts.append("{" + formatted + "}")
-        template = "".join(parts)
-    else:
-        template = ast.unparse(message)
-    return template.replace("\n", r"\n")
+        return message.value.replace("\n", r"\n")
+    return ast.unparse(message).replace("\n", r"\n")
 
 
 def log_template(call: ast.Call) -> str:
@@ -171,19 +156,16 @@ def log_template(call: ast.Call) -> str:
 
 def raise_site(node: ast.Raise, functions: tuple[FunctionLocation, ...]) -> RaiseSite:
     """Describe an explicit raise statement from its syntax tree node."""
-    exception = "<reraised exception>"
-    template = None
     if isinstance(node.exc, ast.Call):
-        exception = ast.unparse(node.exc.func)
-        if node.exc.args:
-            template = string_template(node.exc.args[0])
-    elif node.exc is not None:
-        exception = ast.unparse(node.exc)
+        expression, arguments = node.exc.func, node.exc.args
+    else:
+        expression, arguments = node.exc, ()
+    exception = ast.unparse(expression) if expression else "<reraised exception>"
     return RaiseSite(
         exception=exception,
         function=enclosing_function(node.lineno, functions),
         line=node.lineno,
-        template=template,
+        template=string_template(arguments[0]) if arguments else None,
     )
 
 
