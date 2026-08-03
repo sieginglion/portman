@@ -71,6 +71,83 @@ def fail():
         )
         self.assertIn(f"fail:{raise_line} - LookupError: boom", result.stdout)
 
+    def test_tracks_nested_async_and_module_level_source_sites(self):
+        source_text = '''
+from loguru import logger
+
+logger.warning("before functions")
+
+def outer():
+    logger.warning("outer start")
+
+    def inner():
+        logger.warning("inner warning")
+        raise ValueError("inner failure")
+
+    logger.warning("outer end")
+
+async def async_worker():
+    logger.warning("async warning")
+
+logger.warning("after functions")
+'''.lstrip()
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "backend/valuation.py"
+            source.parent.mkdir()
+            source.write_text(source_text, encoding="utf-8")
+            lines = {
+                text: self._line_containing(source_text, text)
+                for text in (
+                    "before functions",
+                    "outer start",
+                    "inner warning",
+                    "outer end",
+                    "async warning",
+                    "after functions",
+                    'raise ValueError("inner failure")',
+                )
+            }
+            log = Path(directory) / "app.log"
+            log.write_text(
+                "\n".join(
+                    (
+                        "2026-01-01 | WARNING | "
+                        f"backend.valuation:<module>:{lines['before functions']} - before functions",
+                        "2026-01-01 | WARNING | "
+                        f"backend.valuation:outer:{lines['outer start']} - outer start",
+                        "2026-01-01 | WARNING | "
+                        f"backend.valuation:inner:{lines['inner warning']} - inner warning",
+                        "2026-01-01 | WARNING | "
+                        f"backend.valuation:outer:{lines['outer end']} - outer end",
+                        "2026-01-01 | WARNING | "
+                        f"backend.valuation:async_worker:{lines['async warning']} - async warning",
+                        "2026-01-01 | WARNING | "
+                        f"backend.valuation:<module>:{lines['after functions']} - after functions",
+                        "ERROR: Exception in application",
+                        "Traceback (most recent call last):",
+                        f'  File "{source}", line {lines['raise ValueError("inner failure")']}, in inner',
+                        '    raise ValueError("inner failure")',
+                        "ValueError: inner failure",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = self._run(log, source)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Warnings from backend.valuation: 6", result.stdout)
+        self.assertIn("<module>", result.stdout)
+        self.assertIn("outer", result.stdout)
+        self.assertIn("inner", result.stdout)
+        self.assertIn("async_worker", result.stdout)
+        self.assertIn(
+            f"inner:{lines['raise ValueError(\"inner failure\")']} - ValueError: inner failure",
+            result.stdout,
+        )
+
     def test_ignores_records_from_other_modules(self):
         source_text = """
 from loguru import logger

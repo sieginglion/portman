@@ -162,7 +162,7 @@ def log_template(call: ast.Call) -> str:
     return string_template(call.args[0])
 
 
-def raise_site(node: ast.Raise, functions: tuple[FunctionLocation, ...]) -> RaiseSite:
+def raise_site(node: ast.Raise, function: str) -> RaiseSite:
     """Describe an explicit raise statement from its syntax tree node."""
     if isinstance(node.exc, ast.Call):
         expression, arguments = node.exc.func, node.exc.args
@@ -171,46 +171,66 @@ def raise_site(node: ast.Raise, functions: tuple[FunctionLocation, ...]) -> Rais
     exception = ast.unparse(expression) if expression else "<reraised exception>"
     return RaiseSite(
         exception=exception,
-        function=enclosing_function(node.lineno, functions),
+        function=function,
         line=node.lineno,
         template=string_template(arguments[0]) if arguments else None,
     )
+
+
+class SourceVisitor(ast.NodeVisitor):
+    """Collect source metadata while tracking the enclosing function."""
+
+    def __init__(self) -> None:
+        self.functions: list[FunctionLocation] = []
+        self.log_sites: dict[tuple[str, int], LogSite] = {}
+        self.raise_sites: dict[int, RaiseSite] = {}
+        self.function_stack: list[str] = []
+
+    @property
+    def function(self) -> str:
+        return self.function_stack[-1] if self.function_stack else "<module>"
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self.functions.append(
+            FunctionLocation(node.name, node.lineno, node.end_lineno or node.lineno)
+        )
+        self.function_stack.append(node.name)
+        self.generic_visit(node)
+        self.function_stack.pop()
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_Raise(self, node: ast.Raise) -> None:
+        self.raise_sites[node.lineno] = raise_site(node, self.function)
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "logger"
+            and (level := LOGGER_LEVELS.get(node.func.attr)) is not None
+        ):
+            line = node.func.lineno
+            self.log_sites[level, line] = LogSite(
+                level=level,
+                function=self.function,
+                line=line,
+                template=log_template(node),
+            )
+        self.generic_visit(node)
 
 
 def load_source_metadata(source: Path) -> SourceMetadata:
     """Discover functions and warning/error logging call sites in ``source``."""
     source_text = source.read_text(encoding="utf-8")
     tree = ast.parse(source_text, filename=str(source))
-    functions = tuple(
-        FunctionLocation(node.name, node.lineno, node.end_lineno or node.lineno)
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    )
-    log_sites: dict[tuple[str, int], LogSite] = {}
-    raise_sites: dict[int, RaiseSite] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Raise):
-            raise_sites[node.lineno] = raise_site(node, functions)
-            continue
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-            continue
-        if not isinstance(node.func.value, ast.Name) or node.func.value.id != "logger":
-            continue
-        level = LOGGER_LEVELS.get(node.func.attr)
-        if level is None:
-            continue
-        line = node.func.lineno
-        function = enclosing_function(line, functions)
-        log_sites[level, line] = LogSite(
-            level=level,
-            function=function,
-            line=line,
-            template=log_template(node),
-        )
+    visitor = SourceVisitor()
+    visitor.visit(tree)
     return SourceMetadata(
-        log_sites=log_sites,
-        raise_sites=raise_sites,
-        functions=functions,
+        log_sites=visitor.log_sites,
+        raise_sites=visitor.raise_sites,
+        functions=tuple(visitor.functions),
         line_count=len(source_text.splitlines()),
     )
 
