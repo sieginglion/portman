@@ -181,8 +181,6 @@ async def get_scores(
 ):
     if is_btc(market, symbol):
         return await calc_btc_score(q, u), None
-    if market == "c":
-        raise fastapi.HTTPException(422, "Only BTC is supported for crypto /scores")
 
     df = await valuation.calc_px(market, symbol, q)
     ps, pe = df["ps"], df["pe"]
@@ -201,8 +199,6 @@ async def get_diagnostics():
 async def get_growth(market: Literal["c", "j", "t", "u"], symbol: str):
     if is_btc(market, symbol):
         return await calc_btc_growth()
-    if market == "c":
-        raise fastapi.HTTPException(422, "Only BTC is supported for crypto /growth")
 
     xps = await valuation.fetch_xps(market, symbol, 5, include_eps=False)
     r = xps["rps"]
@@ -255,10 +251,7 @@ async def get_px(
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
     from matplotlib import pyplot as plt
 
-    if market == "c":
-        if symbol != "BTC":
-            raise fastapi.HTTPException(422, "Only BTC is supported for crypto /px")
-
+    if is_btc(market, symbol):
         ps = await get_btc_valuation_proxy(q)
 
         fig, ax = plt.subplots(1, 1, figsize=(8, 4), dpi=160)

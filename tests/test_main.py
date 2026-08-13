@@ -82,6 +82,24 @@ class PlotValuationSeriesTests(unittest.TestCase):
 
 
 class PxRouteTests(unittest.TestCase):
+    def test_crypto_px_uses_the_token_terminal_valuation_path(self):
+        px = pd.DataFrame(
+            {"ps": [12.0], "pe": [34.0]}, index=pd.to_datetime(["2026-01-01"])
+        )
+
+        def close_and_return(fig, plt):
+            plt.close(fig)
+            return "response"
+
+        with (
+            patch.object(valuation, "calc_px", return_value=px) as calc_px,
+            patch.object(main, "figure_to_png_response", side_effect=close_and_return),
+        ):
+            response = asyncio.run(main.get_px("c", "UNI", 16))
+
+        self.assertEqual(response, "response")
+        calc_px.assert_awaited_once_with("c", "UNI", 16)
+
     def test_stock_px_passes_an_unavailable_ps_series_as_empty_to_the_plotter(self):
         px = pd.DataFrame(
             {
