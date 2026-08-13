@@ -23,6 +23,8 @@ dependencies = [
 dev = [
     "notebook>=7.5.1,<8",
     "plotly>=6.5.0,<7",
+    "pytest>=9,<10",
+    "pytest-asyncio>=1,<2",
     "ruff>=0.15.22",
     "streamlit>=1.52.2,<2",
     "ty>=0.0.62",
@@ -30,3 +32,11 @@ dev = [
 
 [tool.ruff]
 target-version = "py312"
+
+[tool.ruff.lint]
+extend-select = ["PT009", "PT027"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-config", "--strict-markers"]
+asyncio_mode = "auto"

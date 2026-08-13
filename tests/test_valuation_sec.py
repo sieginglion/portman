@@ -1,12 +1,12 @@
 import asyncio
 import math
-import unittest
 from unittest.mock import ANY, AsyncMock, patch
 
 import pandas as pd
 from httpx import HTTPStatusError, Request, Response
 
 from backend import valuation
+import pytest
 
 
 def sec_frame(rows):
@@ -31,7 +31,7 @@ def aligned_quarter(fields):
     return valuation.AlignedQuarter(fields=fields)
 
 
-class DateMatchingTests(unittest.TestCase):
+class TestDateMatching:
     def test_select_closest_date_key_uses_six_day_limit_and_stable_tiebreaking(self):
         cases = (
             ("2025-03-31", ["2025-03-31"], "2025-03-31"),
@@ -42,57 +42,48 @@ class DateMatchingTests(unittest.TestCase):
         )
 
         for target_date, date_keys, expected in cases:
-            with self.subTest(target_date=target_date, date_keys=date_keys):
-                self.assertEqual(
-                    valuation.select_closest_date_key(target_date, date_keys),
-                    expected,
-                )
+            assert valuation.select_closest_date_key(target_date, date_keys) == expected
 
     def test_eodhd_balance_sheet_lookup_uses_nearby_dates_only(self):
         row = {"commonStockSharesOutstanding": "123"}
 
-        self.assertIs(
-            valuation.select_eodhd_balance_sheet_row("2025-03-31", {"2025-04-06": row}),
-            row,
+        assert (
+            valuation.select_eodhd_balance_sheet_row("2025-03-31", {"2025-04-06": row})
+            is row
         )
-        self.assertIsNone(
+        assert (
             valuation.select_eodhd_balance_sheet_row("2025-03-31", {"2025-04-07": row})
+            is None
         )
 
 
-class SecValuationTests(unittest.TestCase):
+class TestSecValuation:
     def test_source_diffs_reject_nonfinite_values(self):
-        self.assertEqual(valuation.source_log_diff(math.inf, 1), math.inf)
-        self.assertEqual(valuation.source_log_diff(1, math.nan), math.inf)
+        assert valuation.source_log_diff(math.inf, 1) == math.inf
+        assert valuation.source_log_diff(1, math.nan) == math.inf
 
     def test_eps_consensus_rejects_nonfinite_values(self):
-        self.assertFalse(
-            valuation.field_has_consensus(valuation.EPS_XPS_FIELD, math.nan, 1)
-        )
-        self.assertFalse(
-            valuation.field_has_consensus(valuation.EPS_XPS_FIELD, math.inf, 1)
-        )
+        assert not valuation.field_has_consensus(valuation.EPS_XPS_FIELD, math.nan, 1)
+        assert not valuation.field_has_consensus(valuation.EPS_XPS_FIELD, math.inf, 1)
 
     def test_has_source_field_value_rejects_nonfinite_values(self):
-        self.assertTrue(valuation.has_source_field_value(1))
-        self.assertFalse(valuation.has_source_field_value(None))
-        self.assertFalse(valuation.has_source_field_value(math.nan))
-        self.assertFalse(valuation.has_source_field_value(math.inf))
-        self.assertFalse(valuation.has_source_field_value(-math.inf))
+        assert valuation.has_source_field_value(1)
+        assert not valuation.has_source_field_value(None)
+        assert not valuation.has_source_field_value(math.nan)
+        assert not valuation.has_source_field_value(math.inf)
+        assert not valuation.has_source_field_value(-math.inf)
 
     def test_source_log_diff_handles_extreme_finite_values(self):
-        self.assertAlmostEqual(
-            valuation.source_log_diff(1e308, 1e-308), 616 * math.log(10)
+        assert valuation.source_log_diff(1e308, 1e-308) == pytest.approx(
+            616 * math.log(10)
         )
 
     def test_source_log_diff_handles_negative_values(self):
-        self.assertAlmostEqual(
-            valuation.source_log_diff(-100, -102), math.log(1.02)
-        )
-        self.assertEqual(valuation.source_log_diff(-1, 1), math.inf)
+        assert valuation.source_log_diff(-100, -102) == pytest.approx(math.log(1.02))
+        assert valuation.source_log_diff(-1, 1) == math.inf
 
     def test_format_source_log_value_treats_nan_as_missing(self):
-        self.assertEqual(valuation.format_source_log_value(math.nan), "missing")
+        assert valuation.format_source_log_value(math.nan) == "missing"
 
     def test_consensus_helpers_resolve_agreeing_sources(self):
         source_values = {"fmp": 100, "finnhub": 102, "sec": None}
@@ -101,20 +92,19 @@ class SecValuationTests(unittest.TestCase):
         groups = valuation.build_connected_consensus_groups("revenue", values)
         group = valuation.choose_consensus_group(groups)
 
-        self.assertEqual(values, [("fmp", 100), ("finnhub", 102)])
-        self.assertEqual(group, (("fmp", 100), ("finnhub", 102)))
-        self.assertEqual(
-            valuation.resolve_source_consensus("revenue", source_values),
-            valuation.Consensus(101, ("fmp", "finnhub")),
-        )
+        assert values == [("fmp", 100), ("finnhub", 102)]
+        assert group == (("fmp", 100), ("finnhub", 102))
+        assert valuation.resolve_source_consensus(
+            "revenue", source_values
+        ) == valuation.Consensus(101, ("fmp", "finnhub"))
 
     def test_usable_source_values_can_exclude_sec(self):
         source_values = {"fmp": 100, "finnhub": 102, "sec": 101}
 
-        self.assertEqual(
-            valuation.usable_source_values(source_values, include_sec=False),
-            [("fmp", 100), ("finnhub", 102)],
-        )
+        assert valuation.usable_source_values(source_values, include_sec=False) == [
+            ("fmp", 100),
+            ("finnhub", 102),
+        ]
 
     def test_latest_quarter_drops_nonfinite_second_source(self):
         quarters = {
@@ -123,11 +113,9 @@ class SecValuationTests(unittest.TestCase):
             )
         }
 
-        self.assertEqual(
-            valuation.drop_incomplete_latest_us_quarter(
-                "AAPL", quarters, ["revenue"]
-            ),
-            {},
+        assert (
+            valuation.drop_incomplete_latest_us_quarter("AAPL", quarters, ["revenue"])
+            == {}
         )
 
     def test_configured_source_order_drives_alignment_and_consensus(self):
@@ -145,39 +133,34 @@ class SecValuationTests(unittest.TestCase):
                 "revenue", {"fmp": 100, "finnhub": 102}
             )
 
-        self.assertEqual(list(aligned_quarters), ["2025-04-05"])
-        self.assertEqual(
-            aligned_quarters["2025-04-05"].fields,
-            {"revenue": {"finnhub": 102, "fmp": 100}},
-        )
-        self.assertEqual(consensus, valuation.Consensus(101, ("finnhub", "fmp")))
+        assert list(aligned_quarters) == ["2025-04-05"]
+        assert aligned_quarters["2025-04-05"].fields == {
+            "revenue": {"finnhub": 102, "fmp": 100}
+        }
+        assert consensus == valuation.Consensus(101, ("finnhub", "fmp"))
 
     def test_consensus_groups_preserve_supplied_value_order(self):
         values = [("finnhub", 102), ("fmp", 100)]
 
-        self.assertEqual(
-            valuation.build_connected_consensus_groups("revenue", values),
-            [(("finnhub", 102), ("fmp", 100))],
-        )
+        assert valuation.build_connected_consensus_groups("revenue", values) == [
+            (("finnhub", 102), ("fmp", 100))
+        ]
 
     def test_consensus_helpers_reject_disagreeing_sources(self):
         source_values = {"fmp": 100, "finnhub": 120}
 
         values = valuation.usable_source_values(source_values)
 
-        self.assertEqual(
-            valuation.build_connected_consensus_groups("revenue", values), []
-        )
-        self.assertIsNone(valuation.choose_consensus_group([]))
-        self.assertIsNone(valuation.resolve_source_consensus("revenue", source_values))
+        assert valuation.build_connected_consensus_groups("revenue", values) == []
+        assert valuation.choose_consensus_group([]) is None
+        assert valuation.resolve_source_consensus("revenue", source_values) is None
 
     def test_consensus_helpers_keep_transitive_consensus_groups(self):
         source_values = {"fmp": 100, "finnhub": 106, "sec": 112}
 
-        self.assertEqual(
-            valuation.resolve_source_consensus("revenue", source_values),
-            valuation.Consensus(106, ("fmp", "finnhub", "sec")),
-        )
+        assert valuation.resolve_source_consensus(
+            "revenue", source_values
+        ) == valuation.Consensus(106, ("fmp", "finnhub", "sec"))
 
     def test_consensus_helpers_use_a_single_sec_revenue_value(self):
         source_values = {
@@ -185,13 +168,9 @@ class SecValuationTests(unittest.TestCase):
             "sec": 101,
         }
 
-        self.assertEqual(
-            valuation.resolve_source_consensus("revenue", source_values),
-            valuation.Consensus(
-                100.5,
-                ("fmp", "sec"),
-            ),
-        )
+        assert valuation.resolve_source_consensus(
+            "revenue", source_values
+        ) == valuation.Consensus(100.5, ("fmp", "sec"))
 
     def test_choose_consensus_group_rejects_tie_with_sec(self):
         groups = [
@@ -199,7 +178,7 @@ class SecValuationTests(unittest.TestCase):
             (("massive", 200), ("sec", 200)),
         ]
 
-        self.assertIsNone(valuation.choose_consensus_group(groups))
+        assert valuation.choose_consensus_group(groups) is None
 
     def test_choose_consensus_group_rejects_tie_without_sec(self):
         groups = [
@@ -207,19 +186,19 @@ class SecValuationTests(unittest.TestCase):
             (("massive", 200), ("eodhd", 200)),
         ]
 
-        self.assertIsNone(valuation.choose_consensus_group(groups))
+        assert valuation.choose_consensus_group(groups) is None
 
     def test_consensus_helpers_apply_eps_absolute_tolerance(self):
         source_values = {"fmp": 0.001, "finnhub": -0.01}
 
         consensus = valuation.resolve_source_consensus("epsDiluted", source_values)
 
-        self.assertIsNotNone(consensus)
-        self.assertAlmostEqual(consensus.value, -0.0045)
-        self.assertEqual(consensus.sources, ("fmp", "finnhub"))
+        assert consensus is not None
+        assert consensus.value == pytest.approx(-0.0045)
+        assert consensus.sources == ("fmp", "finnhub")
 
     def test_eps_consensus_falls_back_to_relative_tolerance(self):
-        self.assertTrue(valuation.field_has_consensus("epsDiluted", 1, 1.03))
+        assert valuation.field_has_consensus("epsDiluted", 1, 1.03)
 
     def test_diagnostics_reports_per_vendor_quarter_counts(self):
         def row(fmp, finnhub):
@@ -240,22 +219,17 @@ class SecValuationTests(unittest.TestCase):
             valuation.record_xps_diagnostics("QUARTER-TEST", rows)
             diagnostics = valuation.get_xps_diagnostics()
 
-        self.assertEqual(diagnostics["total_quarters"], 3)
+        assert diagnostics["total_quarters"] == 3
         revenue = diagnostics["coverage"]["revenue"]
-        self.assertNotIn("sec", revenue)
-        self.assertEqual(
-            set(revenue), set(valuation.us_income_statement_source_order())
-        )
-        self.assertEqual(revenue["fmp"], 3)
-        self.assertEqual(revenue["finnhub"], 1)
-        self.assertEqual(diagnostics["coverage"]["weightedAverageShsOutDil"], revenue)
-        self.assertEqual(diagnostics["coverage"]["epsDiluted"], revenue)
-        self.assertEqual(diagnostics["agreement"]["revenue"]["fmp:finnhub"], 1)
-        self.assertEqual(
-            diagnostics["agreement"]["weightedAverageShsOutDil"]["fmp:finnhub"],
-            1,
-        )
-        self.assertEqual(diagnostics["agreement"]["epsDiluted"]["fmp:finnhub"], 1)
+        assert "sec" not in revenue
+        assert set(revenue) == set(valuation.us_income_statement_source_order())
+        assert revenue["fmp"] == 3
+        assert revenue["finnhub"] == 1
+        assert diagnostics["coverage"]["weightedAverageShsOutDil"] == revenue
+        assert diagnostics["coverage"]["epsDiluted"] == revenue
+        assert diagnostics["agreement"]["revenue"]["fmp:finnhub"] == 1
+        assert diagnostics["agreement"]["weightedAverageShsOutDil"]["fmp:finnhub"] == 1
+        assert diagnostics["agreement"]["epsDiluted"]["fmp:finnhub"] == 1
 
     def test_quarter_counts_valid_values(self):
         with patch_xps_diagnostics():
@@ -269,20 +243,13 @@ class SecValuationTests(unittest.TestCase):
             )
             diagnostics = valuation.get_xps_diagnostics()
 
-        self.assertEqual(diagnostics["total_quarters"], 1)
+        assert diagnostics["total_quarters"] == 1
         revenue = diagnostics["coverage"]["revenue"]
-        self.assertEqual(revenue["fmp"], 1)
-        self.assertEqual(revenue["finnhub"], 0)
-        self.assertEqual(
-            diagnostics["coverage"]["weightedAverageShsOutDil"]["fmp"], 0
-        )
-        self.assertEqual(diagnostics["coverage"]["epsDiluted"]["fmp"], 0)
-        self.assertTrue(
-            all(
-                count == 0
-                for count in diagnostics["agreement"]["revenue"].values()
-            )
-        )
+        assert revenue["fmp"] == 1
+        assert revenue["finnhub"] == 0
+        assert diagnostics["coverage"]["weightedAverageShsOutDil"]["fmp"] == 0
+        assert diagnostics["coverage"]["epsDiluted"]["fmp"] == 0
+        assert all(count == 0 for count in diagnostics["agreement"]["revenue"].values())
 
     def test_diagnostics_counts_each_directly_agreeing_pair_once(self):
         rows = {
@@ -301,15 +268,12 @@ class SecValuationTests(unittest.TestCase):
             valuation.record_xps_diagnostics("PAIR-TEST", rows)
             diagnostics = valuation.get_xps_diagnostics()
 
-        self.assertEqual(
-            diagnostics["agreement"]["revenue"],
-            {
-                "fmp:massive": 1,
-                "fmp:finnhub": 0,
-                "massive:finnhub": 1,
-            },
-        )
-        self.assertNotIn("sec", diagnostics["agreement"]["revenue"])
+        assert diagnostics["agreement"]["revenue"] == {
+            "fmp:massive": 1,
+            "fmp:finnhub": 0,
+            "massive:finnhub": 1,
+        }
+        assert "sec" not in diagnostics["agreement"]["revenue"]
 
     def test_diagnostics_excludes_present_sec_values_from_peer_pairs(self):
         rows = {
@@ -328,7 +292,7 @@ class SecValuationTests(unittest.TestCase):
             valuation.record_xps_diagnostics("SEC-EXCLUSION-TEST", rows)
             diagnostics = valuation.get_xps_diagnostics()
 
-        self.assertEqual(diagnostics["agreement"]["revenue"], {"fmp:finnhub": 1})
+        assert diagnostics["agreement"]["revenue"] == {"fmp:finnhub": 1}
 
     def test_diagnostics_deduplicates_quarters_and_pair_counts(self):
         rows = {
@@ -346,16 +310,14 @@ class SecValuationTests(unittest.TestCase):
             valuation.record_xps_diagnostics("DEDUP-TEST", rows)
             diagnostics = valuation.get_xps_diagnostics()
 
-        self.assertEqual(diagnostics["total_quarters"], 1)
-        self.assertEqual(diagnostics["coverage"]["revenue"], {"fmp": 1, "finnhub": 1})
-        self.assertEqual(
-            diagnostics["coverage"]["weightedAverageShsOutDil"],
-            {"fmp": 0, "finnhub": 0},
-        )
-        self.assertEqual(
-            diagnostics["coverage"]["epsDiluted"], {"fmp": 0, "finnhub": 0}
-        )
-        self.assertEqual(diagnostics["agreement"]["revenue"], {"fmp:finnhub": 1})
+        assert diagnostics["total_quarters"] == 1
+        assert diagnostics["coverage"]["revenue"] == {"fmp": 1, "finnhub": 1}
+        assert diagnostics["coverage"]["weightedAverageShsOutDil"] == {
+            "fmp": 0,
+            "finnhub": 0,
+        }
+        assert diagnostics["coverage"]["epsDiluted"] == {"fmp": 0, "finnhub": 0}
+        assert diagnostics["agreement"]["revenue"] == {"fmp:finnhub": 1}
 
     def test_diagnostics_skips_request_that_falls_short_after_latest_drop(self):
         def row(revenue):
@@ -382,7 +344,7 @@ class SecValuationTests(unittest.TestCase):
         with (
             patch.object(valuation, "_xps_diagnostics", diagnostics_state),
             patch.object(valuation, "add_sec_reference_values", new=AsyncMock()),
-            self.assertRaises(ValueError),
+            pytest.raises(ValueError),
         ):
             asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
@@ -390,8 +352,8 @@ class SecValuationTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(diagnostics_state.seen, set())
-        self.assertEqual(diagnostics_state.coverage["revenue"]["finnhub"], 0)
+        assert diagnostics_state.seen == set()
+        assert diagnostics_state.coverage["revenue"]["finnhub"] == 0
 
     def test_resolve_us_income_statement_quarters_accepts_source_rows(self):
         source_rows = {
@@ -419,16 +381,13 @@ class SecValuationTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(
-            resolved,
-            {
-                "2025-03-31": {
-                    "revenue": 100,
-                    "weightedAverageShsOutDil": 10,
-                    "epsDiluted": 1,
-                }
-            },
-        )
+        assert resolved == {
+            "2025-03-31": {
+                "revenue": 100,
+                "weightedAverageShsOutDil": 10,
+                "epsDiluted": 1,
+            }
+        }
 
     def test_resolve_us_income_statement_quarters_without_eps(self):
         source_rows = {
@@ -465,15 +424,9 @@ class SecValuationTests(unittest.TestCase):
             ["revenue", "weightedAverageShsOutDil"],
         )
         diagnostics.assert_not_called()
-        self.assertEqual(
-            resolved,
-            {
-                "2025-03-31": {
-                    "revenue": 100,
-                    "weightedAverageShsOutDil": 10,
-                }
-            },
-        )
+        assert resolved == {
+            "2025-03-31": {"revenue": 100, "weightedAverageShsOutDil": 10}
+        }
 
     def test_resolve_us_income_statement_quarters_skips_sec_when_disabled(self):
         source_rows = {
@@ -504,15 +457,9 @@ class SecValuationTests(unittest.TestCase):
             )
 
         add_sec_values.assert_not_awaited()
-        self.assertEqual(
-            resolved,
-            {
-                "2025-03-31": {
-                    "revenue": 100,
-                    "weightedAverageShsOutDil": 10,
-                }
-            },
-        )
+        assert resolved == {
+            "2025-03-31": {"revenue": 100, "weightedAverageShsOutDil": 10}
+        }
 
     def test_resolve_us_income_statement_quarters_drops_latest_single_source_row(
         self,
@@ -552,16 +499,13 @@ class SecValuationTests(unittest.TestCase):
             )
 
         add_sec_values.assert_awaited_once()
-        self.assertEqual(
-            resolved,
-            {
-                "2025-03-31": {
-                    "revenue": 100,
-                    "weightedAverageShsOutDil": 10,
-                    "epsDiluted": 1,
-                }
-            },
-        )
+        assert resolved == {
+            "2025-03-31": {
+                "revenue": 100,
+                "weightedAverageShsOutDil": 10,
+                "epsDiluted": 1,
+            }
+        }
 
     def test_resolve_us_income_statement_quarters_merges_sec_before_dropping_latest(
         self,
@@ -578,11 +522,12 @@ class SecValuationTests(unittest.TestCase):
         }
 
         async def add_sec_fields(symbol, aligned_quarters, required_fields):
-            self.assertEqual(symbol, "AAPL")
-            self.assertEqual(
-                required_fields,
-                ["revenue", "weightedAverageShsOutDil", "epsDiluted"],
-            )
+            assert symbol == "AAPL"
+            assert required_fields == [
+                "revenue",
+                "weightedAverageShsOutDil",
+                "epsDiluted",
+            ]
             latest_quarter = aligned_quarters["2025-06-30"]
             latest_quarter.fields["weightedAverageShsOutDil"]["sec"] = 10
             latest_quarter.fields["epsDiluted"]["sec"] = 1.2
@@ -602,16 +547,13 @@ class SecValuationTests(unittest.TestCase):
             )
 
         add_sec_values.assert_awaited_once()
-        self.assertEqual(
-            resolved,
-            {
-                "2025-06-30": {
-                    "revenue": 120.5,
-                    "weightedAverageShsOutDil": 10,
-                    "epsDiluted": 1.2,
-                }
-            },
-        )
+        assert resolved == {
+            "2025-06-30": {
+                "revenue": 120.5,
+                "weightedAverageShsOutDil": 10,
+                "epsDiluted": 1.2,
+            }
+        }
 
     def test_resolve_us_income_statement_quarters_records_selected_quarters_only(
         self,
@@ -644,8 +586,8 @@ class SecValuationTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(list(resolved), ["2025-06-30"])
-        self.assertEqual(diagnostics_state.seen, {("AAPL", "2025-06-30")})
+        assert list(resolved) == ["2025-06-30"]
+        assert diagnostics_state.seen == {("AAPL", "2025-06-30")}
 
     def test_revenue_consensus_failure_disables_entire_selected_series(self):
         source_rows = {
@@ -690,26 +632,21 @@ class SecValuationTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(
-            [quarter["revenue"] for quarter in resolved.values()], [None, None]
-        )
-        self.assertEqual(
-            [quarter["weightedAverageShsOutDil"] for quarter in resolved.values()],
-            [10, 10],
-        )
+        assert [quarter["revenue"] for quarter in resolved.values()] == [None, None]
+        assert [
+            quarter["weightedAverageShsOutDil"] for quarter in resolved.values()
+        ] == [10, 10]
         rendered_logs = [
             call.args[0].format(*call.args[1:]) for call in warning.call_args_list
         ]
         failure_log = next(log for log in rendered_logs if "field=revenue" in log)
-        self.assertIn("AAPL quarter 2025-06-30", failure_log)
-        self.assertIn("FMP      date=2025-06-30 value=100", failure_log)
-        self.assertIn("Finnhub  date=2025-06-30 value=120", failure_log)
-        self.assertIn("SEC      date=2025-06-30 value=missing", failure_log)
-        self.assertTrue(
-            any(
-                "Disabled revenue for the entire AAPL returned series" in log
-                for log in rendered_logs
-            )
+        assert "AAPL quarter 2025-06-30" in failure_log
+        assert "FMP      date=2025-06-30 value=100" in failure_log
+        assert "Finnhub  date=2025-06-30 value=120" in failure_log
+        assert "SEC      date=2025-06-30 value=missing" in failure_log
+        assert any(
+            "Disabled revenue for the entire AAPL returned series" in log
+            for log in rendered_logs
         )
 
     def test_eps_consensus_failure_disables_entire_selected_series(self):
@@ -755,25 +692,19 @@ class SecValuationTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(
-            [quarter["epsDiluted"] for quarter in resolved.values()], [None, None]
-        )
-        self.assertEqual(
-            [quarter["revenue"] for quarter in resolved.values()], [100, 110]
-        )
+        assert [quarter["epsDiluted"] for quarter in resolved.values()] == [None, None]
+        assert [quarter["revenue"] for quarter in resolved.values()] == [100, 110]
         rendered_logs = [
             call.args[0].format(*call.args[1:]) for call in warning.call_args_list
         ]
         failure_log = next(log for log in rendered_logs if "field=epsDiluted" in log)
-        self.assertIn("MSFT quarter 2025-06-30", failure_log)
-        self.assertIn("FMP      date=2025-06-30 value=1", failure_log)
-        self.assertIn("Finnhub  date=2025-06-30 value=2", failure_log)
-        self.assertIn("SEC      date=2025-06-30 value=missing", failure_log)
-        self.assertTrue(
-            any(
-                "Disabled epsDiluted for the entire MSFT returned series" in log
-                for log in rendered_logs
-            )
+        assert "MSFT quarter 2025-06-30" in failure_log
+        assert "FMP      date=2025-06-30 value=1" in failure_log
+        assert "Finnhub  date=2025-06-30 value=2" in failure_log
+        assert "SEC      date=2025-06-30 value=missing" in failure_log
+        assert any(
+            "Disabled epsDiluted for the entire MSFT returned series" in log
+            for log in rendered_logs
         )
 
     def test_diluted_share_consensus_failure_remains_fatal(self):
@@ -802,9 +733,9 @@ class SecValuationTests(unittest.TestCase):
             ),
             patch.object(valuation, "add_sec_reference_values", new=AsyncMock()),
             patch.object(valuation.logger, "warning") as warning,
-            self.assertRaisesRegex(
+            pytest.raises(
                 ValueError,
-                r"no consensus for AAPL 2025-03-31 field=weightedAverageShsOutDil",
+                match=r"no consensus for AAPL 2025-03-31 field=weightedAverageShsOutDil",
             ),
         ):
             asyncio.run(
@@ -819,18 +750,16 @@ class SecValuationTests(unittest.TestCase):
         failure_log = next(
             log for log in rendered_logs if "field=weightedAverageShsOutDil" in log
         )
-        self.assertIn("AAPL quarter 2025-03-31", failure_log)
-        self.assertIn("FMP      date=2025-03-31 value=10", failure_log)
-        self.assertIn("Finnhub  date=2025-03-31 value=20", failure_log)
-        self.assertIn("SEC      date=2025-03-31 value=missing", failure_log)
+        assert "AAPL quarter 2025-03-31" in failure_log
+        assert "FMP      date=2025-03-31 value=10" in failure_log
+        assert "Finnhub  date=2025-03-31 value=20" in failure_log
+        assert "SEC      date=2025-03-31 value=missing" in failure_log
 
     def test_select_latest_required_quarters_reports_symbol_and_available_dates(self):
-        with self.assertRaisesRegex(
+        with pytest.raises(
             ValueError,
-            (
-                r"need 5 aligned quarters, found 2 for SPCX; "
-                r"available=\['2025-03-31', '2026-03-31'\]"
-            ),
+            match=r"need 5 aligned quarters, found 2 for SPCX; "
+            r"available=\['2025-03-31', '2026-03-31'\]",
         ):
             valuation.select_latest_required_quarters(
                 {
@@ -843,11 +772,11 @@ class SecValuationTests(unittest.TestCase):
             )
 
     def test_format_sec_cik_normalizes_values(self):
-        self.assertEqual(valuation.format_sec_cik("320193"), "0000320193")
-        self.assertEqual(valuation.format_sec_cik(320193.0), "0000320193")
-        self.assertEqual(valuation.format_sec_cik("CIK 0000320193"), "0000320193")
-        self.assertIsNone(valuation.format_sec_cik(None))
-        self.assertIsNone(valuation.format_sec_cik("not-a-cik"))
+        assert valuation.format_sec_cik("320193") == "0000320193"
+        assert valuation.format_sec_cik(320193.0) == "0000320193"
+        assert valuation.format_sec_cik("CIK 0000320193") == "0000320193"
+        assert valuation.format_sec_cik(None) is None
+        assert valuation.format_sec_cik("not-a-cik") is None
 
     def test_normalize_fiscal_quarter(self):
         for expected, values in {
@@ -857,12 +786,10 @@ class SecValuationTests(unittest.TestCase):
             "Q4": (4, 4.0, "4", "Q4", "q4"),
         }.items():
             for value in values:
-                with self.subTest(value=value):
-                    self.assertEqual(valuation.normalize_fiscal_quarter(value), expected)
+                assert valuation.normalize_fiscal_quarter(value) == expected
 
         for value in (0, 2.9, 5, "FY", None):
-            with self.subTest(value=value):
-                self.assertIsNone(valuation.normalize_fiscal_quarter(value))
+            assert valuation.normalize_fiscal_quarter(value) is None
 
     def test_normalize_source_row_scales_base_fields_only(self):
         row = valuation.normalize_source_row(
@@ -875,27 +802,18 @@ class SecValuationTests(unittest.TestCase):
             base_field_scale=1_000_000,
         )
 
-        self.assertEqual(
-            row,
-            {
-                "revenue": 2_000_000,
-                "weightedAverageShsOutDil": 3_000_000,
-                "epsDiluted": 1.5,
-            },
-        )
+        assert row == {
+            "revenue": 2000000,
+            "weightedAverageShsOutDil": 3000000,
+            "epsDiluted": 1.5,
+        }
 
     def test_sanitize_source_field_value_rejects_non_positive_base_fields(self):
         for field in valuation.BASE_XPS_FIELDS:
             for value in (0, -1):
-                with self.subTest(field=field, value=value):
-                    self.assertIsNone(
-                        valuation.sanitize_source_field_value(field, value)
-                    )
+                assert valuation.sanitize_source_field_value(field, value) is None
 
-        self.assertEqual(
-            valuation.sanitize_source_field_value(valuation.EPS_XPS_FIELD, -1),
-            -1,
-        )
+        assert valuation.sanitize_source_field_value(valuation.EPS_XPS_FIELD, -1) == -1
 
     def test_dedupe_sec_rows_prefers_latest_amendment_per_period(self):
         rows = [
@@ -931,17 +849,14 @@ class SecValuationTests(unittest.TestCase):
 
         df = valuation.dedupe_sec_rows(rows)
 
-        self.assertEqual(
-            df.to_dict("records"),
-            [
-                {
-                    "filed": pd.Timestamp("2025-05-02"),
-                    "val": 13,
-                    "start": pd.Timestamp("2025-01-01"),
-                    "end": pd.Timestamp("2025-03-31"),
-                }
-            ],
-        )
+        assert df.to_dict("records") == [
+            {
+                "filed": pd.Timestamp("2025-05-02"),
+                "val": 13,
+                "start": pd.Timestamp("2025-01-01"),
+                "end": pd.Timestamp("2025-03-31"),
+            }
+        ]
 
     def test_dedupe_sec_rows_applies_policy_independently_per_period(self):
         rows = [
@@ -977,23 +892,20 @@ class SecValuationTests(unittest.TestCase):
 
         df = valuation.dedupe_sec_rows(rows)
 
-        self.assertEqual(
-            df.sort_values(["start", "end"]).to_dict("records"),
-            [
-                {
-                    "filed": pd.Timestamp("2025-05-02"),
-                    "val": 13,
-                    "start": pd.Timestamp("2025-01-01"),
-                    "end": pd.Timestamp("2025-03-31"),
-                },
-                {
-                    "filed": pd.Timestamp("2025-07-20"),
-                    "val": 20,
-                    "start": pd.Timestamp("2025-04-01"),
-                    "end": pd.Timestamp("2025-06-30"),
-                },
-            ],
-        )
+        assert df.sort_values(["start", "end"]).to_dict("records") == [
+            {
+                "filed": pd.Timestamp("2025-05-02"),
+                "val": 13,
+                "start": pd.Timestamp("2025-01-01"),
+                "end": pd.Timestamp("2025-03-31"),
+            },
+            {
+                "filed": pd.Timestamp("2025-07-20"),
+                "val": 20,
+                "start": pd.Timestamp("2025-04-01"),
+                "end": pd.Timestamp("2025-06-30"),
+            },
+        ]
 
     def test_dedupe_sec_rows_keeps_first_original_filing_per_period(self):
         rows = [
@@ -1015,14 +927,14 @@ class SecValuationTests(unittest.TestCase):
 
         df = valuation.dedupe_sec_rows(rows)
 
-        self.assertEqual(df.iloc[0]["val"], 10)
+        assert df.iloc[0]["val"] == 10
 
     def test_dedupe_sec_rows_returns_expected_empty_shape(self):
-        self.assertEqual(
-            valuation.dedupe_sec_rows([{"form": "8-K"}]).columns.tolist(),
-            valuation.SEC_DEDUPE_COLS,
+        assert (
+            valuation.dedupe_sec_rows([{"form": "8-K"}]).columns.tolist()
+            == valuation.SEC_DEDUPE_COLS
         )
-        self.assertTrue(valuation.dedupe_sec_rows([{"form": "8-K"}]).empty)
+        assert valuation.dedupe_sec_rows([{"form": "8-K"}]).empty
 
     def test_dedupe_sec_rows_keeps_expected_empty_shape_after_dropping_rows(self):
         df = valuation.dedupe_sec_rows(
@@ -1037,8 +949,8 @@ class SecValuationTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(df.columns.tolist(), valuation.SEC_DEDUPE_COLS)
-        self.assertTrue(df.empty)
+        assert df.columns.tolist() == valuation.SEC_DEDUPE_COLS
+        assert df.empty
 
     def test_dedupe_sec_rows_drops_invalid_dates(self):
         valid_row = {
@@ -1050,12 +962,9 @@ class SecValuationTests(unittest.TestCase):
         }
 
         for column in ("filed", "start", "end"):
-            with self.subTest(column=column):
-                df = valuation.dedupe_sec_rows(
-                    [{**valid_row, column: "not a date"}]
-                )
+            df = valuation.dedupe_sec_rows([{**valid_row, column: "not a date"}])
 
-                self.assertTrue(df.empty)
+            assert df.empty
 
     def test_select_sec_fact_requires_exactly_one_date_window_match(self):
         rows = sec_frame(
@@ -1076,8 +985,8 @@ class SecValuationTests(unittest.TestCase):
             pd.Timestamp("2025-03-31"),
         )
 
-        self.assertEqual(match["val"], 10)
-        self.assertIsNone(
+        assert match["val"] == 10
+        assert (
             valuation.select_sec_fact(
                 sec_frame(
                     [
@@ -1094,6 +1003,7 @@ class SecValuationTests(unittest.TestCase):
                 pd.Timestamp("2025-03-31"),
                 log_errors=False,
             )
+            is None
         )
 
     def test_select_sec_fact_rejects_ambiguous_matches(self):
@@ -1114,7 +1024,7 @@ class SecValuationTests(unittest.TestCase):
             ]
         )
 
-        self.assertIsNone(
+        assert (
             valuation.select_sec_fact(
                 rows,
                 "ambiguous",
@@ -1122,6 +1032,7 @@ class SecValuationTests(unittest.TestCase):
                 pd.Timestamp("2025-03-31"),
                 log_errors=False,
             )
+            is None
         )
 
     def test_derive_sec_q4_value_uses_annual_less_q1_to_q3(self):
@@ -1142,11 +1053,11 @@ class SecValuationTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(
+        assert (
             valuation.derive_sec_q4_value(
                 "flow", rows, "q4 EPS", pd.Timestamp("2025-12-31")
-            ),
-            40,
+            )
+            == 40
         )
 
     def test_lookup_sec_field_value_uses_strict_quarter_window(self):
@@ -1169,17 +1080,16 @@ class SecValuationTests(unittest.TestCase):
         metadata = valuation.SecQuarterMetadata("2025-03-31", "Q1")
 
         for label, key, value, expected in cases:
-            with self.subTest(boundary=label):
-                self.assertEqual(
-                    valuation.lookup_sec_field_value(
-                        "revenue",
-                        "0000320193",
-                        metadata,
-                        sec_frame([{**fact, key: value}]),
-                        q4_value_kind="flow",
-                    ),
-                    expected,
+            assert (
+                valuation.lookup_sec_field_value(
+                    "revenue",
+                    "0000320193",
+                    metadata,
+                    sec_frame([{**fact, key: value}]),
+                    q4_value_kind="flow",
                 )
+                == expected
+            )
 
     def test_derive_sec_q4_value_uses_strict_annual_and_q1_to_q3_windows(self):
         annual_fact = {
@@ -1225,17 +1135,16 @@ class SecValuationTests(unittest.TestCase):
                 )
             q1_to_q3.update(q1_to_q3_updates)
 
-            with self.subTest(boundary=label):
-                self.assertEqual(
-                    valuation.derive_sec_q4_value(
-                        "flow",
-                        sec_frame([annual, q1_to_q3]),
-                        "q4 revenue",
-                        pd.Timestamp("2025-12-31"),
-                        log_errors=False,
-                    ),
-                    expected,
+            assert (
+                valuation.derive_sec_q4_value(
+                    "flow",
+                    sec_frame([annual, q1_to_q3]),
+                    "q4 revenue",
+                    pd.Timestamp("2025-12-31"),
+                    log_errors=False,
                 )
+                == expected
+            )
 
     def test_derive_sec_q4_value_handles_average_share_count(self):
         rows = sec_frame(
@@ -1255,14 +1164,11 @@ class SecValuationTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(
+        assert (
             valuation.derive_sec_q4_value(
-                "average",
-                rows,
-                "q4 shares",
-                pd.Timestamp("2025-12-31"),
-            ),
-            40,
+                "average", rows, "q4 shares", pd.Timestamp("2025-12-31")
+            )
+            == 40
         )
 
     def test_lookup_sec_field_value_prefers_exact_q4_fact_over_derived_value(self):
@@ -1290,11 +1196,11 @@ class SecValuationTests(unittest.TestCase):
         )
         metadata = valuation.SecQuarterMetadata("2025-12-31", "Q4")
 
-        self.assertEqual(
+        assert (
             valuation.lookup_sec_field_value(
                 "revenue", "0000320193", metadata, rows, q4_value_kind="flow"
-            ),
-            25,
+            )
+            == 25
         )
 
     def test_lookup_sec_field_value_derives_q4_when_exact_fact_missing(self):
@@ -1316,11 +1222,11 @@ class SecValuationTests(unittest.TestCase):
         )
         metadata = valuation.SecQuarterMetadata("2025-12-31", "Q4")
 
-        self.assertEqual(
+        assert (
             valuation.lookup_sec_field_value(
                 "revenue", "0000320193", metadata, rows, q4_value_kind="flow"
-            ),
-            40,
+            )
+            == 40
         )
 
     def test_select_sec_cik_prefers_fmp_and_falls_back_to_massive(self):
@@ -1331,34 +1237,29 @@ class SecValuationTests(unittest.TestCase):
             "ENABLED_US_INCOME_STATEMENT_SOURCES",
             selected_sources("fmp", "massive"),
         ):
-            self.assertEqual(
+            assert (
                 valuation.select_sec_cik(
                     valuation.build_aligned_source_quarters(
                         {"fmp": fmp_rows, "massive": massive_rows}
                     )
-                ),
-                "0000320193",
+                )
+                == "0000320193"
             )
-            self.assertEqual(
+            assert (
                 valuation.select_sec_cik(
                     valuation.build_aligned_source_quarters(
-                        {
-                            "fmp": {"2025-03-31": {}},
-                            "massive": massive_rows,
-                        }
-                    )
-                ),
-                "0000789019",
-            )
-            self.assertIsNone(
-                valuation.select_sec_cik(
-                    valuation.build_aligned_source_quarters(
-                        {
-                            "fmp": {"2025-03-31": {}},
-                            "massive": {"2025-03-31": {}},
-                        }
+                        {"fmp": {"2025-03-31": {}}, "massive": massive_rows}
                     )
                 )
+                == "0000789019"
+            )
+            assert (
+                valuation.select_sec_cik(
+                    valuation.build_aligned_source_quarters(
+                        {"fmp": {"2025-03-31": {}}, "massive": {"2025-03-31": {}}}
+                    )
+                )
+                is None
             )
 
     def test_alignment_retains_provider_date_for_sec_metadata(self):
@@ -1380,11 +1281,10 @@ class SecValuationTests(unittest.TestCase):
         ):
             aligned_quarters = valuation.build_aligned_source_quarters(source_rows)
 
-        self.assertEqual(list(aligned_quarters), ["2025-06-30"])
-        self.assertEqual(
-            valuation.build_sec_quarter_metadata(aligned_quarters),
-            {"2025-06-30": valuation.SecQuarterMetadata("2025-06-29", "Q2")},
-        )
+        assert list(aligned_quarters) == ["2025-06-30"]
+        assert valuation.build_sec_quarter_metadata(aligned_quarters) == {
+            "2025-06-30": valuation.SecQuarterMetadata("2025-06-29", "Q2")
+        }
 
     def test_sec_cik_uses_later_source_row_while_metadata_uses_first(self):
         source_rows = {
@@ -1395,11 +1295,10 @@ class SecValuationTests(unittest.TestCase):
         }
         aligned_quarters = valuation.build_aligned_source_quarters(source_rows)
 
-        self.assertEqual(valuation.select_sec_cik(aligned_quarters), "0000320193")
-        self.assertEqual(
-            valuation.build_sec_quarter_metadata(aligned_quarters),
-            {"2025-03-31": valuation.SecQuarterMetadata("2025-03-31", "Q1")},
-        )
+        assert valuation.select_sec_cik(aligned_quarters) == "0000320193"
+        assert valuation.build_sec_quarter_metadata(aligned_quarters) == {
+            "2025-03-31": valuation.SecQuarterMetadata("2025-03-31", "Q1")
+        }
 
     def test_build_sec_quarter_metadata_uses_fmp_then_massive_priority(self):
         aligned_quarters = {
@@ -1422,17 +1321,14 @@ class SecValuationTests(unittest.TestCase):
 
         metadata = valuation.build_sec_quarter_metadata(aligned_quarters)
 
-        self.assertEqual(
-            metadata,
-            {
-                "2025-03-31": valuation.SecQuarterMetadata("2025-03-31", "Q1"),
-                "2025-06-30": valuation.SecQuarterMetadata("2025-06-29", "Q2"),
-                "2025-09-30": valuation.SecQuarterMetadata("2025-09-30", "Q3"),
-            },
-        )
+        assert metadata == {
+            "2025-03-31": valuation.SecQuarterMetadata("2025-03-31", "Q1"),
+            "2025-06-30": valuation.SecQuarterMetadata("2025-06-29", "Q2"),
+            "2025-09-30": valuation.SecQuarterMetadata("2025-09-30", "Q3"),
+        }
 
 
-class FetchSecConceptRowsTests(unittest.IsolatedAsyncioTestCase):
+class TestFetchSecConceptRows:
     async def test_fetch_sec_concept_rows_fetches_and_dedupes_requested_unit(self):
         response = """
         {
@@ -1467,18 +1363,14 @@ class FetchSecConceptRowsTests(unittest.IsolatedAsyncioTestCase):
             valuation.SEC_COMPANY_CONCEPT_URL.format("0000320193", "Revenues"),
             headers={"User-Agent": valuation.SEC_USER_AGENT},
         )
-        self.assertEqual(
-            rows.to_dict("records"),
-            [
-                {
-                    "filed": pd.Timestamp("2025-05-01"),
-                    "val": 11,
-                    "start": pd.Timestamp("2025-01-01"),
-                    "end": pd.Timestamp("2025-03-31"),
-                }
-            ],
-        )
-
+        assert rows.to_dict("records") == [
+            {
+                "filed": pd.Timestamp("2025-05-01"),
+                "val": 11,
+                "start": pd.Timestamp("2025-01-01"),
+                "end": pd.Timestamp("2025-03-31"),
+            }
+        ]
 
     async def test_first_available_field_skips_concept_processing_failures(self):
         with patch.object(
@@ -1490,10 +1382,10 @@ class FetchSecConceptRowsTests(unittest.IsolatedAsyncioTestCase):
                 "0000320193", "weightedAverageShsOutDil"
             )
 
-        self.assertIsNone(result)
+        assert result is None
 
 
-class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
+class TestFetchSecValuesForQuarters:
     async def test_fetches_required_repair_fields_and_returns_only_usable_values(self):
         metadata_by_quarter = {
             "2025-03-31": valuation.SecQuarterMetadata("2025-03-31", "Q1"),
@@ -1533,7 +1425,7 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
         q4_value_kinds = []
 
         async def fake_fetch_sec_concept_rows(cik, concept, unit):
-            self.assertEqual(cik, "0000320193")
+            assert cik == "0000320193"
             fetched_fields.append(concept)
             return frames_by_concept[concept]
 
@@ -1571,51 +1463,34 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
                 ],
             )
 
-        self.assertEqual(
-            fetched_fields,
-            [
-                "RevenueFromContractWithCustomerExcludingAssessedTax",
-                "EarningsPerShareDiluted",
+        assert fetched_fields == [
+            "RevenueFromContractWithCustomerExcludingAssessedTax",
+            "EarningsPerShareDiluted",
+            "WeightedAverageNumberOfDilutedSharesOutstanding",
+        ]
+        assert q4_value_kinds == [
+            ("revenue", "RevenueFromContractWithCustomerExcludingAssessedTax", "flow"),
+            ("revenue", "RevenueFromContractWithCustomerExcludingAssessedTax", "flow"),
+            ("epsDiluted", "EarningsPerShareDiluted", "flow"),
+            ("epsDiluted", "EarningsPerShareDiluted", "flow"),
+            (
+                "weightedAverageShsOutDil",
                 "WeightedAverageNumberOfDilutedSharesOutstanding",
-            ],
-        )
-        self.assertEqual(
-            q4_value_kinds,
-            [
-                (
-                    "revenue",
-                    "RevenueFromContractWithCustomerExcludingAssessedTax",
-                    "flow",
-                ),
-                (
-                    "revenue",
-                    "RevenueFromContractWithCustomerExcludingAssessedTax",
-                    "flow",
-                ),
-                ("epsDiluted", "EarningsPerShareDiluted", "flow"),
-                ("epsDiluted", "EarningsPerShareDiluted", "flow"),
-                (
-                    "weightedAverageShsOutDil",
-                    "WeightedAverageNumberOfDilutedSharesOutstanding",
-                    "average",
-                ),
-                (
-                    "weightedAverageShsOutDil",
-                    "WeightedAverageNumberOfDilutedSharesOutstanding",
-                    "average",
-                ),
-            ],
-        )
-        self.assertEqual(
-            values,
-            {
-                "2025-03-31": {
-                    "revenue": 101,
-                    "weightedAverageShsOutDil": 12,
-                    "epsDiluted": 1.2,
-                }
-            },
-        )
+                "average",
+            ),
+            (
+                "weightedAverageShsOutDil",
+                "WeightedAverageNumberOfDilutedSharesOutstanding",
+                "average",
+            ),
+        ]
+        assert values == {
+            "2025-03-31": {
+                "revenue": 101,
+                "weightedAverageShsOutDil": 12,
+                "epsDiluted": 1.2,
+            }
+        }
 
     async def test_skips_an_empty_field_frame(self):
         metadata_by_quarter = {
@@ -1640,7 +1515,7 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
                 ["weightedAverageShsOutDil"],
             )
 
-        self.assertEqual(values, {})
+        assert values == {}
 
     async def test_keeps_revenue_from_the_available_sec_concept(self):
         metadata_by_quarter = {
@@ -1649,7 +1524,7 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
         fetched_sources = []
 
         async def fake_fetch_sec_concept_rows(cik, concept, unit):
-            self.assertEqual(cik, "0000320193")
+            assert cik == "0000320193"
             fetched_sources.append(concept)
             return (
                 sec_frame([])
@@ -1669,18 +1544,11 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
                 "0000320193", metadata_by_quarter, ["revenue"]
             )
 
-        self.assertEqual(
-            fetched_sources,
-            ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues"],
-        )
-        self.assertEqual(
-            values,
-            {
-                "2025-03-31": {
-                    "revenue": 101,
-                }
-            },
-        )
+        assert fetched_sources == [
+            "RevenueFromContractWithCustomerExcludingAssessedTax",
+            "Revenues",
+        ]
+        assert values == {"2025-03-31": {"revenue": 101}}
 
     async def test_falls_back_to_revenues_when_preferred_concept_fails(self):
         metadata_by_quarter = {
@@ -1698,33 +1566,32 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
         )
 
         for error in errors:
-            with self.subTest(error=type(error).__name__):
-                fetched_concepts = []
+            fetched_concepts = []
 
-                async def fake_fetch_sec_concept_rows(cik, concept, unit):
-                    self.assertEqual((cik, unit), ("0000320193", "USD"))
-                    fetched_concepts.append(concept)
-                    if concept == "RevenueFromContractWithCustomerExcludingAssessedTax":
-                        raise error
-                    return sec_frame([{}])
+            async def fake_fetch_sec_concept_rows(cik, concept, unit):
+                assert (cik, unit) == ("0000320193", "USD")
+                fetched_concepts.append(concept)
+                if concept == "RevenueFromContractWithCustomerExcludingAssessedTax":
+                    raise error
+                return sec_frame([{}])
 
-                with (
-                    patch.object(
-                        valuation,
-                        "fetch_sec_concept_rows",
-                        side_effect=fake_fetch_sec_concept_rows,
-                    ),
-                    patch.object(valuation, "lookup_sec_field_value", return_value=101),
-                ):
-                    values = await valuation.fetch_sec_values_for_quarters(
-                        "0000320193", metadata_by_quarter, ["revenue"]
-                    )
-
-                self.assertEqual(
-                    fetched_concepts,
-                    ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues"],
+            with (
+                patch.object(
+                    valuation,
+                    "fetch_sec_concept_rows",
+                    side_effect=fake_fetch_sec_concept_rows,
+                ),
+                patch.object(valuation, "lookup_sec_field_value", return_value=101),
+            ):
+                values = await valuation.fetch_sec_values_for_quarters(
+                    "0000320193", metadata_by_quarter, ["revenue"]
                 )
-                self.assertEqual(values, {"2025-03-31": {"revenue": 101}})
+
+            assert fetched_concepts == [
+                "RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Revenues",
+            ]
+            assert values == {"2025-03-31": {"revenue": 101}}
 
     async def test_continues_when_a_field_has_no_sec_data(self):
         metadata_by_quarter = {
@@ -1750,10 +1617,10 @@ class FetchSecValuesForQuartersTests(unittest.IsolatedAsyncioTestCase):
                 ["weightedAverageShsOutDil", "epsDiluted"],
             )
 
-        self.assertEqual(values, {"2025-03-31": {"epsDiluted": 1.2}})
+        assert values == {"2025-03-31": {"epsDiluted": 1.2}}
 
 
-class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
+class TestAddSecReferenceValues:
     async def test_add_sec_reference_values_adds_supported_repair_fields(self):
         source_rows = {
             "fmp": {
@@ -1792,7 +1659,7 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
         fetched_fields = []
 
         async def fake_fetch_sec_concept_rows(cik, concept, unit):
-            self.assertEqual(cik, "0000320193")
+            assert cik == "0000320193"
             fetched_fields.append(concept)
             return frames_by_concept[concept]
 
@@ -1807,23 +1674,17 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
                 ["revenue", "weightedAverageShsOutDil", "revenue"],
             )
 
-        self.assertEqual(
-            fetched_fields,
-            [
-                "RevenueFromContractWithCustomerExcludingAssessedTax",
-                "WeightedAverageNumberOfDilutedSharesOutstanding",
-            ],
-        )
-        self.assertEqual(
-            aligned_quarters["2025-03-31"].fields["revenue"],
-            {
-                "fmp": 100,
-                "sec": 101,
-            },
-        )
-        self.assertEqual(
-            aligned_quarters["2025-03-31"].fields["weightedAverageShsOutDil"]["sec"],
-            12,
+        assert fetched_fields == [
+            "RevenueFromContractWithCustomerExcludingAssessedTax",
+            "WeightedAverageNumberOfDilutedSharesOutstanding",
+        ]
+        assert aligned_quarters["2025-03-31"].fields["revenue"] == {
+            "fmp": 100,
+            "sec": 101,
+        }
+        assert (
+            aligned_quarters["2025-03-31"].fields["weightedAverageShsOutDil"]["sec"]
+            == 12
         )
 
     async def test_add_sec_reference_values_skips_without_cik_or_metadata(self):
@@ -1847,15 +1708,5 @@ class AddSecReferenceValuesTests(unittest.IsolatedAsyncioTestCase):
                 ["revenue"],
             )
 
-        self.assertEqual(
-            without_cik["2025-03-31"].fields,
-            {"revenue": {"fmp": 100}},
-        )
-        self.assertEqual(
-            without_metadata["2025-03-31"].fields,
-            {"revenue": {"fmp": 100}},
-        )
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert without_cik["2025-03-31"].fields == {"revenue": {"fmp": 100}}
+        assert without_metadata["2025-03-31"].fields == {"revenue": {"fmp": 100}}

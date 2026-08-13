@@ -1,17 +1,17 @@
 import json
 import tempfile
-import unittest
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import patch
 
 from backend import call_recorder, valuation
 from backend.call_recorder import ValuationCallRecorder
+import pytest
 
 
-class ValuationCallRecorderTests(unittest.TestCase):
+class TestValuationCallRecorder:
     def test_requires_a_module_source_file(self):
-        with self.assertRaisesRegex(ValueError, "source file"):
+        with pytest.raises(ValueError, match="source file"):
             ValuationCallRecorder(ModuleType("dynamic_module"))
 
     def test_disabling_an_inactive_recorder_is_a_no_op(self):
@@ -29,7 +29,7 @@ class ValuationCallRecorderTests(unittest.TestCase):
             monitoring.get_tool.return_value = None
             recorder = ValuationCallRecorder(valuation)
             with recorder as active_recorder:
-                self.assertIs(active_recorder, recorder)
+                assert active_recorder is recorder
 
         monitoring.set_events.assert_any_call(2, monitoring.events.CALL)
         monitoring.set_events.assert_any_call(2, 0)
@@ -41,7 +41,7 @@ class ValuationCallRecorderTests(unittest.TestCase):
             monitoring.get_tool.return_value = None
             recorder = ValuationCallRecorder(valuation)
 
-            with self.assertRaisesRegex(ValueError, "expected"):
+            with pytest.raises(ValueError, match="expected"):
                 with recorder:
                     raise ValueError("expected")
 
@@ -59,15 +59,12 @@ class ValuationCallRecorderTests(unittest.TestCase):
         recorder.enable()
         recorder.enable()
         try:
-            self.assertTrue(valuation.field_has_consensus("revenue", 1, 1))
-            self.assertTrue(valuation.field_has_consensus("revenue", 2, 2))
+            assert valuation.field_has_consensus("revenue", 1, 1)
+            assert valuation.field_has_consensus("revenue", 2, 2)
         finally:
             recorder.disable()
 
-        self.assertEqual(
-            recorder.edges,
-            {("field_has_consensus", "source_log_diff")},
-        )
+        assert recorder.edges == {("field_has_consensus", "source_log_diff")}
 
     def test_records_nested_function_calls(self):
         module = ModuleType("test_valuation")
@@ -91,14 +88,11 @@ def caller():
         recorder = ValuationCallRecorder(module)
         recorder.enable()
         try:
-            self.assertEqual(module.caller(), 1)
+            assert module.caller() == 1
         finally:
             recorder.disable()
 
-        self.assertEqual(
-            recorder.edges,
-            {("caller", "caller.<locals>.helper")},
-        )
+        assert recorder.edges == {("caller", "caller.<locals>.helper")}
 
     def test_records_comprehension_callers(self):
         module = ModuleType("test_valuation")
@@ -130,18 +124,15 @@ def caller():
         recorder.disable()
         recorder.enable()
         try:
-            self.assertEqual(module.caller(), ([1], {2}, {3: 3}, (4,), [[5]]))
+            assert module.caller() == ([1], {2}, {3: 3}, (4,), [[5]])
         finally:
             recorder.disable()
 
-        self.assertEqual(
-            recorder.edges,
-            {
-                ("caller", "caller.<locals>.<genexpr>"),
-                ("caller", "helper"),
-                ("caller.<locals>.<genexpr>", "helper"),
-            },
-        )
+        assert recorder.edges == {
+            ("caller", "caller.<locals>.<genexpr>"),
+            ("caller", "helper"),
+            ("caller.<locals>.<genexpr>", "helper"),
+        }
 
     def test_records_enabled_instance_static_class_and_property_methods(self):
         module = ModuleType("test_valuation")
@@ -187,23 +178,20 @@ def caller():
         recorder = ValuationCallRecorder(module)
         recorder.enable()
         try:
-            self.assertEqual(module.caller(), (1, 1, 1, 1))
+            assert module.caller() == (1, 1, 1, 1)
         finally:
             recorder.disable()
 
-        self.assertEqual(
-            recorder.edges,
-            {
-                ("caller", "Worker"),
-                ("caller", "Worker.method"),
-                ("caller", "Worker.static_method"),
-                ("caller", "Worker.class_method"),
-                ("Worker.method", "helper"),
-                ("Worker.static_method", "helper"),
-                ("Worker.class_method", "helper"),
-                ("Worker.value", "helper"),
-            },
-        )
+        assert recorder.edges == {
+            ("caller", "Worker"),
+            ("caller", "Worker.method"),
+            ("caller", "Worker.static_method"),
+            ("caller", "Worker.class_method"),
+            ("Worker.method", "helper"),
+            ("Worker.static_method", "helper"),
+            ("Worker.class_method", "helper"),
+            ("Worker.value", "helper"),
+        }
 
     def test_records_a_same_source_callee_defined_after_enable(self):
         module = ModuleType("test_valuation")
@@ -235,11 +223,11 @@ def late_callee():
                 ),
                 vars(module),
             )
-            self.assertEqual(module.caller(), 1)
+            assert module.caller() == 1
         finally:
             recorder.disable()
 
-        self.assertEqual(recorder.edges, {("caller", "late_callee")})
+        assert recorder.edges == {("caller", "late_callee")}
 
     def test_records_callable_instance_calls(self):
         module = ModuleType("test_valuation")
@@ -267,18 +255,15 @@ def caller():
         recorder = ValuationCallRecorder(module)
         recorder.enable()
         try:
-            self.assertEqual(module.caller(), 1)
+            assert module.caller() == 1
         finally:
             recorder.disable()
 
-        self.assertEqual(
-            recorder.edges,
-            {
-                ("caller", "Worker"),
-                ("caller", "Worker.__call__"),
-                ("Worker.__call__", "helper"),
-            },
-        )
+        assert recorder.edges == {
+            ("caller", "Worker"),
+            ("caller", "Worker.__call__"),
+            ("Worker.__call__", "helper"),
+        }
 
     def test_ignores_partial_calls(self):
         module = ModuleType("test_valuation")
@@ -304,11 +289,11 @@ def caller():
         recorder = ValuationCallRecorder(module)
         recorder.enable()
         try:
-            self.assertEqual(module.caller(), 1)
+            assert module.caller() == 1
         finally:
             recorder.disable()
 
-        self.assertEqual(recorder.edges, set())
+        assert recorder.edges == set()
 
     def test_excludes_a_callable_from_another_module(self):
         module = ModuleType("test_valuation")
@@ -338,7 +323,7 @@ def caller():
         finally:
             recorder.disable()
 
-        self.assertEqual(recorder.edges, set())
+        assert recorder.edges == set()
 
     def test_records_a_caller_defined_after_enable(self):
         module = ModuleType("test_valuation")
@@ -370,11 +355,11 @@ def caller():
                 ),
                 vars(module),
             )
-            self.assertEqual(module.caller(), 1)
+            assert module.caller() == 1
         finally:
             recorder.disable()
 
-        self.assertEqual(recorder.edges, {("caller", "helper")})
+        assert recorder.edges == {("caller", "helper")}
 
     def test_writes_only_the_unique_edges(self):
         recorder = ValuationCallRecorder(valuation)
@@ -383,7 +368,6 @@ def caller():
             output = Path(directory) / "edges.json"
             recorder.write(output)
 
-            self.assertEqual(
-                json.loads(output.read_text(encoding="utf-8")),
-                [["caller", "callee"]],
-            )
+            assert json.loads(output.read_text(encoding="utf-8")) == [
+                ["caller", "callee"]
+            ]

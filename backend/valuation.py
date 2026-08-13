@@ -208,7 +208,8 @@ EODHD_FUNDAMENTALS_URL = "https://eodhd.com/api/v1.1/fundamentals/{}"
 TIINGO_FUNDAMENTALS_STATEMENTS_URL = (
     "https://api.tiingo.com/tiingo/fundamentals/{}/statements"
 )
-FINMIND_TAIWAN_QUARTER_BUFFER = 2
+FINMIND_TAIWAN_QUARTER_BUFFER = 1
+FINMIND_TAIWAN_MONTH_BUFFER = 2
 TIINGO_QUARTER_BUFFER = 1
 FINMIND_TAIWAN_SHARE_PAR_VALUE = 10
 SEC_DEDUPE_COLS = ["filed", "val", "start", "end"]
@@ -448,10 +449,13 @@ def quarterly_start_date(
     market: Literal["t", "u"],
     limit: int,
     quarter_buffer: int,
+    month_buffer: int = 0,
 ) -> str:
     start = pd.Timestamp.now(
         tz=shared.MARKET_TO_TIMEZONE[market]
-    ).normalize() - pd.DateOffset(months=3 * (limit + quarter_buffer))
+    ).normalize() - pd.DateOffset(
+        months=3 * (limit + quarter_buffer) + month_buffer
+    )
     return date_str(start.tz_localize(None))
 
 
@@ -747,7 +751,12 @@ async def fetch_finmind_taiwan_income_statements(
     limit: int,
     require_eps: bool = True,
 ) -> dict[str, dict]:
-    start_date = quarterly_start_date("t", limit, FINMIND_TAIWAN_QUARTER_BUFFER)
+    start_date = quarterly_start_date(
+        "t",
+        limit,
+        FINMIND_TAIWAN_QUARTER_BUFFER,
+        FINMIND_TAIWAN_MONTH_BUFFER,
+    )
     required_fields = required_xps_fields(require_eps)
     financial_statement_rows, balance_sheet_rows = await asyncio.gather(
         fetch_finmind_taiwan_rows("TaiwanStockFinancialStatements", symbol, start_date),

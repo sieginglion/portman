@@ -1,38 +1,35 @@
 import asyncio
-import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import pandas as pd
 from backend import main, valuation
 from fastapi.testclient import TestClient
+import pytest
 
 
-class DownsideScoreTests(unittest.TestCase):
+class TestDownsideScore:
     def test_lower_quantile_is_half_the_requested_upper_quantile(self):
         series = pd.Series([1, 2, 4, 8, 16, 3])
 
         score = main.calc_downside_score(series, valuation_score_upper=0.8)
 
-        self.assertEqual(score, 1)
+        assert score == 1
 
 
-class QuarterEndLineTests(unittest.TestCase):
+class TestQuarterEndLine:
     def test_adds_a_line_for_each_quarter_end_within_the_series_range(self):
         ax = Mock()
-        series = pd.Series(
-            [1, 2], index=pd.to_datetime(["2025-01-15", "2025-10-10"])
-        )
+        series = pd.Series([1, 2], index=pd.to_datetime(["2025-01-15", "2025-10-10"]))
 
         main.add_quarter_end_lines(ax, series)
 
-        self.assertEqual(
-            [call.args[0] for call in ax.axvline.call_args_list],
-            list(pd.to_datetime(["2025-03-31", "2025-06-30", "2025-09-30"])),
+        assert [call.args[0] for call in ax.axvline.call_args_list] == list(
+            pd.to_datetime(["2025-03-31", "2025-06-30", "2025-09-30"])
         )
 
 
-class PlotValuationSeriesTests(unittest.TestCase):
+class TestPlotValuationSeries:
     def test_draws_a_non_empty_series_and_applies_axis_labels(self):
         ax = MagicMock()
         series = pd.Series(
@@ -52,12 +49,14 @@ class PlotValuationSeriesTests(unittest.TestCase):
         )
         ax.scatter.assert_called_once()
         scatter_args = ax.scatter.call_args
-        self.assertTrue(scatter_args.args[0].equals(series.index[-1:]))
-        self.assertTrue(scatter_args.args[1].equals(series.iloc[-1:]))
-        self.assertEqual(
-            scatter_args.kwargs,
-            {"s": 28, "color": "#2563eb", "linewidths": 0, "zorder": 3},
-        )
+        assert scatter_args.args[0].equals(series.index[-1:])
+        assert scatter_args.args[1].equals(series.iloc[-1:])
+        assert scatter_args.kwargs == {
+            "s": 28,
+            "color": "#2563eb",
+            "linewidths": 0,
+            "zorder": 3,
+        }
         ax.set_title.assert_called_once_with("AAPL historical P/S, last 16 quarters")
         ax.set_ylabel.assert_called_once_with("P/S")
         ax.spines[["top", "right"]].set_visible.assert_called_once_with(False)
@@ -81,7 +80,7 @@ class PlotValuationSeriesTests(unittest.TestCase):
         ax.spines[["top", "right"]].set_visible.assert_called_once_with(False)
 
 
-class PxRouteTests(unittest.TestCase):
+class TestPxRoute:
     def test_crypto_px_uses_the_token_terminal_valuation_path(self):
         px = pd.DataFrame(
             {"ps": [12.0], "pe": [34.0]}, index=pd.to_datetime(["2026-01-01"])
@@ -97,7 +96,7 @@ class PxRouteTests(unittest.TestCase):
         ):
             response = asyncio.run(main.get_px("c", "UNI", 16))
 
-        self.assertEqual(response, "response")
+        assert response == "response"
         calc_px.assert_awaited_once_with("c", "UNI", 16)
 
     def test_stock_px_passes_an_unavailable_ps_series_as_empty_to_the_plotter(self):
@@ -120,27 +119,27 @@ class PxRouteTests(unittest.TestCase):
         ):
             response = asyncio.run(main.get_px("u", "A", 16))
 
-        self.assertEqual(response, "response")
+        assert response == "response"
         ps, pe = (call.args[1] for call in plot.call_args_list)
-        self.assertTrue(ps.empty)
-        self.assertTrue(pe.equals(px["pe"]))
+        assert ps.empty
+        assert pe.equals(px["pe"])
 
 
-class FigureToPngResponseTests(unittest.TestCase):
+class TestFigureToPngResponse:
     def test_returns_a_png_response_and_closes_the_figure(self):
         fig = Mock()
         plt = Mock()
 
         def savefig(buf, format):
-            self.assertEqual(format, "png")
+            assert format == "png"
             buf.write(b"png")
 
         fig.savefig.side_effect = savefig
 
         response = main.figure_to_png_response(fig, plt)
 
-        self.assertEqual(response.media_type, "image/png")
-        self.assertEqual(response.body, b"png")
+        assert response.media_type == "image/png"
+        assert response.body == b"png"
         fig.autofmt_xdate.assert_called_once_with()
         fig.tight_layout.assert_called_once_with()
         plt.close.assert_called_once_with(fig)
@@ -150,13 +149,13 @@ class FigureToPngResponseTests(unittest.TestCase):
         plt = Mock()
         fig.savefig.side_effect = RuntimeError("render failed")
 
-        with self.assertRaisesRegex(RuntimeError, "render failed"):
+        with pytest.raises(RuntimeError, match="render failed"):
             main.figure_to_png_response(fig, plt)
 
         plt.close.assert_called_once_with(fig)
 
 
-class ScoresRouteTests(unittest.TestCase):
+class TestScoresRoute:
     def test_stock_scores_use_the_requested_upper_quantile(self):
         prices = pd.DataFrame(
             {
@@ -170,30 +169,28 @@ class ScoresRouteTests(unittest.TestCase):
                 params={"market": "u", "symbol": "A", "q": 16, "u": 0.8},
             )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), [1.0, 1.0])
+        assert response.status_code == 200
+        assert response.json() == [1.0, 1.0]
         calc_px.assert_awaited_once_with("u", "A", 16)
 
-    def test_stock_scores_allow_either_multiple_to_be_unavailable(self):
-        cases = (
+    @pytest.mark.parametrize(
+        ("values", "expected"),
+        [
             ({"ps": [None, 1], "pe": [1, 1]}, [None, 0.0]),
             ({"ps": [1, 1], "pe": [None, 1]}, [0.0, None]),
-        )
+        ],
+    )
+    def test_stock_scores_allow_either_multiple_to_be_unavailable(
+        self, values, expected
+    ):
+        with patch.object(valuation, "calc_px", return_value=pd.DataFrame(values)):
+            response = TestClient(main.app).get(
+                "/scores",
+                params={"market": "u", "symbol": "A", "q": 16, "u": 0.8},
+            )
 
-        for values, expected in cases:
-            with (
-                self.subTest(values=values),
-                patch.object(
-                    valuation, "calc_px", return_value=pd.DataFrame(values)
-                ),
-            ):
-                response = TestClient(main.app).get(
-                    "/scores",
-                    params={"market": "u", "symbol": "A", "q": 16, "u": 0.8},
-                )
-
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json(), expected)
+        assert response.status_code == 200
+        assert response.json() == expected
 
     def test_bitcoin_scores_forward_the_requested_upper_quantile(self):
         with patch.object(main, "calc_btc_score", return_value=1.25) as calc_btc_score:
@@ -202,8 +199,8 @@ class ScoresRouteTests(unittest.TestCase):
                 params={"market": "c", "symbol": "BTC", "q": 16, "u": 0.8},
             )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), [1.25, None])
+        assert response.status_code == 200
+        assert response.json() == [1.25, None]
         calc_btc_score.assert_awaited_once_with(16, 0.8)
 
     def test_scores_require_the_upper_quantile(self):
@@ -212,10 +209,10 @@ class ScoresRouteTests(unittest.TestCase):
             params={"market": "c", "symbol": "BTC", "q": 16},
         )
 
-        self.assertEqual(response.status_code, 422)
+        assert response.status_code == 422
 
 
-class DiagnosticsRouteTests(unittest.TestCase):
+class TestDiagnosticsRoute:
     def test_diagnostics_returns_the_payload(self):
         payload = {
             "total_quarters": 7,
@@ -226,12 +223,12 @@ class DiagnosticsRouteTests(unittest.TestCase):
             client = TestClient(main.app)
             response = client.get("/diagnostics")
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), payload)
-        self.assertEqual(client.get("/metrics").status_code, 404)
+        assert response.status_code == 200
+        assert response.json() == payload
+        assert client.get("/metrics").status_code == 404
 
 
-class CallRecorderLifecycleTests(unittest.TestCase):
+class TestCallRecorderLifecycle:
     def test_enabled_recorder_starts_and_writes_on_shutdown(self):
         recorder = Mock()
 

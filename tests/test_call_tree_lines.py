@@ -2,15 +2,16 @@ import json
 import subprocess
 import sys
 import tempfile
-import unittest
 from pathlib import Path
+
+import pytest
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPOSITORY_ROOT / "bin/call_tree_lines.py"
 
 
-class CallTreeLinesTests(unittest.TestCase):
+class TestCallTreeLines:
     def test_reports_a_direct_callees_cumulative_lines(self):
         result = self._run(
             """
@@ -27,7 +28,7 @@ def a():
             "a",
         )
 
-        self.assertEqual(result.stdout, "b 4\n")
+        assert result.stdout == "b 4\n"
 
     def test_all_lists_root_and_every_reachable_descendant_without_line_counts(self):
         result = self._run(
@@ -46,7 +47,7 @@ def a():
             extra_args=["--all", "--source", "/does-not-need-to-exist.py"],
         )
 
-        self.assertEqual(result.stdout, "a\nb\nc\n")
+        assert result.stdout == "a\nb\nc\n"
 
     def test_counts_shared_descendants_once_per_cumulative_total(self):
         result = self._run(
@@ -76,7 +77,7 @@ def a():
             "a",
         )
 
-        self.assertEqual(result.stdout, "b 8\n")
+        assert result.stdout == "b 8\n"
 
     def test_counts_nested_callables_with_recorder_qualified_names(self):
         result = self._run(
@@ -93,7 +94,7 @@ def a():
             "a",
         )
 
-        self.assertEqual(result.stdout, "a.<locals>.b 4\n")
+        assert result.stdout == "a.<locals>.b 4\n"
 
     def test_counts_methods_in_a_nested_class(self):
         result = self._run(
@@ -111,7 +112,7 @@ def a():
             "a",
         )
 
-        self.assertEqual(result.stdout, "a.<locals>.Worker.b 4\n")
+        assert result.stdout == "a.<locals>.Worker.b 4\n"
 
     def test_counts_a_called_class(self):
         result = self._run(
@@ -126,33 +127,36 @@ def a():
             "a",
         )
 
-        self.assertEqual(result.stdout, "Result 2\n")
+        assert result.stdout == "Result 2\n"
 
-    def test_comprehensions_are_transparent_direct_callees(self):
-        expressions = {
-            "<genexpr>": "(c() for _ in range(1))",
-            "<listcomp>": "[c() for _ in range(1)]",
-            "<setcomp>": "{c() for _ in range(1)}",
-            "<dictcomp>": "{_: c() for _ in range(1)}",
-        }
-        for callable_name, expression in expressions.items():
-            with self.subTest(callable_name=callable_name):
-                result = self._run(
-                    f"""
+    @pytest.mark.parametrize(
+        ("callable_name", "expression"),
+        [
+            ("<genexpr>", "(c() for _ in range(1))"),
+            ("<listcomp>", "[c() for _ in range(1)]"),
+            ("<setcomp>", "{c() for _ in range(1)}"),
+            ("<dictcomp>", "{_: c() for _ in range(1)}"),
+        ],
+    )
+    def test_comprehensions_are_transparent_direct_callees(
+        self, callable_name, expression
+    ):
+        result = self._run(
+            f"""
 def c():
     return 1
 
 def a():
     return {expression}
 """.lstrip(),
-                    [
-                        ["a", f"a.<locals>.{callable_name}"],
-                        [f"a.<locals>.{callable_name}", "c"],
-                    ],
-                    "a",
-                )
+            [
+                ["a", f"a.<locals>.{callable_name}"],
+                [f"a.<locals>.{callable_name}", "c"],
+            ],
+            "a",
+        )
 
-                self.assertEqual(result.stdout, "c 2\n")
+        assert result.stdout == "c 2\n"
 
     def test_comprehensions_are_transparent_to_cumulative_counts(self):
         result = self._run(
@@ -178,7 +182,7 @@ def a():
             "a",
         )
 
-        self.assertEqual(result.stdout, "b 4\nIncomeStatementFetch 2\n")
+        assert result.stdout == "b 4\nIncomeStatementFetch 2\n"
 
     def test_all_omits_comprehensions_but_retains_their_descendants(self):
         result = self._run(
@@ -197,7 +201,7 @@ def a():
             extra_args=["--all"],
         )
 
-        self.assertEqual(result.stdout, "a\nc\n")
+        assert result.stdout == "a\nc\n"
 
     def test_lambdas_are_transparent_to_reports(self):
         result = self._run(
@@ -215,7 +219,7 @@ def a():
             extra_args=["--all"],
         )
 
-        self.assertEqual(result.stdout, "a\nc\n")
+        assert result.stdout == "a\nc\n"
 
         result = self._run(
             """
@@ -231,7 +235,7 @@ def a():
             "a",
         )
 
-        self.assertEqual(result.stdout, "c 2\n")
+        assert result.stdout == "c 2\n"
 
     def test_rejects_a_disconnected_recorded_callable_missing_from_source(self):
         result = self._run(
@@ -247,8 +251,8 @@ def a():
             check=False,
         )
 
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("also_removed, removed", result.stderr)
+        assert result.returncode != 0
+        assert "also_removed, removed" in result.stderr
 
     def test_rejects_a_comprehension_not_present_in_source(self):
         result = self._run(
@@ -267,8 +271,8 @@ def a():
             check=False,
         )
 
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("a.<locals>.<genexpr>", result.stderr)
+        assert result.returncode != 0
+        assert "a.<locals>.<genexpr>" in result.stderr
 
     def test_ranks_direct_callees_by_lines_then_name(self):
         result = self._run(
@@ -288,19 +292,18 @@ def a():
             "a",
         )
 
-        self.assertEqual(result.stdout, "zebra 4\nant 2\n")
+        assert result.stdout == "zebra 4\nant 2\n"
 
-    def test_rejects_invalid_edge_pairs(self):
+    @pytest.mark.parametrize("edges", [["a"], [["a"]], [["a", 1]]])
+    def test_rejects_invalid_edge_pairs(self, edges):
         source = """
 def a():
     return 1
 """.lstrip()
-        for edges in (["a"], [["a"]], [["a", 1]]):
-            with self.subTest(edges=edges):
-                result = self._run(source, edges, "a", check=False)
+        result = self._run(source, edges, "a", check=False)
 
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("edge 1 is not a string pair", result.stderr)
+        assert result.returncode != 0
+        assert "edge 1 is not a string pair" in result.stderr
 
     @staticmethod
     def _run(

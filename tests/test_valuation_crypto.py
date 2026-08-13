@@ -1,10 +1,10 @@
 import asyncio
 import json
 import os
-import unittest
 from unittest.mock import AsyncMock, patch
 
 from backend import valuation
+import pytest
 
 
 def monthly_rows(start: str, periods: int) -> list[dict]:
@@ -33,13 +33,13 @@ def monthly_rows(start: str, periods: int) -> list[dict]:
     return rows
 
 
-class TokenTerminalValuationTests(unittest.TestCase):
+class TestTokenTerminalValuation:
     def test_headers_do_not_require_a_cookie(self):
         with patch.dict(os.environ, {"TOKEN_TERMINAL_JWT": "jwt"}, clear=True):
             headers = valuation.token_terminal_headers("uniswap")
 
-        self.assertEqual(headers["x-tt-terminal-jwt"], "jwt")
-        self.assertNotIn("cookie", headers)
+        assert headers["x-tt-terminal-jwt"] == "jwt"
+        assert "cookie" not in headers
 
     def test_financial_statement_request_uses_single_tt_procedure(self):
         cached_get = AsyncMock(
@@ -61,10 +61,10 @@ class TokenTerminalValuationTests(unittest.TestCase):
                 headers=valuation.token_terminal_headers("uniswap"),
             )
 
-        self.assertEqual(rows, [{"value": 1}])
+        assert rows == [{"value": 1}]
 
     def test_xps_rejects_empty_rows(self):
-        with self.assertRaisesRegex(ValueError, "no usable data"):
+        with pytest.raises(ValueError, match="no usable data"):
             valuation.build_token_terminal_xps_frame([], m=1, include_eps=True)
 
     def test_xps_uses_monthly_per_token_values_and_omits_current_month(self):
@@ -81,9 +81,9 @@ class TokenTerminalValuationTests(unittest.TestCase):
 
         expected_rps = sum((100 + index) / (10 + index) for index in range(12))
         expected_eps = sum((10 + index) / (10 + index) for index in range(12))
-        self.assertEqual(frame.index.strftime("%Y-%m-%d").tolist(), ["2026-01-01"])
-        self.assertAlmostEqual(frame["rps"].iloc[0], expected_rps)
-        self.assertAlmostEqual(frame["eps"].iloc[0], expected_eps)
+        assert frame.index.strftime("%Y-%m-%d").tolist() == ["2026-01-01"]
+        assert frame["rps"].iloc[0] == pytest.approx(expected_rps)
+        assert frame["eps"].iloc[0] == pytest.approx(expected_eps)
 
     def test_xps_can_omit_eps(self):
         rows = monthly_rows("2025-01-01", 12)
@@ -97,7 +97,7 @@ class TokenTerminalValuationTests(unittest.TestCase):
                 include_eps=False,
             )
 
-        self.assertEqual(frame.columns.tolist(), ["rps"])
+        assert frame.columns.tolist() == ["rps"]
 
     def test_xps_skips_missing_fees(self):
         rows = [
@@ -112,15 +112,14 @@ class TokenTerminalValuationTests(unittest.TestCase):
                 include_eps=True,
             )
 
-        self.assertEqual(frame.columns.tolist(), ["eps"])
+        assert frame.columns.tolist() == ["eps"]
 
     def test_xps_skips_fees_with_a_missing_month(self):
         rows = [
             row
             for row in monthly_rows("2025-01-01", 12)
             if not (
-                row["metric_id"] == "fees"
-                and row["timestamp"].startswith("2025-06")
+                row["metric_id"] == "fees" and row["timestamp"].startswith("2025-06")
             )
         ]
         now = valuation.pd.Timestamp("2026-01-15", tz="UTC")
@@ -132,7 +131,7 @@ class TokenTerminalValuationTests(unittest.TestCase):
                 include_eps=True,
             )
 
-        self.assertEqual(frame.columns.tolist(), ["eps"])
+        assert frame.columns.tolist() == ["eps"]
 
     def test_xps_skips_missing_earnings(self):
         rows = [
@@ -149,7 +148,7 @@ class TokenTerminalValuationTests(unittest.TestCase):
                 include_eps=True,
             )
 
-        self.assertEqual(frame.columns.tolist(), ["rps"])
+        assert frame.columns.tolist() == ["rps"]
 
     def test_xps_skips_earnings_with_a_missing_month(self):
         rows = [
@@ -169,7 +168,7 @@ class TokenTerminalValuationTests(unittest.TestCase):
                 include_eps=True,
             )
 
-        self.assertEqual(frame.columns.tolist(), ["rps"])
+        assert frame.columns.tolist() == ["rps"]
 
     def test_xps_rejects_missing_circulating_supply(self):
         rows = [
@@ -181,7 +180,7 @@ class TokenTerminalValuationTests(unittest.TestCase):
 
         with (
             patch.object(valuation.pd.Timestamp, "now", return_value=now),
-            self.assertRaisesRegex(ValueError, "token_supply_circulating"),
+            pytest.raises(ValueError, match="token_supply_circulating"),
         ):
             valuation.build_token_terminal_xps_frame(rows, m=1, include_eps=True)
 
@@ -198,30 +197,27 @@ class TokenTerminalValuationTests(unittest.TestCase):
 
         with (
             patch.object(valuation.pd.Timestamp, "now", return_value=now),
-            self.assertRaisesRegex(ValueError, "token_supply_circulating"),
+            pytest.raises(ValueError, match="token_supply_circulating"),
         ):
             valuation.build_token_terminal_xps_frame(rows, m=1, include_eps=True)
 
-    def test_xps_rejects_invalid_circulating_supply(self):
+    @pytest.mark.parametrize("invalid_supply", [0, -1, "not-a-number"])
+    def test_xps_rejects_invalid_circulating_supply(self, invalid_supply):
         now = valuation.pd.Timestamp("2026-01-15", tz="UTC")
 
-        for invalid_supply in (0, -1, "not-a-number"):
-            with self.subTest(invalid_supply=invalid_supply):
-                rows = monthly_rows("2025-01-01", 12)
-                next(
-                    row
-                    for row in rows
-                    if row["metric_id"] == "token_supply_circulating"
-                    and row["timestamp"].startswith("2025-06")
-                )["value"] = invalid_supply
+        rows = monthly_rows("2025-01-01", 12)
+        next(
+            row
+            for row in rows
+            if row["metric_id"] == "token_supply_circulating"
+            and row["timestamp"].startswith("2025-06")
+        )["value"] = invalid_supply
 
-                with (
-                    patch.object(valuation.pd.Timestamp, "now", return_value=now),
-                    self.assertRaisesRegex(ValueError, "token_supply_circulating"),
-                ):
-                    valuation.build_token_terminal_xps_frame(
-                        rows, m=1, include_eps=True
-                    )
+        with (
+            patch.object(valuation.pd.Timestamp, "now", return_value=now),
+            pytest.raises(ValueError, match="token_supply_circulating"),
+        ):
+            valuation.build_token_terminal_xps_frame(rows, m=1, include_eps=True)
 
     def test_xps_rejects_missing_fees_and_earnings(self):
         rows = [
@@ -233,7 +229,7 @@ class TokenTerminalValuationTests(unittest.TestCase):
 
         with (
             patch.object(valuation.pd.Timestamp, "now", return_value=now),
-            self.assertRaisesRegex(ValueError, "fees and earnings"),
+            pytest.raises(ValueError, match="fees and earnings"),
         ):
             valuation.build_token_terminal_xps_frame(rows, m=1, include_eps=True)
 
@@ -253,7 +249,7 @@ class TokenTerminalValuationTests(unittest.TestCase):
 
         with (
             patch.object(valuation.pd.Timestamp, "now", return_value=now),
-            self.assertRaisesRegex(ValueError, "fees and earnings"),
+            pytest.raises(ValueError, match="fees and earnings"),
         ):
             valuation.build_token_terminal_xps_frame(rows, m=1, include_eps=True)
 
@@ -262,8 +258,7 @@ class TokenTerminalValuationTests(unittest.TestCase):
             row
             for row in monthly_rows("2025-01-01", 13)
             if not (
-                row["metric_id"] == "fees"
-                and row["timestamp"].startswith("2025-06")
+                row["metric_id"] == "fees" and row["timestamp"].startswith("2025-06")
             )
         ]
         now = valuation.pd.Timestamp("2026-02-15", tz="UTC")
@@ -275,8 +270,8 @@ class TokenTerminalValuationTests(unittest.TestCase):
                 include_eps=True,
             )
 
-        self.assertEqual(frame.columns.tolist(), ["eps"])
-        self.assertEqual(len(frame), 2)
+        assert frame.columns.tolist() == ["eps"]
+        assert len(frame) == 2
 
     def test_xps_ignores_non_numeric_values(self):
         rows = monthly_rows("2025-01-01", 12)
@@ -297,7 +292,7 @@ class TokenTerminalValuationTests(unittest.TestCase):
                 include_eps=True,
             )
 
-        self.assertTrue(frame["rps"].notna().all())
+        assert frame["rps"].notna().all()
 
     def test_xps_rejects_gaps_in_complete_months(self):
         rows = monthly_rows("2025-01-01", 13)
@@ -306,7 +301,7 @@ class TokenTerminalValuationTests(unittest.TestCase):
 
         with (
             patch.object(valuation.pd.Timestamp, "now", return_value=now),
-            self.assertRaisesRegex(ValueError, "incomplete months"),
+            pytest.raises(ValueError, match="incomplete months"),
         ):
             valuation.build_token_terminal_xps_frame(rows, m=1, include_eps=True)
 
@@ -324,7 +319,7 @@ class TokenTerminalValuationTests(unittest.TestCase):
         ):
             frame = asyncio.run(valuation.fetch_xps("c", "UNI", q=1, include_eps=True))
 
-        self.assertEqual(frame.index.strftime("%Y-%m-%d").tolist(), ["2026-04-01"])
+        assert frame.index.strftime("%Y-%m-%d").tolist() == ["2026-04-01"]
 
     def test_fetch_xps_returns_every_third_month_for_multiple_quarters(self):
         rows = monthly_rows("2025-01-01", 18)
@@ -340,10 +335,7 @@ class TokenTerminalValuationTests(unittest.TestCase):
         ):
             frame = asyncio.run(valuation.fetch_xps("c", "UNI", q=2, include_eps=True))
 
-        self.assertEqual(
-            frame.index.strftime("%Y-%m-%d").tolist(),
-            ["2026-04-01", "2026-07-01"],
-        )
+        assert frame.index.strftime("%Y-%m-%d").tolist() == ["2026-04-01", "2026-07-01"]
 
     def test_crypto_calc_px_uses_monthly_fundamentals_for_price_alignment(self):
         xps = valuation.pd.DataFrame(
@@ -363,7 +355,7 @@ class TokenTerminalValuationTests(unittest.TestCase):
         ):
             result = asyncio.run(valuation.calc_px("c", "UNI", q=1))
 
-        self.assertEqual(result["ps"].tolist(), [2.0])
+        assert result["ps"].tolist() == [2.0]
         fetch_monthly_xps.assert_awaited_once_with("UNI", 4, True)
 
     def test_crypto_calc_px_allows_a_missing_metric(self):
@@ -383,5 +375,5 @@ class TokenTerminalValuationTests(unittest.TestCase):
         ):
             result = asyncio.run(valuation.calc_px("c", "UNI", q=1))
 
-        self.assertTrue(valuation.pd.isna(result["ps"].iloc[0]))
-        self.assertEqual(result["pe"].tolist(), [2.0])
+        assert valuation.pd.isna(result["ps"].iloc[0])
+        assert result["pe"].tolist() == [2.0]

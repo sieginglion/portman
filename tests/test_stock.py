@@ -1,11 +1,11 @@
 import asyncio
-import unittest
 from unittest.mock import AsyncMock, patch
 
 import arrow
 import numpy as np
 
 from backend import stock
+import pytest
 
 
 class AsyncClientStub:
@@ -39,7 +39,7 @@ class RequestClientStub:
         return self.response
 
 
-class StockTests(unittest.TestCase):
+class TestStock:
     def test_daily_values_fills_missing_dates_and_ignores_outside_rows(self):
         values = stock.daily_values(
             arrow.get("2026-01-01"),
@@ -52,14 +52,7 @@ class StockTests(unittest.TestCase):
             "close",
         )
 
-        self.assertEqual(
-            values,
-            {
-                "2026-01-01": 10.0,
-                "2026-01-02": 0.0,
-                "2026-01-03": 30.0,
-            },
-        )
+        assert values == {"2026-01-01": 10.0, "2026-01-02": 0.0, "2026-01-03": 30.0}
 
     def test_get_fmp_series_fills_gaps_and_applies_taiwan_limit(self):
         client = RequestClientStub(
@@ -79,15 +72,12 @@ class StockTests(unittest.TestCase):
         )
 
         np.testing.assert_allclose(result, [100.0, 100.0, 121.0, 121.0])
-        self.assertEqual(
-            client.requests,
-            [
-                (
-                    "https://financialmodelingprep.com/api/v3/historical-price-full/2330.TW",
-                    {"from": "2026-01-01", "serietype": "line"},
-                )
-            ],
-        )
+        assert client.requests == [
+            (
+                "https://financialmodelingprep.com/api/v3/historical-price-full/2330.TW",
+                {"from": "2026-01-01", "serietype": "line"},
+            )
+        ]
 
     def test_get_fmp_unadjusted_uses_market_suffix_and_limit(self):
         client = object()
@@ -99,27 +89,24 @@ class StockTests(unittest.TestCase):
 
         np.testing.assert_allclose(taiwan, [100.0, 101.0])
         np.testing.assert_allclose(japan, [100.0, 101.0])
-        self.assertEqual(
-            [
-                (call.args[0], call.args[1], call.args[4], call.args[5])
-                for call in get_fmp_series.await_args_list
-            ],
-            [(client, "2330.TW", 2, True), (client, "7203.T", 2, False)],
-        )
+        assert [
+            (call.args[0], call.args[1], call.args[4], call.args[5])
+            for call in get_fmp_series.await_args_list
+        ] == [(client, "2330.TW", 2, True), (client, "7203.T", 2, False)]
 
     def test_get_fmp_unadjusted_reports_the_symbol_when_data_is_invalid(self):
         get_fmp_series = AsyncMock(side_effect=AssertionError)
 
         with (
             patch.object(stock, "get_fmp_series", new=get_fmp_series),
-            self.assertRaisesRegex(ValueError, "2330"),
+            pytest.raises(ValueError, match="2330"),
         ):
             asyncio.run(stock.get_fmp_unadjusted(object(), "t", "2330", 2))
 
     def test_fetch_fmp_price_history_rejects_invalid_payload(self):
         client = RequestClientStub({"Error Message": "Invalid API key"})
 
-        with self.assertRaisesRegex(ValueError, "AAPL"):
+        with pytest.raises(ValueError, match="AAPL"):
             asyncio.run(
                 stock._fetch_fmp_price_history(client, "AAPL", arrow.get("2026-01-01"))
             )
@@ -127,7 +114,7 @@ class StockTests(unittest.TestCase):
     def test_fetch_fmp_price_history_propagates_http_errors(self):
         client = RequestClientStub({"historical": []}, RuntimeError("rate limited"))
 
-        with self.assertRaisesRegex(RuntimeError, "rate limited"):
+        with pytest.raises(RuntimeError, match="rate limited"):
             asyncio.run(
                 stock._fetch_fmp_price_history(client, "AAPL", arrow.get("2026-01-01"))
             )
@@ -137,7 +124,7 @@ class StockTests(unittest.TestCase):
 
         with (
             patch.object(stock, "get_today_dividend", new=AsyncMock(return_value=0.0)),
-            self.assertRaisesRegex(ValueError, "AAPL"),
+            pytest.raises(ValueError, match="AAPL"),
         ):
             asyncio.run(stock.get_fmp_dividends(client, "u", "AAPL", 1))
 
@@ -146,7 +133,7 @@ class StockTests(unittest.TestCase):
 
         with (
             patch.object(stock, "get_today_dividend", new=AsyncMock(return_value=0.0)),
-            self.assertRaisesRegex(RuntimeError, "rate limited"),
+            pytest.raises(RuntimeError, match="rate limited"),
         ):
             asyncio.run(stock.get_fmp_dividends(client, "u", "AAPL", 1))
 
@@ -169,21 +156,19 @@ class StockTests(unittest.TestCase):
 
         np.testing.assert_allclose(result, [1.5, 2.0])
 
-    def test_market_window_uses_market_timezone_and_lookback(self):
+    @pytest.mark.parametrize(
+        ("market", "timezone"),
+        [("j", "Asia/Tokyo"), ("t", "Asia/Taipei"), ("u", "America/New_York")],
+    )
+    def test_market_window_uses_market_timezone_and_lookback(self, market, timezone):
         now = arrow.get("2026-01-15T12:00:00+08:00")
 
-        for market, timezone in (
-            ("j", "Asia/Tokyo"),
-            ("t", "Asia/Taipei"),
-            ("u", "America/New_York"),
-        ):
-            with self.subTest(market=market):
-                with patch.object(stock.arrow, "now", return_value=now) as get_now:
-                    start, end = stock._market_window(market, 2)
+        with patch.object(stock.arrow, "now", return_value=now) as get_now:
+            start, end = stock._market_window(market, 2)
 
-                get_now.assert_called_once_with(timezone)
-                self.assertEqual(end, now)
-                self.assertEqual(start, now.shift(days=-15))
+        get_now.assert_called_once_with(timezone)
+        assert end == now
+        assert start == now.shift(days=-15)
 
     def test_get_rates_uses_usdtwd_series(self):
         client = object()
@@ -195,7 +180,7 @@ class StockTests(unittest.TestCase):
 
         np.testing.assert_allclose(result, rates)
         args = get_fmp_series.await_args.args
-        self.assertEqual((args[0], args[1], args[4]), (client, "USDTWD", 2))
+        assert (args[0], args[1], args[4]) == (client, "USDTWD", 2)
 
     def test_calc_adjusted_handles_no_dividends(self):
         prices = np.array([100.0, 102.0, 101.0])
@@ -273,7 +258,3 @@ class StockTests(unittest.TestCase):
             np.testing.assert_allclose(result, prices)
             get_adjusted.assert_awaited_once_with(client, market, "TEST", 2)
             get_rates.assert_not_awaited()
-
-
-if __name__ == "__main__":
-    unittest.main()

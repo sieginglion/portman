@@ -1,7 +1,6 @@
 import subprocess
 import sys
 import tempfile
-import unittest
 from pathlib import Path
 
 
@@ -9,7 +8,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPOSITORY_ROOT / "bin/log_severity_report.py"
 
 
-class LogSeverityReportTests(unittest.TestCase):
+class TestLogSeverityReport:
     def test_discovers_and_classifies_source_logging_and_traceback_sites(self):
         source_text = """
 from loguru import logger
@@ -54,22 +53,22 @@ def fail():
 
             result = self._run(log, source)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(
-            "Discovered source sites: 1 warnings, 1 logged errors, 1 raises",
-            result.stdout,
+        assert result.returncode == 0, result.stderr
+        assert (
+            "Discovered source sites: 1 warnings, 1 logged errors, 1 raises"
+            in result.stdout
         )
-        self.assertIn("Warnings from backend.valuation: 1", result.stdout)
-        self.assertIn(f"     1  warn:{warning_line}\n", result.stdout)
-        self.assertIn("Errors from backend.valuation: 2", result.stdout)
-        self.assertIn(f"     1  logged_error:{logged_error_line}\n", result.stdout)
-        self.assertIn(f"     1  fail:{raise_line} - LookupError\n", result.stdout)
-        self.assertNotIn("Dynamic warning {}", result.stdout)
-        self.assertNotIn("Dynamic failure {}", result.stdout)
-        self.assertNotIn("LookupError: boom", result.stdout)
+        assert "Warnings from backend.valuation: 1" in result.stdout
+        assert f"     1  warn:{warning_line}\n" in result.stdout
+        assert "Errors from backend.valuation: 2" in result.stdout
+        assert f"     1  logged_error:{logged_error_line}\n" in result.stdout
+        assert f"     1  fail:{raise_line} - LookupError\n" in result.stdout
+        assert "Dynamic warning {}" not in result.stdout
+        assert "Dynamic failure {}" not in result.stdout
+        assert "LookupError: boom" not in result.stdout
 
     def test_tracks_nested_async_and_module_level_source_sites(self):
-        source_text = '''
+        source_text = """
 from loguru import logger
 
 logger.warning("before functions")
@@ -87,7 +86,7 @@ async def async_worker():
     logger.warning("async warning")
 
 logger.warning("after functions")
-'''.lstrip()
+""".lstrip()
 
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "backend/valuation.py"
@@ -134,16 +133,16 @@ logger.warning("after functions")
 
             result = self._run(log, source)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Warnings from backend.valuation: 6", result.stdout)
-        self.assertIn("<module>", result.stdout)
-        self.assertIn("outer", result.stdout)
-        self.assertIn("inner", result.stdout)
-        self.assertIn("async_worker", result.stdout)
-        self.assertIn(
+        assert result.returncode == 0, result.stderr
+        assert "Warnings from backend.valuation: 6" in result.stdout
+        assert "<module>" in result.stdout
+        assert "outer" in result.stdout
+        assert "inner" in result.stdout
+        assert "async_worker" in result.stdout
+        assert (
             "     1  "
-            f"inner:{lines['raise ValueError(\"inner failure\")']} - ValueError\n",
-            result.stdout,
+            f"inner:{lines['raise ValueError("inner failure")']} - ValueError\n"
+            in result.stdout
         )
 
     def test_ignores_records_from_other_modules(self):
@@ -168,12 +167,12 @@ def warn():
 
             result = self._run(log, source)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Warnings from backend.valuation: 0", result.stdout)
-        self.assertIn("Errors from backend.valuation: 0", result.stdout)
+        assert result.returncode == 0, result.stderr
+        assert "Warnings from backend.valuation: 0" in result.stdout
+        assert "Errors from backend.valuation: 0" in result.stdout
 
     def test_classifies_dynamic_and_multiline_messages_by_source_location(self):
-        source_text = '''
+        source_text = """
 from loguru import logger
 
 def f_string(value):
@@ -184,14 +183,16 @@ def expression(message):
 
 def multiline():
     logger.warning("first\\nsecond")
-'''.lstrip()
+""".lstrip()
 
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "backend/valuation.py"
             source.parent.mkdir()
             source.write_text(source_text, encoding="utf-8")
             f_string_line = self._line_containing(source_text, 'f"Value')
-            expression_line = self._line_containing(source_text, "logger.warning(message)")
+            expression_line = self._line_containing(
+                source_text, "logger.warning(message)"
+            )
             multiline_line = self._line_containing(source_text, '"first\\nsecond"')
             log = Path(directory) / "app.log"
             log.write_text(
@@ -211,15 +212,13 @@ def multiline():
 
             result = self._run(log, source)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(f"     1  f_string:{f_string_line}\n", result.stdout)
-        self.assertIn(f"     1  expression:{expression_line}\n", result.stdout)
-        self.assertIn(f"     1  multiline:{multiline_line}\n", result.stdout)
-        self.assertNotIn("f'Value: {value!r:>8}'", result.stdout)
-        self.assertNotIn(
-            f"     1  expression:{expression_line} - message", result.stdout
-        )
-        self.assertNotIn("first\\nsecond", result.stdout)
+        assert result.returncode == 0, result.stderr
+        assert f"     1  f_string:{f_string_line}\n" in result.stdout
+        assert f"     1  expression:{expression_line}\n" in result.stdout
+        assert f"     1  multiline:{multiline_line}\n" in result.stdout
+        assert "f'Value: {value!r:>8}'" not in result.stdout
+        assert f"     1  expression:{expression_line} - message" not in result.stdout
+        assert "first\\nsecond" not in result.stdout
 
     def test_classifies_all_explicit_raise_forms(self):
         source_text = """
@@ -249,7 +248,9 @@ def reraise():
             source.write_text(source_text, encoding="utf-8")
             class_line = self._line_containing(source_text, "raise ValueError")
             empty_line = self._line_containing(source_text, "raise RuntimeError()")
-            qualified_line = self._line_containing(source_text, "raise errors.DomainError")
+            qualified_line = self._line_containing(
+                source_text, "raise errors.DomainError"
+            )
             reraise_line = next(
                 line_number
                 for line_number, line in enumerate(source_text.splitlines(), 1)
@@ -279,19 +280,19 @@ def reraise():
 
             result = self._run(log, source)
 
-        self.assertEqual(result.returncode, 1)
-        self.assertIn(
-            f"     1  raise_class:{class_line} - ValueError\n", result.stdout
+        assert result.returncode == 1
+        assert f"     1  raise_class:{class_line} - ValueError\n" in result.stdout
+        assert (
+            f"     1  raise_without_message:{empty_line} - RuntimeError\n"
+            in result.stdout
         )
-        self.assertIn(
-            f"     1  raise_without_message:{empty_line} - RuntimeError\n", result.stdout
+        assert (
+            f"     1  raise_qualified:{qualified_line} - errors.DomainError\n"
+            in result.stdout
         )
-        self.assertIn(
-            f"     1  raise_qualified:{qualified_line} - errors.DomainError\n",
-            result.stdout,
-        )
-        self.assertIn(
-            f"Unknown error source: reraise:{reraise_line} - ValueError", result.stdout
+        assert (
+            f"Unknown error source: reraise:{reraise_line} - ValueError"
+            in result.stdout
         )
 
     def test_stale_logging_location_fails(self):
@@ -316,11 +317,11 @@ def warn():
 
             result = self._run(log, source)
 
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("Stale warning source location", result.stdout)
-        self.assertIn(
-            "Failed: 1 unknown or stale valuation entries (1 warnings, 0 errors).",
-            result.stdout,
+        assert result.returncode == 1
+        assert "Stale warning source location" in result.stdout
+        assert (
+            "Failed: 1 unknown or stale valuation entries (1 warnings, 0 errors)."
+            in result.stdout
         )
 
     def test_stale_traceback_location_fails(self):
@@ -348,11 +349,11 @@ def fail():
 
             result = self._run(log, source)
 
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("Stale traceback source location", result.stdout)
-        self.assertIn(
-            "Failed: 1 unknown or stale valuation entries (0 warnings, 1 errors).",
-            result.stdout,
+        assert result.returncode == 1
+        assert "Stale traceback source location" in result.stdout
+        assert (
+            "Failed: 1 unknown or stale valuation entries (0 warnings, 1 errors)."
+            in result.stdout
         )
 
     def test_traceback_without_terminal_exception_fails(self):
@@ -380,11 +381,11 @@ def fail():
 
             result = self._run(log, source)
 
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("ERROR without terminal exception", result.stdout)
-        self.assertIn(
-            "Failed: 1 unknown or stale valuation entries (0 warnings, 1 errors).",
-            result.stdout,
+        assert result.returncode == 1
+        assert "ERROR without terminal exception" in result.stdout
+        assert (
+            "Failed: 1 unknown or stale valuation entries (0 warnings, 1 errors)."
+            in result.stdout
         )
 
     def test_ignores_traceback_without_a_valuation_frame(self):
@@ -410,8 +411,8 @@ def fail():
 
             result = self._run(log, source)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Errors from backend.valuation: 0", result.stdout)
+        assert result.returncode == 0, result.stderr
+        assert "Errors from backend.valuation: 0" in result.stdout
 
     def test_unknown_propagated_error_fails(self):
         source_text = """
@@ -441,14 +442,14 @@ def accidental_error():
 
             result = self._run(log, source)
 
-        self.assertEqual(result.returncode, 1)
-        self.assertIn(
-            f"Unknown error source: accidental_error:{error_line} - KeyError",
-            result.stdout,
+        assert result.returncode == 1
+        assert (
+            f"Unknown error source: accidental_error:{error_line} - KeyError"
+            in result.stdout
         )
-        self.assertIn(
-            "Failed: 1 unknown or stale valuation entries (0 warnings, 1 errors).",
-            result.stdout,
+        assert (
+            "Failed: 1 unknown or stale valuation entries (0 warnings, 1 errors)."
+            in result.stdout
         )
 
     def test_module_level_raise_is_a_known_error_site(self):
@@ -466,8 +467,7 @@ raise ValueError("boom")
             log.write_text(
                 "\n".join(
                     (
-                        "2026-01-01 | WARNING | "
-                        "backend.valuation:<module>:2 - warning",
+                        "2026-01-01 | WARNING | backend.valuation:<module>:2 - warning",
                         "ERROR: Exception in application",
                         "Traceback (most recent call last):",
                         f'  File "{source}", line 3, in <module>',
@@ -481,9 +481,9 @@ raise ValueError("boom")
 
             result = self._run(log, source)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("     1  <module>:2\n", result.stdout)
-        self.assertIn("     1  <module>:3 - ValueError\n", result.stdout)
+        assert result.returncode == 0, result.stderr
+        assert "     1  <module>:2\n" in result.stdout
+        assert "     1  <module>:3 - ValueError\n" in result.stdout
 
     def _run(self, log: Path, source: Path, *extra_args: str):
         return subprocess.run(
@@ -507,7 +507,3 @@ raise ValueError("boom")
             for line_number, line in enumerate(source.splitlines(), 1)
             if text in line
         )
-
-
-if __name__ == "__main__":
-    unittest.main()

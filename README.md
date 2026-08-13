@@ -14,7 +14,7 @@ Use `uv run` for project commands; do not activate `.venv` manually.
 ## Test
 
 ```sh
-uv run --locked python -m unittest discover -v
+uv run --locked pytest
 ```
 
 ## Quality checks

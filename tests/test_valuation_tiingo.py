@@ -3,12 +3,12 @@ import json
 import os
 import subprocess
 import sys
-import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from backend import valuation
 from httpx import HTTPStatusError, Request, Response
+import pytest
 
 
 def selected_sources(*names: str):
@@ -18,8 +18,17 @@ def selected_sources(*names: str):
     return tuple(source_by_name[name] for name in names)
 
 
-class TiingoValuationTests(unittest.TestCase):
-    def test_disabled_sources_do_not_require_keys_at_startup(self):
+class TestTiingoValuation:
+    @pytest.mark.parametrize(
+        ("flag", "api_key", "source"),
+        [
+            ("ENABLE_MASSIVE_FUNDAMENTALS", "MASSIVE_API_KEY", "massive"),
+            ("ENABLE_EODHD_FUNDAMENTALS", "EODHD_API_KEY", "eodhd"),
+        ],
+    )
+    def test_disabled_sources_do_not_require_keys_at_startup(
+        self, flag, api_key, source
+    ):
         project_root = Path(__file__).resolve().parents[1]
         base_env = {
             **os.environ,
@@ -31,19 +40,14 @@ class TiingoValuationTests(unittest.TestCase):
             "FROM_COINGECKO": "",
             "ENABLE_TIINGO_FUNDAMENTALS": "false",
         }
-        for flag, api_key, source in (
-            ("ENABLE_MASSIVE_FUNDAMENTALS", "MASSIVE_API_KEY", "massive"),
-            ("ENABLE_EODHD_FUNDAMENTALS", "EODHD_API_KEY", "eodhd"),
-        ):
-            with self.subTest(source=source):
-                env = {
-                    **base_env,
-                    "ENABLE_MASSIVE_FUNDAMENTALS": "true",
-                    "ENABLE_EODHD_FUNDAMENTALS": "true",
-                    flag: "false",
-                }
-                env.pop(api_key)
-                code = f"""\
+        env = {
+            **base_env,
+            "ENABLE_MASSIVE_FUNDAMENTALS": "true",
+            "ENABLE_EODHD_FUNDAMENTALS": "true",
+            flag: "false",
+        }
+        env.pop(api_key)
+        code = f"""\
 import sys
 import types
 
@@ -58,19 +62,15 @@ assert shared.{api_key} == ''
 assert '{source}' not in valuation.us_income_statement_source_order()
 assert '{source}' not in valuation.us_income_statement_source_order(include_sec=True)
 """
-                result = subprocess.run(
-                    [sys.executable, "-c", code],
-                    cwd=project_root,
-                    env=env,
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                )
-                self.assertEqual(
-                    result.returncode,
-                    0,
-                    f"{result.stdout}\n{result.stderr}",
-                )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=project_root,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
 
     def test_tiingo_defaults_to_disabled_without_environment_flag(self):
         project_root = Path(__file__).resolve().parents[1]
@@ -109,7 +109,7 @@ assert 'tiingo' not in valuation.us_income_statement_source_order(include_sec=Tr
             check=False,
         )
 
-        self.assertEqual(result.returncode, 0, f"{result.stdout}\n{result.stderr}")
+        assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
 
     def test_all_sources_enabled_at_startup_match_the_registry(self):
         project_root = Path(__file__).resolve().parents[1]
@@ -152,7 +152,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
             check=False,
         )
 
-        self.assertEqual(result.returncode, 0, f"{result.stdout}\n{result.stderr}")
+        assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
 
     def test_disabled_tiingo_is_not_fetched(self):
         with (
@@ -191,7 +191,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
                 valuation.fetch_us_income_statement_sources("HOOD", 8)
             )
 
-        self.assertEqual(set(fetched), {"fmp", "massive", "eodhd", "finnhub"})
+        assert set(fetched) == {"fmp", "massive", "eodhd", "finnhub"}
         tiingo_fetch.assert_not_awaited()
 
     def test_enabled_sources_are_fetched_in_registry_order(self):
@@ -231,10 +231,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
                 valuation.fetch_us_income_statement_sources("HOOD", 8)
             )
 
-        self.assertEqual(
-            list(fetched),
-            ["fmp", "massive", "eodhd", "finnhub", "tiingo"],
-        )
+        assert list(fetched) == ["fmp", "massive", "eodhd", "finnhub", "tiingo"]
         fmp_fetch.assert_awaited_once_with("u", "HOOD", 8)
         massive_fetch.assert_awaited_once_with("HOOD", 8)
         eodhd_fetch.assert_awaited_once_with("HOOD", 8)
@@ -265,7 +262,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
                 valuation.fetch_us_income_statement_sources("HOOD", 8)
             )
 
-        self.assertEqual(fetched, {"fmp": fmp_rows, "massive": {}})
+        assert fetched == {"fmp": fmp_rows, "massive": {}}
         exception_log.assert_called_once()
 
     def test_expected_source_errors_are_logged_as_warnings(self):
@@ -288,7 +285,6 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
 
         for error, error_summary in errors:
             with (
-                self.subTest(error=type(error).__name__),
                 patch.object(
                     valuation,
                     "fetch_fmp_income_statements",
@@ -301,7 +297,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
                     valuation.fetch_us_income_statement_source(source, "HOOD", 8)
                 )
 
-            self.assertEqual(result, ("fmp", None))
+            assert result == ("fmp", None)
             warning_log.assert_called_once_with(
                 "{} income statements unavailable for {}: {}; skipping source",
                 "FMP",
@@ -323,7 +319,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
                 new=AsyncMock(side_effect=asyncio.CancelledError),
             ),
         ):
-            with self.assertRaises(asyncio.CancelledError):
+            with pytest.raises(asyncio.CancelledError):
                 asyncio.run(valuation.fetch_us_income_statement_sources("HOOD", 8))
 
     def test_us_resolution_receives_fetched_rows(self):
@@ -345,7 +341,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
                 valuation.fetch_resolved_income_statement_quarters("u", "HOOD", 8, True)
             )
 
-        self.assertEqual(result, resolved)
+        assert result == resolved
         fetch_sources.assert_awaited_once_with("HOOD", 9)
         resolve_quarters.assert_awaited_once_with(
             "HOOD",
@@ -375,9 +371,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
             )
 
         fetch_sources.assert_awaited_once_with("HOOD", 9)
-        resolve_quarters.assert_awaited_once_with(
-            "HOOD", rows, 8, False
-        )
+        resolve_quarters.assert_awaited_once_with("HOOD", rows, 8, False)
 
     def test_disabled_massive_is_not_fetched(self):
         with (
@@ -411,7 +405,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
                 valuation.fetch_us_income_statement_sources("HOOD", 8)
             )
 
-        self.assertNotIn("massive", fetched)
+        assert "massive" not in fetched
         massive_fetch.assert_not_awaited()
 
     def test_disabled_eodhd_is_not_fetched(self):
@@ -446,7 +440,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
                 valuation.fetch_us_income_statement_sources("HOOD", 8)
             )
 
-        self.assertNotIn("eodhd", fetched)
+        assert "eodhd" not in fetched
         eodhd_fetch.assert_not_awaited()
 
     def test_source_fetch_error_redacts_request_url_and_token(self):
@@ -458,7 +452,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
             "Client error", request=request, response=Response(400, request=request)
         )
 
-        self.assertEqual(valuation.format_source_fetch_error(error), "HTTP 400")
+        assert valuation.format_source_fetch_error(error) == "HTTP 400"
 
     def test_finnhub_fetch_orders_stably_limits_and_normalizes_values(self):
         payload = {
@@ -490,22 +484,19 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
         ) as cached_get:
             rows = asyncio.run(valuation.fetch_finnhub_income_statements("HOOD", 2))
 
-        self.assertEqual(list(rows), ["2025-12-31", "2025-09-30"])
-        self.assertEqual(
-            rows,
-            {
-                "2025-12-31": {
-                    "revenue": 30_000_000,
-                    "weightedAverageShsOutDil": 4_000_000,
-                    "epsDiluted": 3.0,
-                },
-                "2025-09-30": {
-                    "revenue": 10_000_000,
-                    "weightedAverageShsOutDil": 2_000_000,
-                    "epsDiluted": 1.0,
-                },
+        assert list(rows) == ["2025-12-31", "2025-09-30"]
+        assert rows == {
+            "2025-12-31": {
+                "revenue": 30000000,
+                "weightedAverageShsOutDil": 4000000,
+                "epsDiluted": 3.0,
             },
-        )
+            "2025-09-30": {
+                "revenue": 10000000,
+                "weightedAverageShsOutDil": 2000000,
+                "epsDiluted": 1.0,
+            },
+        }
         cached_get.assert_awaited_once()
 
     def test_tiingo_fetch_uses_shared_start_date(self):
@@ -523,7 +514,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
         ):
             rows = asyncio.run(valuation.fetch_tiingo_income_statements("HOOD", 8))
 
-        self.assertEqual(rows, {})
+        assert rows == {}
         start_date.assert_called_once_with("u", 8, valuation.TIINGO_QUARTER_BUFFER)
         cached_get.assert_awaited_once_with(
             valuation.TIINGO_FUNDAMENTALS_STATEMENTS_URL.format("HOOD"),
@@ -565,16 +556,13 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
 
         rows = valuation.normalize_tiingo_income_statement_rows(statements)
 
-        self.assertEqual(
-            rows,
-            {
-                "2025-09-30": {
-                    "revenue": 100,
-                    "weightedAverageShsOutDil": 20,
-                    "epsDiluted": 1.5,
-                }
-            },
-        )
+        assert rows == {
+            "2025-09-30": {
+                "revenue": 100,
+                "weightedAverageShsOutDil": 20,
+                "epsDiluted": 1.5,
+            }
+        }
 
     def test_normalize_tiingo_income_statement_rows_keeps_eps(self):
         rows = valuation.normalize_tiingo_income_statement_rows(
@@ -596,7 +584,8 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
             ],
         )
 
-        self.assertEqual(
-            rows["2025-09-30"],
-            {"revenue": 100, "weightedAverageShsOutDil": 20, "epsDiluted": 1.5},
-        )
+        assert rows["2025-09-30"] == {
+            "revenue": 100,
+            "weightedAverageShsOutDil": 20,
+            "epsDiluted": 1.5,
+        }
