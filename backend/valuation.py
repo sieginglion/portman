@@ -1,6 +1,7 @@
 import asyncio
 import json
 import math
+import os
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import date
@@ -192,6 +193,17 @@ SEC_COMPANY_CONCEPT_URL = (
     "https://data.sec.gov/api/xbrl/companyconcept/CIK{}/us-gaap/{}.json"
 )
 FINMIND_API_URL = "https://api.finmindtrade.com/api/v4/data"
+TOKEN_TERMINAL_FINANCIAL_STATEMENT_URL = (
+    "https://api-internal.tokenterminal.com/trpc/projects.getFinancialStatement"
+)
+# The Token Terminal bearer token is copied from tt.sh. The short-lived browser
+# session JWT is read from .env so it can be refreshed locally.
+TOKEN_TERMINAL_AUTHORIZATION = "Bearer c0e5035a-64f6-4d2c-b5f6-ac1d1cb3da2f"
+TOKEN_TERMINAL_PROJECT_SLUGS = {"UNI": "uniswap"}
+TOKEN_TERMINAL_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+)
 EODHD_FUNDAMENTALS_URL = "https://eodhd.com/api/v1.1/fundamentals/{}"
 TIINGO_FUNDAMENTALS_STATEMENTS_URL = (
     "https://api.tiingo.com/tiingo/fundamentals/{}/statements"
@@ -443,6 +455,148 @@ def quarterly_start_date(
     return date_str(start.tz_localize(None))
 
 
+def token_terminal_headers(slug: str) -> dict[str, str]:
+    jwt = os.getenv("TOKEN_TERMINAL_JWT")
+    cookie = os.getenv("TOKEN_TERMINAL_COOKIE")
+    if not jwt:
+        raise ValueError("Token Terminal credentials missing: set TOKEN_TERMINAL_JWT")
+    headers = {
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.9",
+        "authorization": TOKEN_TERMINAL_AUTHORIZATION,
+        "cache-control": "no-cache",
+        "content-type": "application/json",
+        "origin": "https://tokenterminal.com",
+        "pragma": "no-cache",
+        "priority": "u=1, i",
+        "referer": (
+            f"https://tokenterminal.com/explorer/projects/{slug}/financial-statement"
+        ),
+        "sec-ch-ua": '"Not=A?Brand";v="99", "Google Chrome";v="151", '
+        '"Chromium";v="151"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"macOS"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "user-agent": TOKEN_TERMINAL_USER_AGENT,
+        "x-app-path": f"/explorer/projects/{slug}/financial-statement",
+        "x-tt-terminal-jwt": jwt,
+    }
+    if cookie:
+        headers["cookie"] = cookie
+    return headers
+
+
+async def fetch_token_terminal_financial_statement(symbol: str) -> list[dict]:
+    """Fetch the monthly Token Terminal income-statement metrics for a token."""
+    try:
+        slug = TOKEN_TERMINAL_PROJECT_SLUGS[symbol.upper()]
+    except KeyError as error:
+        raise ValueError(
+            f"Token Terminal project mapping missing for {symbol}"
+        ) from error
+    params = {
+        "batch": "1",
+        "input": json.dumps(
+            {
+                "0": {"project_slug": slug, "granularity": "month"},
+            },
+            separators=(",", ":"),
+        ),
+    }
+    text = await shared.cached_get(
+        TOKEN_TERMINAL_FINANCIAL_STATEMENT_URL,
+        params,
+        headers=token_terminal_headers(slug),
+    )
+    payload = json.loads(text)
+    try:
+        rows = payload[0]["result"]["data"]
+    except (IndexError, KeyError, TypeError) as error:
+        raise ValueError(
+            "Token Terminal financial-statement response is malformed"
+        ) from error
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise ValueError("Token Terminal financial-statement response has invalid rows")
+    return rows
+
+
+def build_token_terminal_xps_frame(
+    rows: list[dict], m: int, include_eps: bool
+) -> pd.DataFrame:
+    """Build trailing-12-month per-token fundamentals from complete months only."""
+    metric_map = {"fees": "rps"}
+    if include_eps:
+        metric_map["earnings"] = "eps"
+    tracked_metrics = [*metric_map, "token_supply_circulating"]
+    frame = pd.DataFrame(rows)
+    required_columns = {"timestamp", "metric_id", "value"}
+    if not required_columns.issubset(frame.columns):
+        raise ValueError(
+            "Token Terminal financial-statement response has no usable data"
+        )
+
+    frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce", utc=True)
+    frame["timestamp"] = frame["timestamp"].dt.tz_localize(None)
+    frame = frame.dropna(subset=["timestamp"])
+    frame = frame.loc[frame["metric_id"].isin(tracked_metrics)]
+    frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
+    frame = frame.loc[np.isfinite(frame["value"])]
+    frame = frame.pivot_table(
+        index="timestamp",
+        columns="metric_id",
+        values="value",
+        aggfunc="last",
+    ).sort_index()
+
+    incomplete_month_start = (
+        pd.Timestamp.now(tz="UTC").normalize().replace(day=1).tz_localize(None)
+    )
+    frame = frame.loc[frame.index < incomplete_month_start]
+    required_months = m + 11
+    frame = frame.tail(required_months)
+    if len(frame) != required_months:
+        raise ValueError(
+            f"need {required_months} complete Token Terminal months, found {len(frame)}"
+        )
+    expected_dates = pd.date_range(
+        end=frame.index[-1], periods=required_months, freq="MS"
+    )
+    if not frame.index.equals(expected_dates):
+        raise ValueError("Token Terminal financial statement has incomplete months")
+
+    supply = frame.get("token_supply_circulating")
+    if supply is None or supply.isna().any() or (supply <= 0).any():
+        raise ValueError(
+            "Token Terminal financial statement has missing or invalid "
+            "token_supply_circulating"
+        )
+    metric_map = {
+        metric: xps_metric
+        for metric, xps_metric in metric_map.items()
+        if metric in frame and frame[metric].notna().all()
+    }
+    if not metric_map:
+        raise ValueError(
+            "Token Terminal financial statement missing metrics: fees and earnings"
+        )
+
+    per_token = frame[list(metric_map)].div(supply, axis=0).rename(columns=metric_map)
+    per_token.index += pd.DateOffset(months=1)
+    return per_token.rolling(12).sum().iloc[11:]
+
+
+async def fetch_token_terminal_monthly_xps(
+    symbol: str, m: int, include_eps: bool
+) -> pd.DataFrame:
+    return build_token_terminal_xps_frame(
+        await fetch_token_terminal_financial_statement(symbol),
+        m,
+        include_eps,
+    )
+
+
 def pivot_finmind_taiwan_rows(rows: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if df.empty:
@@ -528,8 +682,8 @@ def normalize_finmind_taiwan_income_statement_rows(
     df["OrdinaryShare"] = fill_finmind_missing_ordinary_shares(df["OrdinaryShare"])
 
     normalized_rows: dict[str, SourceFieldValues] = {}
-    for date, row in df.iterrows():
-        timestamp = parse_timestamp(date)
+    for row_date, row in df.iterrows():
+        timestamp = parse_timestamp(row_date)
         if timestamp is None:
             continue
         ordinary_shares = row["OrdinaryShare"]
@@ -1024,11 +1178,13 @@ async def fetch_eodhd_income_statements(symbol: str, limit: int) -> dict[str, di
     balance_sheet = data.get("Financials::Balance_Sheet::quarterly", {})
 
     rows = {}
-    for date, income_row in sorted(income_statement.items(), reverse=True):
+    for income_date, income_row in sorted(income_statement.items(), reverse=True):
         if not isinstance(income_row, dict):
             continue
 
-        balance_sheet_row = select_eodhd_balance_sheet_row(date, balance_sheet) or {}
+        balance_sheet_row = (
+            select_eodhd_balance_sheet_row(income_date, balance_sheet) or {}
+        )
         diluted_shares = to_source_number(
             balance_sheet_row.get("commonStockSharesOutstanding")
         )
@@ -1044,7 +1200,7 @@ async def fetch_eodhd_income_statements(symbol: str, limit: int) -> dict[str, di
             EPS_XPS_FIELD,
             diluted_eps_from_reported_income(income_row, diluted_shares),
         )
-        rows[date] = normalized_row
+        rows[income_date] = normalized_row
         if len(rows) >= limit:
             break
     return rows
@@ -1471,8 +1627,17 @@ def build_xps_frame(
 
 
 async def fetch_xps(
-    market: Literal["j", "t", "u"], symbol: str, q: int, include_eps: bool = True
+    market: Literal["c", "j", "t", "u"],
+    symbol: str,
+    q: int,
+    include_eps: bool = True,
 ) -> pd.DataFrame:
+    if market == "c":
+        monthly_frame = await fetch_token_terminal_monthly_xps(
+            symbol, q * 3, include_eps
+        )
+        return monthly_frame.iloc[2::3]
+
     limit = q + 3
     resolved_quarters = await fetch_resolved_income_statement_quarters(
         market, symbol, limit, include_eps
@@ -1480,11 +1645,19 @@ async def fetch_xps(
     return build_xps_frame(resolved_quarters, include_eps)
 
 
-async def calc_px(market: Literal["j", "t", "u"], symbol: str, q: int) -> pd.DataFrame:
+async def calc_px(
+    market: Literal["c", "j", "t", "u"], symbol: str, q: int
+) -> pd.DataFrame:
+    xps_task = (
+        fetch_token_terminal_monthly_xps(symbol, q * 3 + 1, True)
+        if market == "c"
+        else fetch_xps(market, symbol, q + EXTRA_Q)
+    )
     prices, xps = await asyncio.gather(
         shared.get_prices(market, symbol, 91 * q, False),
-        fetch_xps(market, symbol, q + EXTRA_Q),
+        xps_task,
     )
+    xps = xps.reindex(columns=["rps", "eps"])
     index = pd.date_range(
         end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date(),
         periods=len(prices),
