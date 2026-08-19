@@ -136,7 +136,7 @@ def us_income_statement_source_order(
 BASE_XPS_FIELDS = ("revenue", "weightedAverageShsOutDil")
 EPS_XPS_FIELD = "epsDiluted"
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
-SERIES_FALLBACK_FIELDS = ("revenue", EPS_XPS_FIELD)
+XPS_COLUMNS = ("rps", "eps")
 
 
 def xps_field_map(shares_field: str, eps_field: str) -> dict[str, str]:
@@ -527,9 +527,9 @@ async def fetch_token_terminal_financial_statement(symbol: str) -> list[dict]:
 
 
 def build_token_terminal_xps_frame(
-    rows: list[dict], m: int, include_eps: bool
+    rows: list[dict], periods: int, include_eps: bool
 ) -> pd.DataFrame:
-    """Build trailing-12-month per-token fundamentals from complete months only."""
+    """Map Token Terminal rows to dated monthly RPS/EPS inputs."""
     metric_map = {"fees": "rps"}
     if include_eps:
         metric_map["earnings"] = "eps"
@@ -537,9 +537,7 @@ def build_token_terminal_xps_frame(
     frame = pd.DataFrame(rows)
     required_columns = {"timestamp", "metric_id", "value"}
     if not required_columns.issubset(frame.columns):
-        raise ValueError(
-            "Token Terminal financial-statement response has no usable data"
-        )
+        return pd.DataFrame(columns=XPS_COLUMNS, dtype=float)
 
     frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce", utc=True)
     frame["timestamp"] = frame["timestamp"].dt.tz_localize(None)
@@ -557,48 +555,30 @@ def build_token_terminal_xps_frame(
     incomplete_month_start = (
         pd.Timestamp.now(tz="UTC").normalize().replace(day=1).tz_localize(None)
     )
-    frame = frame.loc[frame.index < incomplete_month_start]
-    required_months = m + 11
-    frame = frame.tail(required_months)
-    if len(frame) != required_months:
-        raise ValueError(
-            f"need {required_months} complete Token Terminal months, found {len(frame)}"
-        )
+    frame = frame.loc[frame.index < incomplete_month_start].tail(periods)
+    if frame.empty:
+        return pd.DataFrame(columns=XPS_COLUMNS, dtype=float)
     expected_dates = pd.date_range(
-        end=frame.index[-1], periods=required_months, freq="MS"
+        end=frame.index[-1], periods=periods, freq="MS"
     )
-    if not frame.index.equals(expected_dates):
-        raise ValueError("Token Terminal financial statement has incomplete months")
-
-    supply = frame.get("token_supply_circulating")
-    if supply is None or supply.isna().any() or (supply <= 0).any():
-        raise ValueError(
-            "Token Terminal financial statement has missing or invalid "
-            "token_supply_circulating"
-        )
-    metric_map = {
-        metric: xps_metric
-        for metric, xps_metric in metric_map.items()
-        if metric in frame and frame[metric].notna().all()
-    }
-    if not metric_map:
-        raise ValueError(
-            "Token Terminal financial statement missing metrics: fees and earnings"
-        )
-
-    per_token = frame[list(metric_map)].div(supply, axis=0).rename(columns=metric_map)
+    frame = frame.reindex(expected_dates)
+    supply = frame.get(
+        "token_supply_circulating", pd.Series(np.nan, index=frame.index)
+    )
+    supply = supply.where(supply > 0)
+    per_token = frame.reindex(columns=metric_map).div(supply, axis=0)
+    per_token = per_token.rename(columns=metric_map).reindex(columns=XPS_COLUMNS)
     per_token.index += pd.DateOffset(months=1)
-    return per_token.rolling(12).sum().iloc[11:]
+    return per_token
 
 
 async def fetch_token_terminal_monthly_xps(
     symbol: str, m: int, include_eps: bool
 ) -> pd.DataFrame:
-    return build_token_terminal_xps_frame(
-        await fetch_token_terminal_financial_statement(symbol),
-        m,
-        include_eps,
+    inputs = build_token_terminal_xps_frame(
+        await fetch_token_terminal_financial_statement(symbol), m + 11, include_eps
     )
+    return complete_and_roll_xps(inputs, 12)
 
 
 def pivot_finmind_taiwan_rows(rows: list[dict]) -> pd.DataFrame:
@@ -618,46 +598,6 @@ def pivot_finmind_taiwan_rows(rows: list[dict]) -> pd.DataFrame:
     ).sort_index()
 
 
-def fill_finmind_missing_ordinary_shares(shares: pd.Series) -> pd.Series:
-    """Fill isolated FinMind balance-sheet gaps used by income-statement rows."""
-    shares = shares.where(shares > 0)
-    missing = shares.isna()
-    if not missing.any():
-        return shares
-
-    known_shares = shares.dropna()
-    if known_shares.empty:
-        return shares
-
-    gap_groups = missing.ne(missing.shift()).cumsum()
-    largest_gap = int(missing.groupby(gap_groups).sum().max())
-    if largest_gap > 1:
-        raise ValueError(
-            "FinMind Taiwan balance sheet has "
-            f"{largest_gap} consecutive missing OrdinaryShare values"
-        )
-
-    # A one-quarter interior gap is interpolated. Endpoint gaps use the latest
-    # reported share count because there is no value on both sides to interpolate.
-    patched_shares = shares.interpolate(limit_area="inside").fillna(
-        known_shares.iloc[-1]
-    )
-    missing_indexes = np.flatnonzero(missing.to_numpy())
-    for missing_index in missing_indexes:
-        method = (
-            "linear interpolation"
-            if 0 < missing_index < len(shares) - 1
-            else "latest reported value"
-        )
-        logger.warning(
-            "!!! PATCHING FINMIND OrdinaryShare gap: date={} method={} patched_value={} !!!",
-            shares.index[missing_index],
-            method,
-            patched_shares.iloc[missing_index],
-        )
-    return patched_shares
-
-
 def normalize_finmind_taiwan_income_statement_rows(
     financial_statement_rows: list[dict],
     balance_sheet_rows: list[dict],
@@ -667,23 +607,9 @@ def normalize_finmind_taiwan_income_statement_rows(
     if financial_statement.empty:
         return {}
 
-    if "Revenue" not in financial_statement:
-        logger.warning(
-            "FinMind Taiwan financial statement data missing fields {}; skipping rows",
-            ["Revenue"],
-        )
-        return {}
-    if "OrdinaryShare" not in balance_sheet:
-        logger.warning(
-            "FinMind Taiwan balance sheet data missing OrdinaryShare; "
-            "leaving share counts empty"
-        )
-
     df = financial_statement.reindex(columns=["Revenue", "EPS"]).join(
         balance_sheet.reindex(columns=["OrdinaryShare"]), how="left"
     )
-    df = df.dropna(subset=["Revenue"])
-    df["OrdinaryShare"] = fill_finmind_missing_ordinary_shares(df["OrdinaryShare"])
 
     normalized_rows: dict[str, SourceFieldValues] = {}
     for row_date, row in df.iterrows():
@@ -703,32 +629,6 @@ def normalize_finmind_taiwan_income_statement_rows(
         )
         normalized_rows[date_str(timestamp)] = normalized_row
     return normalized_rows
-
-
-def row_has_required_xps_fields(row: dict, required_fields: list[str]) -> bool:
-    return all(has_source_field_value(row.get(field)) for field in required_fields)
-
-
-def select_latest_clean_required_quarters(
-    rows: dict[str, dict],
-    limit: int,
-    required_fields: list[str],
-    *,
-    symbol: str | None = None,
-) -> dict[str, dict]:
-    dates = sorted(rows)
-    if dates and not row_has_required_xps_fields(rows[dates[-1]], required_fields):
-        rows = {date: rows[date] for date in dates[:-1]}
-
-    selected = select_latest_required_quarters(rows, limit, symbol=symbol)
-    dirty_dates = [
-        date
-        for date, row in selected.items()
-        if not row_has_required_xps_fields(row, required_fields)
-    ]
-    if dirty_dates:
-        raise ValueError(f"incomplete quarters: {dirty_dates}")
-    return selected
 
 
 async def fetch_finmind_taiwan_rows(
@@ -757,7 +657,6 @@ async def fetch_finmind_taiwan_income_statements(
         FINMIND_TAIWAN_QUARTER_BUFFER,
         FINMIND_TAIWAN_MONTH_BUFFER,
     )
-    required_fields = required_xps_fields(require_eps)
     financial_statement_rows, balance_sheet_rows = await asyncio.gather(
         fetch_finmind_taiwan_rows("TaiwanStockFinancialStatements", symbol, start_date),
         fetch_finmind_taiwan_rows("TaiwanStockBalanceSheet", symbol, start_date),
@@ -766,9 +665,7 @@ async def fetch_finmind_taiwan_income_statements(
         financial_statement_rows,
         balance_sheet_rows,
     )
-    return select_latest_clean_required_quarters(
-        rows, limit, required_fields, symbol=symbol
-    )
+    return select_latest_required_quarters(rows, limit, symbol=symbol)
 
 
 def build_aligned_source_quarters(
@@ -1475,42 +1372,6 @@ async def add_sec_reference_values(
             quarter.fields.setdefault(field_name, {})["sec"] = value
 
 
-def drop_incomplete_latest_us_quarter(
-    symbol: str,
-    aligned_quarters: AlignedQuarters,
-    required_fields: list[str],
-) -> AlignedQuarters:
-    quarter_dates = list(aligned_quarters)
-    if not quarter_dates:
-        return aligned_quarters
-
-    latest_date = quarter_dates[-1]
-    latest_quarter = aligned_quarters[latest_date]
-    insufficient_fields = [
-        field
-        for field in required_fields
-        if len(usable_source_values(latest_quarter.fields.get(field, {}))) < 2
-    ]
-
-    if not insufficient_fields:
-        return aligned_quarters
-
-    mismatch_blocks = [
-        format_source_field_block(
-            field, latest_quarter.fields.get(field, {}), latest_date
-        )
-        for field in required_fields
-        if field in insufficient_fields
-    ]
-    logger.warning(
-        "Dropping latest {} quarter {}: fewer than 2 usable sources\n{}",
-        symbol,
-        latest_date,
-        "\n".join(mismatch_blocks),
-    )
-    return {date: aligned_quarters[date] for date in quarter_dates[:-1]}
-
-
 def resolve_us_quarter_consensus(
     symbol: str,
     anchor_date: str,
@@ -1531,10 +1392,7 @@ def resolve_us_quarter_consensus(
             field_name,
             format_source_field_block(field_name, source_values, anchor_date),
         )
-        if field_name in SERIES_FALLBACK_FIELDS:
-            resolved_quarter[field_name] = None
-            continue
-        raise ValueError(f"no consensus for {symbol} {anchor_date} field={field_name}")
+        resolved_quarter[field_name] = None
     return resolved_quarter
 
 
@@ -1558,12 +1416,9 @@ async def resolve_us_income_statement_quarters(
             required_fields,
         )
 
-    # 3. Ignore an under-supported newest quarter, then retain the requested window.
-    eligible_quarters = drop_incomplete_latest_us_quarter(
-        symbol, aligned_quarters, required_fields
-    )
+    # 3. Retain the requested window. Metric completeness is checked centrally.
     selected_quarters = select_latest_required_quarters(
-        eligible_quarters, limit, symbol=symbol, quarter_label="aligned quarters"
+        aligned_quarters, limit, symbol=symbol, quarter_label="aligned quarters"
     )
 
     # 4. Record diagnostics for the same quarters that will be returned.
@@ -1577,22 +1432,6 @@ async def resolve_us_income_statement_quarters(
         )
         for anchor_date, quarter in selected_quarters.items()
     }
-
-    # 6. Revenue and EPS are only useful as complete series. If either field lacks
-    # consensus in one selected quarter, disable it for every returned quarter.
-    for field_name in SERIES_FALLBACK_FIELDS:
-        if field_name not in required_fields or not any(
-            quarter[field_name] is None for quarter in resolved_quarters.values()
-        ):
-            continue
-        for quarter in resolved_quarters.values():
-            quarter[field_name] = None
-        logger.warning(
-            "Disabled {} for the entire {} returned series: "
-            "no consensus in at least one selected quarter",
-            field_name,
-            symbol,
-        )
 
     return resolved_quarters
 
@@ -1621,18 +1460,38 @@ async def fetch_resolved_income_statement_quarters(
     )
 
 
+def build_quarterly_xps_inputs(
+    resolved_quarters: ResolvedQuarters, include_eps: bool
+) -> pd.DataFrame:
+    """Derive dated quarterly RPS/EPS inputs without validating completeness."""
+    df = pd.DataFrame.from_dict(resolved_quarters, orient="index")
+    df.index = pd.to_datetime(df.index) + pd.Timedelta(days=1)
+    df = df.reindex(columns=required_xps_fields(include_eps))
+    inputs = pd.DataFrame(index=df.index)
+    inputs["rps"] = df["revenue"] / df["weightedAverageShsOutDil"]
+    inputs["eps"] = df[EPS_XPS_FIELD] if include_eps else np.nan
+    return inputs.reindex(columns=XPS_COLUMNS)
+
+
+def complete_and_roll_xps(xps: pd.DataFrame, window: int) -> pd.DataFrame:
+    """Keep complete RPS/EPS columns, then apply the existing rolling TTM logic."""
+    complete = (
+        xps.reindex(columns=XPS_COLUMNS)
+        .sort_index()
+        .dropna(axis="columns", how="any")
+    )
+    if complete.empty:
+        raise ValueError("neither a complete RPS nor EPS series is available")
+    return complete.rolling(window).sum().iloc[window - 1 :]
+
+
 def build_xps_frame(
     resolved_quarters: ResolvedQuarters, include_eps: bool
 ) -> pd.DataFrame:
-    df = pd.DataFrame.from_dict(resolved_quarters, orient="index")
-    df.index = pd.to_datetime(df.index) + pd.Timedelta(days=1)
-    frame = pd.DataFrame(
-        {
-            "rps": df["revenue"] / df["weightedAverageShsOutDil"],
-            **({"eps": df["epsDiluted"]} if include_eps else {}),
-        }
+    """Build quarterly inputs, then use the shared completeness/TTM path."""
+    return complete_and_roll_xps(
+        build_quarterly_xps_inputs(resolved_quarters, include_eps), 4
     )
-    return frame.rolling(4).sum().iloc[3:]
 
 
 async def fetch_xps(

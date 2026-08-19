@@ -106,18 +106,6 @@ class TestSecValuation:
             ("finnhub", 102),
         ]
 
-    def test_latest_quarter_drops_nonfinite_second_source(self):
-        quarters = {
-            "2025-03-31": aligned_quarter(
-                {"revenue": {"fmp": 100, "finnhub": math.inf}}
-            )
-        }
-
-        assert (
-            valuation.drop_incomplete_latest_us_quarter("AAPL", quarters, ["revenue"])
-            == {}
-        )
-
     def test_configured_source_order_drives_alignment_and_consensus(self):
         source_rows = {
             "fmp": {"2025-03-31": {"revenue": 100}},
@@ -319,7 +307,7 @@ class TestSecValuation:
         assert diagnostics["coverage"]["epsDiluted"] == {"fmp": 0, "finnhub": 0}
         assert diagnostics["agreement"]["revenue"] == {"fmp:finnhub": 1}
 
-    def test_diagnostics_skips_request_that_falls_short_after_latest_drop(self):
+    def test_diagnostics_records_selected_quarters_without_completeness_filter(self):
         def row(revenue):
             return {
                 "revenue": revenue,
@@ -344,16 +332,26 @@ class TestSecValuation:
         with (
             patch.object(valuation, "_xps_diagnostics", diagnostics_state),
             patch.object(valuation, "add_sec_reference_values", new=AsyncMock()),
-            pytest.raises(ValueError),
         ):
-            asyncio.run(
+            resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
                     "SPCX", source_rows, limit=4, include_eps=True
                 )
             )
 
-        assert diagnostics_state.seen == set()
-        assert diagnostics_state.coverage["revenue"]["finnhub"] == 0
+        assert list(resolved) == [
+            "2025-03-31",
+            "2025-06-30",
+            "2025-09-30",
+            "2025-12-31",
+        ]
+        assert diagnostics_state.seen == {
+            ("SPCX", "2025-03-31"),
+            ("SPCX", "2025-06-30"),
+            ("SPCX", "2025-09-30"),
+            ("SPCX", "2025-12-31"),
+        }
+        assert diagnostics_state.coverage["revenue"]["finnhub"] == 3
 
     def test_resolve_us_income_statement_quarters_accepts_source_rows(self):
         source_rows = {
@@ -461,7 +459,7 @@ class TestSecValuation:
             "2025-03-31": {"revenue": 100, "weightedAverageShsOutDil": 10}
         }
 
-    def test_resolve_us_income_statement_quarters_drops_latest_single_source_row(
+    def test_resolve_us_income_statement_quarters_keeps_latest_single_source_row(
         self,
     ):
         source_rows = {
@@ -500,10 +498,10 @@ class TestSecValuation:
 
         add_sec_values.assert_awaited_once()
         assert resolved == {
-            "2025-03-31": {
-                "revenue": 100,
-                "weightedAverageShsOutDil": 10,
-                "epsDiluted": 1,
+            "2025-06-30": {
+                "revenue": None,
+                "weightedAverageShsOutDil": None,
+                "epsDiluted": None,
             }
         }
 
@@ -589,7 +587,7 @@ class TestSecValuation:
         assert list(resolved) == ["2025-06-30"]
         assert diagnostics_state.seen == {("AAPL", "2025-06-30")}
 
-    def test_revenue_consensus_failure_disables_entire_selected_series(self):
+    def test_revenue_consensus_failure_stays_in_its_quarter(self):
         source_rows = {
             "fmp": {
                 "2025-03-31": {
@@ -632,7 +630,7 @@ class TestSecValuation:
                 )
             )
 
-        assert [quarter["revenue"] for quarter in resolved.values()] == [None, None]
+        assert [quarter["revenue"] for quarter in resolved.values()] == [100, None]
         assert [
             quarter["weightedAverageShsOutDil"] for quarter in resolved.values()
         ] == [10, 10]
@@ -644,12 +642,8 @@ class TestSecValuation:
         assert "FMP      date=2025-06-30 value=100" in failure_log
         assert "Finnhub  date=2025-06-30 value=120" in failure_log
         assert "SEC      date=2025-06-30 value=missing" in failure_log
-        assert any(
-            "Disabled revenue for the entire AAPL returned series" in log
-            for log in rendered_logs
-        )
 
-    def test_eps_consensus_failure_disables_entire_selected_series(self):
+    def test_eps_consensus_failure_stays_in_its_quarter(self):
         source_rows = {
             "fmp": {
                 "2025-03-31": {
@@ -692,7 +686,7 @@ class TestSecValuation:
                 )
             )
 
-        assert [quarter["epsDiluted"] for quarter in resolved.values()] == [None, None]
+        assert [quarter["epsDiluted"] for quarter in resolved.values()] == [1, None]
         assert [quarter["revenue"] for quarter in resolved.values()] == [100, 110]
         rendered_logs = [
             call.args[0].format(*call.args[1:]) for call in warning.call_args_list
@@ -702,12 +696,8 @@ class TestSecValuation:
         assert "FMP      date=2025-06-30 value=1" in failure_log
         assert "Finnhub  date=2025-06-30 value=2" in failure_log
         assert "SEC      date=2025-06-30 value=missing" in failure_log
-        assert any(
-            "Disabled epsDiluted for the entire MSFT returned series" in log
-            for log in rendered_logs
-        )
 
-    def test_diluted_share_consensus_failure_remains_fatal(self):
+    def test_diluted_share_consensus_failure_keeps_eps(self):
         source_rows = {
             "fmp": {
                 "2025-03-31": {
@@ -733,16 +723,20 @@ class TestSecValuation:
             ),
             patch.object(valuation, "add_sec_reference_values", new=AsyncMock()),
             patch.object(valuation.logger, "warning") as warning,
-            pytest.raises(
-                ValueError,
-                match=r"no consensus for AAPL 2025-03-31 field=weightedAverageShsOutDil",
-            ),
         ):
-            asyncio.run(
+            resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
                     "AAPL", source_rows, limit=1, include_eps=True
                 )
             )
+
+        assert resolved == {
+            "2025-03-31": {
+                "revenue": 100,
+                "weightedAverageShsOutDil": None,
+                "epsDiluted": 1,
+            }
+        }
 
         rendered_logs = [
             call.args[0].format(*call.args[1:]) for call in warning.call_args_list

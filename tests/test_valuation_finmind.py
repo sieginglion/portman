@@ -6,6 +6,26 @@ import pytest
 
 
 class TestFinMindValuation:
+    def test_complete_and_roll_xps_keeps_each_complete_column(self):
+        xps = valuation.pd.DataFrame(
+            {
+                "rps": [1.0, 2.0, 3.0, 4.0],
+                "eps": [1.0, None, 3.0, 4.0],
+            },
+            index=valuation.pd.date_range("2025-01-01", periods=4, freq="QS"),
+        )
+
+        result = valuation.complete_and_roll_xps(xps, 4)
+
+        assert result.columns.tolist() == ["rps"]
+        assert result["rps"].tolist() == [10.0]
+
+    def test_complete_and_roll_xps_rejects_when_neither_column_is_complete(self):
+        xps = valuation.pd.DataFrame({"rps": [1.0, None], "eps": [None, 1.0]})
+
+        with pytest.raises(ValueError, match="neither a complete"):
+            valuation.complete_and_roll_xps(xps, 2)
+
     def test_fetch_finmind_taiwan_rows_uses_bearer_authentication(self):
         cached_get = AsyncMock(return_value='{"data": [{"type": "EPS"}]}')
 
@@ -132,6 +152,35 @@ class TestFinMindValuation:
         ]
         assert without_eps["rps"].tolist() == [41.0, 41.0]
 
+    def test_build_xps_frame_keeps_each_complete_metric_independently(self):
+        quarters = {
+            "2025-03-31": {
+                "revenue": 100,
+                "weightedAverageShsOutDil": None,
+                "epsDiluted": 1.0,
+            },
+            "2025-06-30": {
+                "revenue": 110,
+                "weightedAverageShsOutDil": None,
+                "epsDiluted": 1.1,
+            },
+            "2025-09-30": {
+                "revenue": 120,
+                "weightedAverageShsOutDil": None,
+                "epsDiluted": 1.2,
+            },
+            "2025-12-31": {
+                "revenue": 130,
+                "weightedAverageShsOutDil": None,
+                "epsDiluted": 1.3,
+            },
+        }
+
+        frame = valuation.build_xps_frame(quarters, include_eps=True)
+
+        assert frame.columns.tolist() == ["eps"]
+        assert frame["eps"].tolist() == [4.6]
+
     def test_calc_px_allows_rps_with_insufficient_initial_coverage(self):
         prices = [20.0, 21.0, 22.0, 23.0]
         xps = valuation.pd.DataFrame(
@@ -236,13 +285,19 @@ class TestFinMindValuation:
             }
         }
 
-    def test_normalize_skips_rows_without_revenue(self):
+    def test_normalize_keeps_eps_only_rows_for_central_validation(self):
         rows = valuation.normalize_finmind_taiwan_income_statement_rows(
             [{"date": "2025-03-31", "type": "EPS", "value": 1.5}],
             [],
         )
 
-        assert rows == {}
+        assert rows == {
+            "2025-03-31": {
+                "revenue": None,
+                "weightedAverageShsOutDil": None,
+                "epsDiluted": 1.5,
+            }
+        }
 
     def test_normalize_ignores_balance_sheet_only_dates(self):
         rows = valuation.normalize_finmind_taiwan_income_statement_rows(
@@ -264,117 +319,21 @@ class TestFinMindValuation:
             }
         }
 
-    def test_normalize_interpolates_one_missing_balance_sheet_quarter(self):
-        with patch.object(valuation.logger, "warning") as warning:
-            rows = valuation.normalize_finmind_taiwan_income_statement_rows(
-                [
-                    {"date": "2025-03-31", "type": "Revenue", "value": 100},
-                    {"date": "2025-06-30", "type": "Revenue", "value": 110},
-                    {"date": "2025-09-30", "type": "Revenue", "value": 120},
-                ],
-                [
-                    {"date": "2025-03-31", "type": "OrdinaryShare", "value": 200},
-                    {"date": "2025-09-30", "type": "OrdinaryShare", "value": 400},
-                ],
-            )
-
-        assert rows["2025-06-30"]["weightedAverageShsOutDil"] == 30
-        warning.assert_called_once()
-        assert "!!! PATCHING FINMIND" in warning.call_args.args[0]
-        assert warning.call_args.args[1:3] == ("2025-06-30", "linear interpolation")
-
-    def test_normalize_fills_endpoint_balance_sheet_gaps_with_latest_value(self):
-        with patch.object(valuation.logger, "warning") as warning:
-            rows = valuation.normalize_finmind_taiwan_income_statement_rows(
-                [
-                    {"date": "2025-03-31", "type": "Revenue", "value": 100},
-                    {"date": "2025-06-30", "type": "Revenue", "value": 110},
-                    {"date": "2025-09-30", "type": "Revenue", "value": 120},
-                ],
-                [
-                    {"date": "2025-06-30", "type": "OrdinaryShare", "value": 200},
-                ],
-            )
+    def test_normalize_leaves_missing_shares_for_central_validation(self):
+        rows = valuation.normalize_finmind_taiwan_income_statement_rows(
+            [
+                {"date": "2025-03-31", "type": "Revenue", "value": 100},
+                {"date": "2025-06-30", "type": "Revenue", "value": 110},
+                {"date": "2025-09-30", "type": "Revenue", "value": 120},
+            ],
+            [{"date": "2025-06-30", "type": "OrdinaryShare", "value": 200}],
+        )
 
         assert [row["weightedAverageShsOutDil"] for row in rows.values()] == [
+            None,
             20,
-            20,
-            20,
+            None,
         ]
-        warning.assert_has_calls(
-            [
-                call(
-                    "!!! PATCHING FINMIND OrdinaryShare gap: "
-                    "date={} method={} patched_value={} !!!",
-                    "2025-03-31",
-                    "latest reported value",
-                    200.0,
-                ),
-                call(
-                    "!!! PATCHING FINMIND OrdinaryShare gap: "
-                    "date={} method={} patched_value={} !!!",
-                    "2025-09-30",
-                    "latest reported value",
-                    200.0,
-                ),
-            ]
-        )
-        assert warning.call_count == 2
-
-    def test_normalize_rejects_multiple_missing_balance_sheet_quarters(self):
-        with patch.object(valuation.logger, "warning") as warning:
-            with pytest.raises(
-                ValueError, match=r"2 consecutive missing OrdinaryShare values"
-            ):
-                valuation.normalize_finmind_taiwan_income_statement_rows(
-                    [
-                        {"date": "2025-03-31", "type": "Revenue", "value": 100},
-                        {"date": "2025-06-30", "type": "Revenue", "value": 110},
-                        {"date": "2025-09-30", "type": "Revenue", "value": 120},
-                        {"date": "2025-12-31", "type": "Revenue", "value": 130},
-                    ],
-                    [
-                        {
-                            "date": "2025-03-31",
-                            "type": "OrdinaryShare",
-                            "value": 200,
-                        },
-                        {
-                            "date": "2025-12-31",
-                            "type": "OrdinaryShare",
-                            "value": 400,
-                        },
-                    ],
-                )
-
-        warning.assert_not_called()
-
-    @pytest.mark.parametrize(
-        "reported_dates",
-        [("2025-09-30", "2025-12-31"), ("2025-03-31", "2025-06-30")],
-    )
-    def test_normalize_rejects_consecutive_endpoint_balance_sheet_gaps(
-        self, reported_dates
-    ):
-        financial_rows = [
-            {"date": date, "type": "Revenue", "value": value}
-            for date, value in [
-                ("2025-03-31", 100),
-                ("2025-06-30", 110),
-                ("2025-09-30", 120),
-                ("2025-12-31", 130),
-            ]
-        ]
-        balance_sheet_rows = [
-            {"date": date, "type": "OrdinaryShare", "value": 200}
-            for date in reported_dates
-        ]
-        with pytest.raises(
-            ValueError, match=r"2 consecutive missing OrdinaryShare values"
-        ):
-            valuation.normalize_finmind_taiwan_income_statement_rows(
-                financial_rows, balance_sheet_rows
-            )
 
     def test_fetch_derives_shares_from_finmind_balance_sheet(self):
         finmind_financial_rows = [
@@ -452,7 +411,7 @@ class TestFinMindValuation:
             }
         }
 
-    def test_fetch_drops_latest_quarter_missing_required_eps(self):
+    def test_fetch_keeps_latest_quarter_when_rps_is_complete(self):
         financial_rows = [
             {"date": "2025-03-31", "type": "Revenue", "value": 100},
             {"date": "2025-03-31", "type": "EPS", "value": 1.5},
@@ -473,7 +432,7 @@ class TestFinMindValuation:
                 )
             )
 
-        assert list(rows) == ["2025-03-31"]
+        assert list(rows) == ["2025-06-30"]
 
     def test_fetch_keeps_latest_quarter_when_eps_is_not_required(self):
         financial_rows = [
@@ -498,7 +457,7 @@ class TestFinMindValuation:
 
         assert list(rows) == ["2025-06-30"]
 
-    def test_select_latest_clean_required_quarters_rejects_older_incomplete_rows(self):
+    def test_select_latest_required_quarters_does_not_validate_metrics(self):
         rows = {
             "2025-03-31": {
                 "revenue": 100,
@@ -517,14 +476,11 @@ class TestFinMindValuation:
             },
         }
 
-        with pytest.raises(ValueError, match=r"incomplete quarters: \['2025-06-30'\]"):
-            valuation.select_latest_clean_required_quarters(
-                rows, 2, valuation.required_xps_fields(True)
-            )
+        selected = valuation.select_latest_required_quarters(rows, 2)
 
-    def test_select_latest_clean_required_quarters_fails_when_latest_drop_leaves_too_few(
-        self,
-    ):
+        assert list(selected) == ["2025-06-30", "2025-09-30"]
+
+    def test_select_latest_required_quarters_keeps_eps_only_latest_row(self):
         rows = {
             "2025-03-31": {
                 "revenue": 100,
@@ -533,7 +489,6 @@ class TestFinMindValuation:
             }
         }
 
-        with pytest.raises(ValueError, match=r"need 1 quarters, found 0"):
-            valuation.select_latest_clean_required_quarters(
-                rows, 1, valuation.required_xps_fields(True)
-            )
+        selected = valuation.select_latest_required_quarters(rows, 1)
+
+        assert selected == rows
