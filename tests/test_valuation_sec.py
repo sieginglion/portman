@@ -1338,16 +1338,16 @@ class TestSecValuation:
             "2025-09-30": valuation.AlignedQuarter(),
         }
         aligned_quarters["2025-03-31"].source_periods["fmp"] = [
-            ("2025-03-31", {"quarter": "Q1"}),
+            valuation.SourcePeriod("2025-03-31", {"quarter": "Q1"}),
         ]
         aligned_quarters["2025-06-30"].source_periods.update(
             {
-                "fmp": [("2025-06-29", {"quarter": "Q2"})],
-                "massive": [("2025-06-30", {"quarter": 3})],
+                "fmp": [valuation.SourcePeriod("2025-06-29", {"quarter": "Q2"})],
+                "massive": [valuation.SourcePeriod("2025-06-30", {"quarter": 3})],
             }
         )
         aligned_quarters["2025-09-30"].source_periods["massive"] = [
-            ("2025-09-30", {"quarter": 3}),
+            valuation.SourcePeriod("2025-09-30", {"quarter": 3}),
         ]
 
         metadata = valuation.build_sec_quarter_metadata(aligned_quarters)

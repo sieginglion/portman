@@ -42,12 +42,20 @@ type SecQ4ValueKind = Literal["flow", "average"]
 type SecFiscalQuarter = Literal["Q1", "Q2", "Q3", "Q4"]
 
 
+@dataclass(frozen=True)
+class SourcePeriod:
+    """A provider row and the period-end date it reported."""
+
+    date: str
+    row: IncomeStatementRow
+
+
 @dataclass
 class AlignedQuarter:
     """Aligned field values plus source-period metadata for SEC lookup."""
 
     fields: dict[str, SourceFieldValues] = field(default_factory=dict)
-    source_periods: dict[str, list[tuple[str, IncomeStatementRow]]] = field(
+    source_periods: dict[str, list[SourcePeriod]] = field(
         default_factory=dict
     )
 
@@ -342,7 +350,9 @@ def align_source_rows(
         quarter = aligned_quarters[quarter_key]
         # Retain every matching row: SEC metadata uses the first one, while CIK
         # lookup may need a later row with a usable CIK.
-        quarter.source_periods.setdefault(source_name, []).append((source_date, row))
+        quarter.source_periods.setdefault(source_name, []).append(
+            SourcePeriod(date=source_date, row=row)
+        )
         for field_name in ALL_XPS_FIELDS:
             if field_name not in row:
                 continue
@@ -1268,7 +1278,7 @@ async def fetch_us_income_statement_sources(
 
 def iter_sec_metadata_periods(
     aligned_quarters: AlignedQuarters,
-) -> Iterator[tuple[str, list[tuple[str, IncomeStatementRow]]]]:
+) -> Iterator[tuple[str, list[SourcePeriod]]]:
     for source_name in SEC_METADATA_SOURCES:
         for quarter_key, quarter in aligned_quarters.items():
             source_periods = quarter.source_periods.get(source_name, [])
@@ -1280,8 +1290,8 @@ def select_sec_cik(aligned_quarters: AlignedQuarters) -> str | None:
     # TODO: Revisit CIK source/date ordering. This currently prefers any FMP CIK
     # over Massive, independently of the source row chosen for quarter metadata.
     for _, source_periods in iter_sec_metadata_periods(aligned_quarters):
-        for _, row in source_periods:
-            cik = format_sec_cik(row.get("cik"))
+        for source_period in source_periods:
+            cik = format_sec_cik(source_period.row.get("cik"))
             if cik is not None:
                 return cik
     return None
@@ -1294,11 +1304,11 @@ def build_sec_quarter_metadata(
     for quarter_key, source_periods in iter_sec_metadata_periods(aligned_quarters):
         if quarter_key in metadata:
             continue
-        source_date, row = source_periods[0]
-        period = normalize_fiscal_quarter(row.get("quarter"))
+        source_period = source_periods[0]
+        period = normalize_fiscal_quarter(source_period.row.get("quarter"))
         if period is not None:
             metadata[quarter_key] = SecQuarterMetadata(
-                date=source_date,
+                date=source_period.date,
                 period=period,
             )
     return metadata
