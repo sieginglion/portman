@@ -205,7 +205,9 @@ TOKEN_TERMINAL_FINANCIAL_STATEMENT_URL = (
 # The Token Terminal bearer token is copied from tt.sh. The short-lived browser
 # session JWT is read from .env so it can be refreshed locally.
 TOKEN_TERMINAL_AUTHORIZATION = "Bearer c0e5035a-64f6-4d2c-b5f6-ac1d1cb3da2f"
-TOKEN_TERMINAL_PROJECT_SLUGS = {"UNI": "uniswap"}
+TOKEN_TERMINAL_PROJECT_SLUGS: dict[str, str] = json.loads(
+    os.getenv("TOKEN_TERMINAL_PROJECT_SLUGS", '{"UNI":"uniswap"}')
+)
 TOKEN_TERMINAL_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
