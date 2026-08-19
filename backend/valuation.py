@@ -1421,8 +1421,8 @@ async def resolve_us_income_statement_quarters(
         aligned_quarters, limit, symbol=symbol, quarter_label="aligned quarters"
     )
 
-    # 4. Record diagnostics for the same quarters that will be returned.
-    if include_eps:
+    # 4. Optionally record diagnostics for the same quarters that will be returned.
+    if include_eps and shared.ENABLE_XPS_DIAGNOSTICS:
         record_xps_diagnostics(symbol, selected_quarters)
 
     # 5. Reduce each field to the mean of its winning consensus group.

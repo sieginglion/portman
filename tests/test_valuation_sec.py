@@ -331,6 +331,7 @@ class TestSecValuation:
         diagnostics_state = valuation.new_xps_diagnostics()
         with (
             patch.object(valuation, "_xps_diagnostics", diagnostics_state),
+            patch.object(valuation.shared, "ENABLE_XPS_DIAGNOSTICS", True),
             patch.object(valuation, "add_sec_reference_values", new=AsyncMock()),
         ):
             resolved = asyncio.run(
@@ -425,6 +426,41 @@ class TestSecValuation:
         assert resolved == {
             "2025-03-31": {"revenue": 100, "weightedAverageShsOutDil": 10}
         }
+
+    def test_resolve_us_income_statement_quarters_skips_diagnostics_when_disabled(
+        self,
+    ):
+        source_rows = {
+            "fmp": {
+                "2025-03-31": {
+                    "revenue": 100,
+                    "weightedAverageShsOutDil": 10,
+                    "epsDiluted": 1,
+                }
+            },
+            "finnhub": {
+                "2025-03-31": {
+                    "revenue": 100,
+                    "weightedAverageShsOutDil": 10,
+                    "epsDiluted": 1,
+                }
+            },
+        }
+
+        with (
+            patch.object(valuation.shared, "ENABLE_XPS_DIAGNOSTICS", False),
+            patch.object(
+                valuation, "add_sec_reference_values", new=AsyncMock()
+            ),
+            patch.object(valuation, "record_xps_diagnostics") as diagnostics,
+        ):
+            asyncio.run(
+                valuation.resolve_us_income_statement_quarters(
+                    "AAPL", source_rows, limit=1, include_eps=True
+                )
+            )
+
+        diagnostics.assert_not_called()
 
     def test_resolve_us_income_statement_quarters_skips_sec_when_disabled(self):
         source_rows = {
@@ -576,6 +612,7 @@ class TestSecValuation:
         diagnostics_state = valuation.new_xps_diagnostics()
         with (
             patch.object(valuation, "_xps_diagnostics", diagnostics_state),
+            patch.object(valuation.shared, "ENABLE_XPS_DIAGNOSTICS", True),
             patch.object(valuation, "add_sec_reference_values", new=AsyncMock()),
         ):
             resolved = asyncio.run(

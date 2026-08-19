@@ -36,6 +36,7 @@ ENABLE_TIINGO_FUNDAMENTALS = (
     os.getenv("ENABLE_TIINGO_FUNDAMENTALS", "").lower() == "true"
 )
 ENABLE_SEC_REFERENCE = os.getenv("ENABLE_SEC_REFERENCE", "true").lower() == "true"
+ENABLE_XPS_DIAGNOSTICS = os.getenv("ENABLE_XPS_DIAGNOSTICS", "").lower() == "true"
 FROM_COINGECKO = set(os.environ["FROM_COINGECKO"].split(","))
 MARKET_TO_TIMEZONE = {
     "c": "UTC",
