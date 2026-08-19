@@ -589,3 +589,22 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
             "weightedAverageShsOutDil": 20,
             "epsDiluted": 1.5,
         }
+
+    def test_normalize_tiingo_income_statement_rows_skips_invalid_dates(self):
+        rows = valuation.normalize_tiingo_income_statement_rows(
+            [
+                {
+                    "date": "not-a-date",
+                    "quarter": "Q3",
+                    "statementData": {
+                        "incomeStatement": [
+                            {"dataCode": "revenue", "value": 100},
+                            {"dataCode": "shareswaDil", "value": 20},
+                            {"dataCode": "epsDil", "value": 1.5},
+                        ]
+                    },
+                }
+            ]
+        )
+
+        assert rows == {}

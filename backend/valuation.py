@@ -55,9 +55,7 @@ class AlignedQuarter:
     """Aligned field values plus source-period metadata for SEC lookup."""
 
     fields: dict[str, SourceFieldValues] = field(default_factory=dict)
-    source_periods: dict[str, list[SourcePeriod]] = field(
-        default_factory=dict
-    )
+    source_periods: dict[str, list[SourcePeriod]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -463,9 +461,7 @@ def quarterly_start_date(
 ) -> str:
     start = pd.Timestamp.now(
         tz=shared.MARKET_TO_TIMEZONE[market]
-    ).normalize() - pd.DateOffset(
-        months=3 * (limit + quarter_buffer) + month_buffer
-    )
+    ).normalize() - pd.DateOffset(months=3 * (limit + quarter_buffer) + month_buffer)
     return date_str(start.tz_localize(None))
 
 
@@ -568,13 +564,9 @@ def build_token_terminal_xps_frame(
     frame = frame.loc[frame.index < incomplete_month_start].tail(periods)
     if frame.empty:
         return pd.DataFrame(columns=XPS_COLUMNS, dtype=float)
-    expected_dates = pd.date_range(
-        end=frame.index[-1], periods=periods, freq="MS"
-    )
+    expected_dates = pd.date_range(end=frame.index[-1], periods=periods, freq="MS")
     frame = frame.reindex(expected_dates)
-    supply = frame.get(
-        "token_supply_circulating", pd.Series(np.nan, index=frame.index)
-    )
+    supply = frame.get("token_supply_circulating", pd.Series(np.nan, index=frame.index))
     supply = supply.where(supply > 0)
     per_token = frame.reindex(columns=metric_map).div(supply, axis=0)
     per_token = per_token.rename(columns=metric_map).reindex(columns=XPS_COLUMNS)
@@ -1013,7 +1005,7 @@ async def fetch_finnhub_income_statements(symbol: str, limit: int) -> dict[str, 
 
 def normalize_tiingo_income_statement_rows(statements: list[dict]) -> dict[str, dict]:
     """Normalize Tiingo's nested quarterly income-statement response."""
-    rows = {}
+    rows = []
     field_map = xps_field_map("shareswaDil", "epsDil")
     for statement in statements:
         if normalize_fiscal_quarter(statement.get("quarter")) is None:
@@ -1029,10 +1021,12 @@ def normalize_tiingo_income_statement_rows(statements: list[dict]) -> dict[str, 
             for entry in income_statement
             if isinstance(entry, dict) and entry.get("dataCode") is not None
         }
-        date = parse_timestamp(statement["date"])
-        if date is not None:
-            rows[date_str(date)] = normalize_source_row(values, field_map)
-    return rows
+        rows.append({"date": statement["date"], **values})
+    return normalize_income_statement_rows(
+        rows,
+        field_map=field_map,
+        date_field="date",
+    )
 
 
 async def fetch_tiingo_income_statements(symbol: str, limit: int) -> dict[str, dict]:
@@ -1486,9 +1480,7 @@ def build_quarterly_xps_inputs(
 def complete_and_roll_xps(xps: pd.DataFrame, window: int) -> pd.DataFrame:
     """Keep complete RPS/EPS columns, then apply the existing rolling TTM logic."""
     complete = (
-        xps.reindex(columns=XPS_COLUMNS)
-        .sort_index()
-        .dropna(axis="columns", how="any")
+        xps.reindex(columns=XPS_COLUMNS).sort_index().dropna(axis="columns", how="any")
     )
     if complete.empty:
         raise ValueError("neither a complete RPS nor EPS series is available")
