@@ -18,6 +18,16 @@ class TestDownsideScore:
         assert score == 1
 
 
+class TestBtcValuationProxy:
+    async def test_uses_a_fixed_sixteen_quarter_moving_average(self):
+        with patch.object(
+            main, "get_btc_price_to_sma_series", return_value=pd.Series()
+        ) as get_btc_price_to_sma_series:
+            await main.get_btc_valuation_proxy(4)
+
+        get_btc_price_to_sma_series.assert_awaited_once_with(91 * 4, 91 * 16)
+
+
 class TestQuarterEndLine:
     def test_adds_a_line_for_each_quarter_end_within_the_series_range(self):
         ax = Mock()

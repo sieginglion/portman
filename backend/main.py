@@ -234,8 +234,9 @@ async def calc_btc_growth():
 
 
 async def get_btc_valuation_proxy(q: int) -> pd.Series:
-    window = BTC_QUARTER_DAYS * q
-    return await get_btc_price_to_sma_series(window, window)
+    periods = BTC_QUARTER_DAYS * q
+    window = BTC_QUARTER_DAYS * 16
+    return await get_btc_price_to_sma_series(periods, window)
 
 
 async def calc_btc_score(q: int, valuation_score_upper: float) -> float:
