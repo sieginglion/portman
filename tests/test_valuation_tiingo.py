@@ -6,9 +6,10 @@ import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from backend import valuation
-from httpx import HTTPStatusError, Request, Response
 import pytest
+from httpx import HTTPStatusError, Request, Response
+
+from backend import valuation
 
 
 def selected_sources(*names: str):

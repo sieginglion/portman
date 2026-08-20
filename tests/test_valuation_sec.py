@@ -3,10 +3,10 @@ import math
 from unittest.mock import ANY, AsyncMock, patch
 
 import pandas as pd
+import pytest
 from httpx import HTTPStatusError, Request, Response
 
 from backend import valuation
-import pytest
 
 
 def sec_frame(rows):
@@ -449,9 +449,7 @@ class TestSecValuation:
 
         with (
             patch.object(valuation.shared, "ENABLE_XPS_DIAGNOSTICS", False),
-            patch.object(
-                valuation, "add_sec_reference_values", new=AsyncMock()
-            ),
+            patch.object(valuation, "add_sec_reference_values", new=AsyncMock()),
             patch.object(valuation, "record_xps_diagnostics") as diagnostics,
         ):
             asyncio.run(
@@ -1110,7 +1108,7 @@ class TestSecValuation:
         )
         metadata = valuation.SecQuarterMetadata("2025-03-31", "Q1")
 
-        for label, key, value, expected in cases:
+        for _label, key, value, expected in cases:
             assert (
                 valuation.lookup_sec_field_value(
                     "revenue",
@@ -1154,7 +1152,7 @@ class TestSecValuation:
             ("Q1-Q3 end at maximum", {}, False, {"end": "2025-11-01"}, None),
         )
 
-        for label, annual_updates, align_q1_to_q3, q1_to_q3_updates, expected in cases:
+        for _label, annual_updates, align_q1_to_q3, q1_to_q3_updates, expected in cases:
             annual = {**annual_fact, **annual_updates}
             q1_to_q3 = q1_to_q3_fact.copy()
             if align_q1_to_q3:
@@ -1599,11 +1597,17 @@ class TestFetchSecValuesForQuarters:
         for error in errors:
             fetched_concepts = []
 
-            async def fake_fetch_sec_concept_rows(cik, concept, unit):
+            async def fake_fetch_sec_concept_rows(
+                cik,
+                concept,
+                unit,
+                _fetched_concepts=fetched_concepts,
+                _error=error,
+            ):
                 assert (cik, unit) == ("0000320193", "USD")
-                fetched_concepts.append(concept)
+                _fetched_concepts.append(concept)
                 if concept == "RevenueFromContractWithCustomerExcludingAssessedTax":
-                    raise error
+                    raise _error
                 return sec_frame([{}])
 
             with (

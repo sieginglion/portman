@@ -3,9 +3,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import pandas as pd
-from backend import main, valuation
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
+
+from backend import main, valuation
 
 
 class TestDownsideScore:

@@ -44,7 +44,7 @@ class ValuationCallRecorder:
         for candidate in (
             target,
             getattr(target, "__func__", None),
-            getattr(type(target), "__call__", None),
+            inspect.getattr_static(type(target), "__call__", None),
         ):
             code = getattr(candidate, "__code__", None)
             if isinstance(code, CodeType) and code.co_filename == self._module_source:

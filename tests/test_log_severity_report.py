@@ -3,7 +3,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPOSITORY_ROOT / "bin/log_severity_report.py"
 

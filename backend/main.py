@@ -102,7 +102,7 @@ def add_percentile_bands(ax, series: pd.Series):
         return
 
     levels = np.percentile(values, PERCENTILE_BANDS)
-    for lo, hi, color in zip(levels, levels[1:], PERCENTILE_BAND_COLORS):
+    for lo, hi, color in zip(levels, levels[1:], PERCENTILE_BAND_COLORS, strict=False):
         ax.axhspan(lo, hi, color=color, alpha=0.4, zorder=0)
 
     for level in levels:

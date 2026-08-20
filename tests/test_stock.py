@@ -3,9 +3,9 @@ from unittest.mock import AsyncMock, patch
 
 import arrow
 import numpy as np
+import pytest
 
 from backend import stock
-import pytest
 
 
 class AsyncClientStub:

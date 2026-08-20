@@ -4,9 +4,10 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import patch
 
+import pytest
+
 from backend import call_recorder, valuation
 from backend.call_recorder import ValuationCallRecorder
-import pytest
 
 
 class TestValuationCallRecorder:

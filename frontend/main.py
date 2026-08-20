@@ -2,12 +2,12 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
+import httpx as h
 import numpy as np
 import streamlit as st
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 from plotly import graph_objects as go
-import httpx as h
 
 BACKEND_HOST = os.getenv("BACKEND_HOST", "localhost")
 

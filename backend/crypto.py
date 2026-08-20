@@ -70,4 +70,4 @@ async def get_prices(symbol: str, n: int):
     try:
         return post_process(get_sorted_values(date_to_price), n)
     except AssertionError:
-        raise AssertionError(symbol)
+        raise AssertionError(symbol) from None

@@ -1,8 +1,9 @@
 import asyncio
 from unittest.mock import AsyncMock, call, patch
 
-from backend import valuation
 import pytest
+
+from backend import valuation
 
 
 class TestFinMindValuation:
@@ -246,7 +247,7 @@ class TestFinMindValuation:
                 "now",
                 return_value=valuation.pd.Timestamp("2026-01-02", tz="UTC"),
             ),
-            pytest.raises(ValueError),
+            pytest.raises(ValueError, match="initial RPS and EPS values are missing"),
         ):
             asyncio.run(valuation.calc_px("u", "A", 1))
 
@@ -264,7 +265,7 @@ class TestFinMindValuation:
                 "now",
                 return_value=valuation.pd.Timestamp("2026-01-02", tz="UTC"),
             ),
-            pytest.raises(ValueError),
+            pytest.raises(ValueError, match="initial price is missing"),
         ):
             asyncio.run(valuation.calc_px("u", "A", 1))
 

@@ -3,8 +3,9 @@ import json
 import os
 from unittest.mock import AsyncMock, patch
 
-from backend import valuation
 import pytest
+
+from backend import valuation
 
 
 def monthly_rows(start: str, periods: int) -> list[dict]:
@@ -78,8 +79,7 @@ class TestTokenTerminalValuation:
         current_month_fees = next(
             row
             for row in rows
-            if row["metric_id"] == "fees"
-            and row["timestamp"].startswith("2026-01")
+            if row["metric_id"] == "fees" and row["timestamp"].startswith("2026-01")
         )
         current_month_fees["value"] = 1_000_000
         now = valuation.pd.Timestamp("2026-01-15", tz="UTC")
@@ -93,7 +93,9 @@ class TestTokenTerminalValuation:
         assert frame.loc["2026-01-01", "rps"] == pytest.approx(111 / 21)
 
     def test_missing_crypto_metric_is_left_for_the_shared_gate(self):
-        rows = [row for row in monthly_rows("2025-01-01", 12) if row["metric_id"] != "fees"]
+        rows = [
+            row for row in monthly_rows("2025-01-01", 12) if row["metric_id"] != "fees"
+        ]
         now = valuation.pd.Timestamp("2026-01-15", tz="UTC")
         with patch.object(valuation.pd.Timestamp, "now", return_value=now):
             inputs = valuation.build_token_terminal_xps_frame(

@@ -1540,8 +1540,10 @@ async def calc_px(
         .ffill()
         .tail(len(index))
     )
-    if pd.isna(df["price"].iloc[0]) or df[["rps", "eps"]].iloc[0].isna().all():
-        raise ValueError
+    if pd.isna(df["price"].iloc[0]):
+        raise ValueError("initial price is missing")
+    if df[["rps", "eps"]].iloc[0].isna().all():
+        raise ValueError("initial RPS and EPS values are missing")
     df["ps"] = df["price"] / df["rps"]
     df["pe"] = df["price"] / df["eps"].where(df["eps"] > 0)
     return df[["ps", "pe"]]
