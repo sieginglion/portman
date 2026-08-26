@@ -28,15 +28,18 @@ class TestBtcValuationProxy:
         get_btc_price_to_sma_series.assert_awaited_once_with(91 * 4, 91 * 16)
 
 
-class TestQuarterEndLine:
-    def test_adds_a_line_for_each_quarter_end_within_the_series_range(self):
+class TestXpsDateLine:
+    def test_adds_each_xps_date_within_the_series_range(self):
         ax = Mock()
         series = pd.Series([1, 2], index=pd.to_datetime(["2025-01-15", "2025-10-10"]))
+        xps_dates = pd.DatetimeIndex(
+            pd.to_datetime(["2025-01-01", "2025-03-31", "2025-06-15", "2025-12-01"])
+        )
 
-        main.add_quarter_end_lines(ax, series)
+        main.add_xps_date_lines(ax, series, xps_dates)
 
         assert [call.args[0] for call in ax.axvline.call_args_list] == list(
-            pd.to_datetime(["2025-03-31", "2025-06-30", "2025-09-30"])
+            pd.to_datetime(["2025-03-31", "2025-06-15"])
         )
 
 
@@ -46,15 +49,24 @@ class TestPlotValuationSeries:
         series = pd.Series(
             [1.0, 2.0], index=pd.to_datetime(["2025-01-01", "2025-01-02"])
         )
+        xps_dates = pd.DatetimeIndex(pd.to_datetime(["2025-01-02"]))
 
         with (
             patch.object(main, "add_percentile_bands") as add_percentile_bands,
-            patch.object(main, "add_quarter_end_lines") as add_quarter_end_lines,
+            patch.object(main, "add_xps_date_lines") as add_xps_date_lines,
         ):
-            main.plot_valuation_series(ax, series, "AAPL", "P/S", 16, "#2563eb")
+            main.plot_valuation_series(
+                ax,
+                series,
+                "AAPL",
+                "P/S",
+                16,
+                "#2563eb",
+                xps_dates=xps_dates,
+            )
 
         add_percentile_bands.assert_called_once_with(ax, series)
-        add_quarter_end_lines.assert_called_once_with(ax, series)
+        add_xps_date_lines.assert_called_once_with(ax, series, xps_dates)
         ax.plot.assert_called_once_with(
             series.index, series, color="#2563eb", linewidth=1.5, zorder=2
         )
@@ -78,12 +90,12 @@ class TestPlotValuationSeries:
 
         with (
             patch.object(main, "add_percentile_bands") as add_percentile_bands,
-            patch.object(main, "add_quarter_end_lines") as add_quarter_end_lines,
+            patch.object(main, "add_xps_date_lines") as add_xps_date_lines,
         ):
             main.plot_valuation_series(ax, series, "AAPL", "P/E", 16, "#dc2626")
 
         add_percentile_bands.assert_not_called()
-        add_quarter_end_lines.assert_not_called()
+        add_xps_date_lines.assert_not_called()
         ax.plot.assert_not_called()
         ax.scatter.assert_not_called()
         ax.set_title.assert_called_once_with("AAPL historical P/E, last 16 quarters")
@@ -118,6 +130,8 @@ class TestPxRoute:
             },
             index=pd.to_datetime(["2026-01-01", "2026-01-02"]),
         )
+        xps_dates = pd.DatetimeIndex(pd.to_datetime(["2025-12-31", "2026-01-02"]))
+        px.attrs["xps_dates"] = xps_dates
 
         def close_and_return(fig, plt):
             plt.close(fig)
@@ -134,6 +148,9 @@ class TestPxRoute:
         ps, pe = (call.args[1] for call in plot.call_args_list)
         assert ps.empty
         assert pe.equals(px["pe"])
+        assert all(
+            call.kwargs["xps_dates"].equals(xps_dates) for call in plot.call_args_list
+        )
 
 
 class TestFigureToPngResponse:

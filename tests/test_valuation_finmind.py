@@ -206,6 +206,7 @@ class TestFinMindValuation:
         assert valuation.pd.isna(px["ps"].iloc[0])
         assert px["ps"].iloc[1:].tolist() == [2.1, 2.2, 2.3]
         assert px["pe"].tolist() == [10.0, 10.5, 11.0, 11.5]
+        assert px.attrs["xps_dates"].equals(xps.index)
 
     def test_calc_px_allows_eps_with_insufficient_initial_coverage(self):
         prices = [20.0, 21.0, 22.0, 23.0]

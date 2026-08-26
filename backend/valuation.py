@@ -1546,7 +1546,9 @@ async def calc_px(
         raise ValueError("initial RPS and EPS values are missing")
     df["ps"] = df["price"] / df["rps"]
     df["pe"] = df["price"] / df["eps"].where(df["eps"] > 0)
-    return df[["ps", "pe"]]
+    result = df[["ps", "pe"]]
+    result.attrs["xps_dates"] = pd.DatetimeIndex(xps.index)
+    return result
 
 
 # def avg_by_period_ends(values, ends):

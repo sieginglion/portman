@@ -109,11 +109,13 @@ def add_percentile_bands(ax, series: pd.Series):
         ax.axhline(level, color="#111827", linewidth=0.8, alpha=0.35, zorder=1)
 
 
-def add_quarter_end_lines(ax, series: pd.Series):
-    quarter_ends = pd.date_range(series.index.min(), series.index.max(), freq="QE")
-    for quarter_end in quarter_ends:
+def add_xps_date_lines(ax, series: pd.Series, xps_dates: pd.DatetimeIndex) -> None:
+    visible_dates = xps_dates[
+        (xps_dates >= series.index.min()) & (xps_dates <= series.index.max())
+    ]
+    for xps_date in visible_dates:
         ax.axvline(
-            quarter_end,
+            xps_date,
             color="#111827",
             linewidth=0.8,
             linestyle=":",
@@ -129,10 +131,12 @@ def plot_valuation_series(
     multiple: str,
     q: int,
     color: str,
+    xps_dates: pd.DatetimeIndex | None = None,
 ):
     if not series.empty:
         add_percentile_bands(ax, series)
-        add_quarter_end_lines(ax, series)
+        if xps_dates is not None:
+            add_xps_date_lines(ax, series, xps_dates)
         ax.plot(series.index, series, color=color, linewidth=1.5, zorder=2)
         ax.scatter(
             series.index[-1:],
@@ -263,12 +267,13 @@ async def get_px(
     px = await valuation.calc_px(market, symbol, q)
     ps = px["ps"].dropna()
     pe = px["pe"].dropna()
+    xps_dates = pd.DatetimeIndex(px.attrs.get("xps_dates", []))
 
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), dpi=160, sharex=True)
     ps_ax, pe_ax = axes
 
-    plot_valuation_series(ps_ax, ps, symbol, "P/S", q, "#2563eb")
-    plot_valuation_series(pe_ax, pe, symbol, "P/E", q, "#dc2626")
+    plot_valuation_series(ps_ax, ps, symbol, "P/S", q, "#2563eb", xps_dates=xps_dates)
+    plot_valuation_series(pe_ax, pe, symbol, "P/E", q, "#dc2626", xps_dates=xps_dates)
 
     return figure_to_png_response(fig, plt)
 
