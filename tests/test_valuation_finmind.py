@@ -48,6 +48,21 @@ class TestFinMindValuation:
         )
         assert rows == [{"type": "EPS"}]
 
+    def test_pivot_finmind_rows_filters_invalid_rows_and_keeps_last_duplicate(self):
+        rows = [
+            {"date": "2025-03-31", "type": "Revenue", "value": "100"},
+            {"date": "2025-03-31", "type": "Revenue", "value": "110"},
+            {"date": "2025-03-31", "type": "EPS", "value": "invalid"},
+            {"date": None, "type": "Revenue", "value": 120},
+            {"date": "2025-06-30", "type": None, "value": 120},
+            {"date": "2025-06-30", "type": "Revenue", "value": None},
+        ]
+
+        result = valuation.pivot_finmind_taiwan_rows(rows)
+
+        assert result.to_dict("index") == {"2025-03-31": {"Revenue": 110.0}}
+        assert valuation.pivot_finmind_taiwan_rows([]).empty
+
     def test_normalize_income_statement_rows_canonicalizes_dates(self):
         rows = valuation.normalize_income_statement_rows(
             [
@@ -360,9 +375,7 @@ class TestFinMindValuation:
             ) as finmind_fetch,
         ):
             rows = asyncio.run(
-                valuation.fetch_finmind_taiwan_income_statements(
-                    "2330", limit=1, require_eps=True
-                )
+                valuation.fetch_finmind_taiwan_income_statements("2330", limit=1)
             )
 
         start_date.assert_called_once_with(
@@ -383,7 +396,7 @@ class TestFinMindValuation:
             }
         }
 
-    def test_fetch_without_eps_accepts_finmind_rows_missing_eps(self):
+    def test_fetch_accepts_finmind_rows_missing_eps(self):
         finmind_financial_rows = [
             {"date": "2025-03-31", "type": "Revenue", "value": 100},
         ]
@@ -400,9 +413,7 @@ class TestFinMindValuation:
             ),
         ):
             rows = asyncio.run(
-                valuation.fetch_finmind_taiwan_income_statements(
-                    "2330", limit=1, require_eps=False
-                )
+                valuation.fetch_finmind_taiwan_income_statements("2330", limit=1)
             )
 
         assert rows == {
@@ -429,14 +440,12 @@ class TestFinMindValuation:
             new=AsyncMock(side_effect=[financial_rows, balance_sheet_rows]),
         ):
             rows = asyncio.run(
-                valuation.fetch_finmind_taiwan_income_statements(
-                    "2330", limit=1, require_eps=True
-                )
+                valuation.fetch_finmind_taiwan_income_statements("2330", limit=1)
             )
 
         assert list(rows) == ["2025-06-30"]
 
-    def test_fetch_keeps_latest_quarter_when_eps_is_not_required(self):
+    def test_fetch_keeps_latest_quarter_when_eps_is_missing(self):
         financial_rows = [
             {"date": "2025-03-31", "type": "Revenue", "value": 100},
             {"date": "2025-03-31", "type": "EPS", "value": 1.5},
@@ -452,12 +461,37 @@ class TestFinMindValuation:
             new=AsyncMock(side_effect=[financial_rows, balance_sheet_rows]),
         ):
             rows = asyncio.run(
-                valuation.fetch_finmind_taiwan_income_statements(
-                    "2330", limit=1, require_eps=False
-                )
+                valuation.fetch_finmind_taiwan_income_statements("2330", limit=1)
             )
 
         assert list(rows) == ["2025-06-30"]
+
+    @pytest.mark.parametrize("include_eps", [True, False])
+    def test_resolved_taiwan_quarters_do_not_forward_include_eps(
+        self, include_eps: bool
+    ):
+        resolved = {
+            "2025-06-30": {
+                "revenue": 110,
+                "weightedAverageShsOutDil": 22,
+                "epsDiluted": None,
+            }
+        }
+        fetch = AsyncMock(return_value=resolved)
+
+        with patch.object(
+            valuation,
+            "fetch_finmind_taiwan_income_statements",
+            new=fetch,
+        ):
+            result = asyncio.run(
+                valuation.fetch_resolved_income_statement_quarters(
+                    "t", "2330", 1, include_eps
+                )
+            )
+
+        assert result == resolved
+        fetch.assert_awaited_once_with("2330", 1)
 
     def test_select_latest_required_quarters_does_not_validate_metrics(self):
         rows = {

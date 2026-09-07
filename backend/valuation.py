@@ -589,11 +589,8 @@ def pivot_finmind_taiwan_rows(rows: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if df.empty:
         return pd.DataFrame()
-    df = df.dropna(subset=["date", "type", "value"])
-    if df.empty:
-        return pd.DataFrame()
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
-    df = df.dropna(subset=["value"])
+    df = df.dropna(subset=["date", "type", "value"])
     return df.pivot_table(
         index="date",
         columns="type",
@@ -607,32 +604,23 @@ def normalize_finmind_taiwan_income_statement_rows(
     balance_sheet_rows: list[dict],
 ) -> dict[str, SourceFieldValues]:
     financial_statement = pivot_finmind_taiwan_rows(financial_statement_rows)
-    balance_sheet = pivot_finmind_taiwan_rows(balance_sheet_rows)
     if financial_statement.empty:
         return {}
 
+    balance_sheet = pivot_finmind_taiwan_rows(balance_sheet_rows)
     df = financial_statement.reindex(columns=["Revenue", "EPS"]).join(
         balance_sheet.reindex(columns=["OrdinaryShare"]), how="left"
     )
-
-    normalized_rows: dict[str, SourceFieldValues] = {}
-    for row_date, row in df.iterrows():
-        timestamp = parse_timestamp(row_date)
-        if timestamp is None:
-            continue
-        ordinary_shares = row["OrdinaryShare"]
-        normalized_row = {
-            "revenue": sanitize_source_field_value("revenue", row["Revenue"]),
-            "weightedAverageShsOutDil": sanitize_source_field_value(
-                "weightedAverageShsOutDil",
-                ordinary_shares / FINMIND_TAIWAN_SHARE_PAR_VALUE,
-            ),
-        }
-        normalized_row[EPS_XPS_FIELD] = sanitize_source_field_value(
-            EPS_XPS_FIELD, row["EPS"]
-        )
-        normalized_rows[date_str(timestamp)] = normalized_row
-    return normalized_rows
+    df["OrdinaryShare"] /= FINMIND_TAIWAN_SHARE_PAR_VALUE
+    return normalize_income_statement_rows(
+        df.reset_index().to_dict("records"),
+        field_map={
+            "revenue": "Revenue",
+            "weightedAverageShsOutDil": "OrdinaryShare",
+            EPS_XPS_FIELD: "EPS",
+        },
+        date_field="date",
+    )
 
 
 async def fetch_finmind_taiwan_rows(
@@ -653,7 +641,6 @@ async def fetch_finmind_taiwan_rows(
 async def fetch_finmind_taiwan_income_statements(
     symbol: str,
     limit: int,
-    require_eps: bool = True,
 ) -> dict[str, dict]:
     start_date = quarterly_start_date(
         "t",
@@ -1449,9 +1436,7 @@ async def fetch_resolved_income_statement_quarters(
     include_eps: bool,
 ) -> ResolvedQuarters:
     if market == "t":
-        return await fetch_finmind_taiwan_income_statements(
-            symbol, limit, require_eps=include_eps
-        )
+        return await fetch_finmind_taiwan_income_statements(symbol, limit)
 
     if market != "u":
         fmp_rows = await fetch_fmp_income_statements(market, symbol, limit)
