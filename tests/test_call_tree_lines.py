@@ -54,7 +54,7 @@ class TestCallTreeLines:
         collector = runpy.run_path(str(SCRIPT))["CallableLineCollector"]()
         collector.visit(ast.parse(source))
 
-        assert collector.callables == expected
+        assert set(collector.line_counts) == expected
 
     def test_reports_a_direct_callees_cumulative_lines(self):
         result = self._run(
@@ -280,6 +280,44 @@ def a():
         )
 
         assert result.stdout == "c 2\n"
+
+    @pytest.mark.parametrize(
+        ("callable_name", "expression"),
+        [
+            ("<genexpr>", "(1 for _ in range(1))"),
+            ("<listcomp>", "[1 for _ in range(1)]"),
+            ("<setcomp>", "{1 for _ in range(1)}"),
+            ("<dictcomp>", "{_: 1 for _ in range(1)}"),
+        ],
+    )
+    def test_rejects_comprehension_roots(self, callable_name, expression):
+        root = f"a.<locals>.{callable_name}"
+        result = self._run(
+            f"def a():\n    return {expression}\n",
+            [["a", root]],
+            root,
+            check=False,
+        )
+
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert f"callable {root!r} was not found in " in result.stderr
+
+    def test_accepts_a_lambda_root(self):
+        result = self._run(
+            "def c():\n    return 1\n\nfetch = lambda: c()\n",
+            [["<lambda>", "c"]],
+            "<lambda>",
+        )
+
+        assert result.stdout == "c 2\n"
+
+    def test_rejects_an_unknown_root_with_an_empty_graph(self):
+        result = self._run("def a():\n    return 1\n", [], "unknown", check=False)
+
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "callable 'unknown' was not found in " in result.stderr
 
     def test_rejects_a_disconnected_recorded_callable_missing_from_source(self):
         result = self._run(

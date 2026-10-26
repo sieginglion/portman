@@ -36,12 +36,10 @@ class CallableLineCollector(ast.NodeVisitor):
 
     def __init__(self) -> None:
         self.line_counts: dict[str, int] = defaultdict(int)
-        self.callables: set[str] = set()
         self._qualname_parts: list[str] = []
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         name = self._qualname(node.name)
-        self.callables.add(name)
         self.line_counts[name] += self._line_count(node)
         self._visit_scoped(node, node.name)
 
@@ -70,9 +68,7 @@ class CallableLineCollector(ast.NodeVisitor):
         self, node: ast.AST, name: str, *, count_lines: bool = True
     ) -> None:
         qualified_name = self._qualname(name)
-        self.callables.add(qualified_name)
-        if count_lines:
-            self.line_counts[qualified_name] += self._line_count(node)
+        self.line_counts[qualified_name] += self._line_count(node) if count_lines else 0
         self._visit_scoped(node, name, "<locals>")
 
     def _visit_scoped(self, node: ast.AST, *parts: str) -> None:
@@ -229,18 +225,12 @@ def validate_graph_callables(
 
 
 def cumulative_line_count(
-    root: str, graph: dict[str, set[str]], line_counts: dict[str, int], source: Path
+    root: str, graph: dict[str, set[str]], line_counts: dict[str, int]
 ) -> int:
     """Return ``root`` plus all its unique recorded descendants' source lines."""
-    callables = reachable_callables(root, graph)
-    missing = sorted(callables - line_counts.keys())
-    if missing:
-        names = ", ".join(missing)
-        raise SystemExit(
-            f"recorded callable(s) not found in {source}: {names}; "
-            "record the graph again after updating the source"
-        )
-    return sum(line_counts[callable_name] for callable_name in callables)
+    return sum(
+        line_counts[callable_name] for callable_name in reachable_callables(root, graph)
+    )
 
 
 def main() -> None:
@@ -255,14 +245,14 @@ def main() -> None:
 
     source_path = require_file(args.source, "source file")
     collector = collect_source_callables(source_path)
-    validate_graph_callables(graph, collector.callables, source_path)
     line_counts = collector.line_counts
-    if args.root not in line_counts:
+    validate_graph_callables(graph, set(line_counts), source_path)
+    if not line_counts.get(args.root):
         raise SystemExit(f"callable {args.root!r} was not found in {source_path}")
 
     callees = direct_callees(args.root, graph)
     ranked_callees = [
-        (callee, cumulative_line_count(callee, graph, line_counts, source_path))
+        (callee, cumulative_line_count(callee, graph, line_counts))
         for callee in callees
     ]
     ranked_callees.sort(key=lambda item: (-item[1], item[0]))
