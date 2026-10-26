@@ -464,7 +464,7 @@ def quarterly_start_date(
     start = pd.Timestamp.now(
         tz=shared.MARKET_TO_TIMEZONE[market]
     ).normalize() - pd.DateOffset(months=3 * (limit + quarter_buffer) + month_buffer)
-    return date_str(start.tz_localize(None))
+    return date_str(start)
 
 
 def token_terminal_headers(slug: str) -> dict[str, str]:
@@ -596,7 +596,8 @@ def pivot_finmind_taiwan_rows(rows: list[dict]) -> pd.DataFrame:
         columns="type",
         values="value",
         aggfunc="last",
-    ).sort_index()
+        sort=False,
+    )
 
 
 def normalize_finmind_taiwan_income_statement_rows(

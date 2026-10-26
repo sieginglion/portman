@@ -115,6 +115,31 @@ class TestFinMindValuation:
             ]
         )
 
+    @pytest.mark.parametrize(
+        ("market", "utc_now", "month_buffer", "expected"),
+        [
+            ("t", "2026-07-21T16:30:00Z", 2, "2025-02-22"),
+            ("u", "2026-07-22T00:30:00Z", 0, "2025-04-21"),
+            ("t", "2026-01-31T16:30:00Z", 2, "2024-09-01"),
+            ("u", "2026-02-01T00:30:00Z", 0, "2024-10-31"),
+        ],
+    )
+    def test_quarterly_start_date_preserves_market_date_at_utc_boundary(
+        self, market, utc_now, month_buffer, expected
+    ):
+        now = valuation.pd.Timestamp(utc_now)
+        with patch.object(
+            valuation.pd.Timestamp,
+            "now",
+            side_effect=lambda *, tz: now.tz_convert(tz),
+        ) as now_mock:
+            result = valuation.quarterly_start_date(
+                market, limit=4, quarter_buffer=1, month_buffer=month_buffer
+            )
+
+        assert result == expected
+        now_mock.assert_called_once_with(tz=valuation.shared.MARKET_TO_TIMEZONE[market])
+
     def test_build_xps_frame_returns_ttm_values_with_quarter_dates(self):
         quarters = {
             "2025-03-31": {
@@ -394,6 +419,48 @@ class TestFinMindValuation:
                 "weightedAverageShsOutDil": 20,
                 "epsDiluted": 1.5,
             }
+        }
+
+    def test_fetch_selects_latest_quarters_from_unsorted_finmind_rows(self):
+        financial_rows = [
+            {"date": "2025-12-31", "type": "EPS", "value": 1.3},
+            {"date": "2025-03-31", "type": "Revenue", "value": 100},
+            {"date": "2025-09-30", "type": "Revenue", "value": 119},
+            {"date": "2025-06-30", "type": "Revenue", "value": 110},
+            {"date": "2025-12-31", "type": "Revenue", "value": 130},
+            {"date": "2025-09-30", "type": "EPS", "value": 1.2},
+            {"date": "2025-03-31", "type": "EPS", "value": 1.0},
+            {"date": "2025-06-30", "type": "EPS", "value": 1.1},
+            {"date": "2025-09-30", "type": "Revenue", "value": 120},
+        ]
+        balance_sheet_rows = [
+            {"date": "2025-09-30", "type": "OrdinaryShare", "value": 240},
+            {"date": "2026-03-31", "type": "OrdinaryShare", "value": 9990},
+            {"date": "2025-12-31", "type": "OrdinaryShare", "value": 250},
+            {"date": "2025-03-31", "type": "OrdinaryShare", "value": 200},
+            {"date": "2025-12-31", "type": "OrdinaryShare", "value": 260},
+        ]
+        with patch.object(
+            valuation,
+            "fetch_finmind_taiwan_rows",
+            new=AsyncMock(side_effect=[financial_rows, balance_sheet_rows]),
+        ):
+            rows = asyncio.run(
+                valuation.fetch_finmind_taiwan_income_statements("2330", limit=2)
+            )
+
+        assert list(rows) == ["2025-09-30", "2025-12-31"]
+        assert rows == {
+            "2025-09-30": {
+                "revenue": 120,
+                "weightedAverageShsOutDil": 24,
+                "epsDiluted": 1.2,
+            },
+            "2025-12-31": {
+                "revenue": 130,
+                "weightedAverageShsOutDil": 26,
+                "epsDiluted": 1.3,
+            },
         }
 
     def test_fetch_accepts_finmind_rows_missing_eps(self):
