@@ -1,8 +1,12 @@
+import ast
 import json
+import runpy
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from textwrap import indent
+from types import CodeType
 
 import pytest
 
@@ -11,6 +15,47 @@ SCRIPT = REPOSITORY_ROOT / "bin/call_tree_lines.py"
 
 
 class TestCallTreeLines:
+    @pytest.mark.parametrize(
+        "definition",
+        [
+            "def fetch(callback=lambda: 1):\n    return callback()",
+            "def fetch(*, callback=lambda: 1):\n    return callback()",
+            "def fetch(callback: (lambda: 1)):\n    return callback()",
+            "def fetch(*args: (lambda: 1)):\n    return args",
+            "def fetch() -> (lambda: 1):\n    return 1",
+            "@(lambda function: function)\ndef fetch():\n    return 1",
+            "async def fetch(callback=lambda: 1):\n    return callback()",
+            "fetch = lambda callback=lambda: 1: callback()",
+            "class Worker((lambda: object)()):\n    def run(self):\n        return 1",
+            "@(lambda cls: cls)\nclass Worker:\n    pass",
+        ],
+    )
+    @pytest.mark.parametrize("scope", ["module", "function", "class"])
+    def test_definition_expressions_match_compiler_qualified_names(
+        self, definition, scope
+    ):
+        if scope == "function":
+            source = "def outer():\n" + indent(definition, "    ")
+        elif scope == "class":
+            source = "class Outer:\n" + indent(definition, "    ")
+        else:
+            source = definition
+
+        # Python's compiled names are the recorder's source of truth.
+        expected = set()
+        pending = [compile(source, "sample.py", "exec")]
+        while pending:
+            code = pending.pop()
+            for constant in code.co_consts:
+                if isinstance(constant, CodeType):
+                    expected.add(constant.co_qualname)
+                    pending.append(constant)
+
+        collector = runpy.run_path(str(SCRIPT))["CallableLineCollector"]()
+        collector.visit(ast.parse(source))
+
+        assert collector.callables == expected
+
     def test_reports_a_direct_callees_cumulative_lines(self):
         result = self._run(
             """

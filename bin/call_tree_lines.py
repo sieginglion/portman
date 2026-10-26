@@ -76,9 +76,24 @@ class CallableLineCollector(ast.NodeVisitor):
         self._visit_scoped(node, name, "<locals>")
 
     def _visit_scoped(self, node: ast.AST, *parts: str) -> None:
+        children = list(ast.iter_child_nodes(node))
+        if isinstance(
+            node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+        ):
+            body = node.body if isinstance(node.body, list) else [node.body]
+            body_nodes = set(body)
+            # Defaults, annotations, decorators, and bases use the enclosing scope.
+            for child in children:
+                if child not in body_nodes:
+                    self.visit(child)
+            children = body
+
         self._qualname_parts.extend(parts)
-        self.generic_visit(node)
-        del self._qualname_parts[-len(parts) :]
+        try:
+            for child in children:
+                self.visit(child)
+        finally:
+            del self._qualname_parts[-len(parts) :]
 
     def _qualname(self, name: str) -> str:
         return ".".join((*self._qualname_parts, name))
