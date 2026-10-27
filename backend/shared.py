@@ -35,6 +35,10 @@ TIINGO_API_KEY = os.getenv("TIINGO_API_KEY", "")
 ENABLE_TIINGO_FUNDAMENTALS = (
     os.getenv("ENABLE_TIINGO_FUNDAMENTALS", "").lower() == "true"
 )
+SIMFIN_API_KEY = os.getenv("SIMFIN_API_KEY", "")
+ENABLE_SIMFIN_FUNDAMENTALS = os.getenv(
+    "ENABLE_SIMFIN_FUNDAMENTALS", "true"
+).lower() == "true" and bool(SIMFIN_API_KEY)
 ENABLE_SEC_REFERENCE = os.getenv("ENABLE_SEC_REFERENCE", "true").lower() == "true"
 ENABLE_XPS_DIAGNOSTICS = os.getenv("ENABLE_XPS_DIAGNOSTICS", "").lower() == "true"
 FROM_COINGECKO = set(os.environ["FROM_COINGECKO"].split(","))

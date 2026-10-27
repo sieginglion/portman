@@ -20,6 +20,7 @@ from .shared import (
     FINNHUB_API_KEY,
     FMP_KEY,
     MASSIVE_API_KEY,
+    SIMFIN_API_KEY,
     TIINGO_API_KEY,
     add_suffix,
 )
@@ -121,6 +122,12 @@ US_INCOME_STATEMENT_SOURCES = (
         shared.ENABLE_TIINGO_FUNDAMENTALS,
         lambda symbol, limit: fetch_tiingo_income_statements(symbol, limit),
     ),
+    USIncomeStatementSource(
+        "simfin",
+        "SimFin",
+        shared.ENABLE_SIMFIN_FUNDAMENTALS,
+        lambda symbol, limit: fetch_simfin_income_statements(symbol, limit),
+    ),
 )
 ENABLED_US_INCOME_STATEMENT_SOURCES = tuple(
     source for source in US_INCOME_STATEMENT_SOURCES if source.enabled
@@ -139,6 +146,8 @@ def us_income_statement_source_order(
     return (*names, *SEC_REFERENCE_SOURCES) if include_sec else names
 
 
+# Bank revenue includes interest income before funding costs. Interest expense
+# stays outside the RPS numerator, matching FMP and Massive's gross convention.
 BASE_XPS_FIELDS = ("revenue", "weightedAverageShsOutDil")
 EPS_XPS_FIELD = "epsDiluted"
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
@@ -216,9 +225,14 @@ EODHD_FUNDAMENTALS_URL = "https://eodhd.com/api/v1.1/fundamentals/{}"
 TIINGO_FUNDAMENTALS_STATEMENTS_URL = (
     "https://api.tiingo.com/tiingo/fundamentals/{}/statements"
 )
+SIMFIN_STATEMENTS_URL = "https://prod.simfin.com/api/v3/companies/statements/verbose"
+SIMFIN_WEIGHTED_SHARES_URL = (
+    "https://prod.simfin.com/api/v3/companies/weighted-shares-outstanding"
+)
 FINMIND_TAIWAN_QUARTER_BUFFER = 1
 FINMIND_TAIWAN_MONTH_BUFFER = 2
 TIINGO_QUARTER_BUFFER = 1
+SIMFIN_QUARTER_BUFFER = 1
 FINMIND_TAIWAN_SHARE_PAR_VALUE = 10
 SEC_DEDUPE_COLS = ["filed", "val", "start", "end"]
 SEC_ALLOWED_FORMS = {"10-Q", "10-K", "10-Q/A", "10-K/A"}
@@ -431,6 +445,32 @@ def to_source_number(value: object) -> int | float | None:
     return int(number) if number.is_integer() else number
 
 
+def bank_gross_revenue(
+    interest_income: object,
+    noninterest_income: object,
+    *,
+    net_revenue: object = None,
+    interest_expense: object = None,
+) -> int | float | None:
+    """Use gross bank income, or add funding costs back to net revenue."""
+    interest = to_source_number(interest_income)
+    noninterest = to_source_number(noninterest_income)
+    net = to_source_number(net_revenue)
+    expense = to_source_number(interest_expense)
+    if has_source_field_value(interest) and has_source_field_value(noninterest):
+        revenue = interest + noninterest
+    elif has_source_field_value(net) and has_source_field_value(expense):
+        # Providers represent expense as either a positive cost or a negative flow.
+        revenue = net + abs(expense)
+    else:
+        return None
+    return (
+        sanitize_source_field_value("revenue", revenue)
+        if has_source_field_value(revenue)
+        else None
+    )
+
+
 def parse_timestamp(value: object) -> pd.Timestamp | None:
     if not isinstance(value, (str, int, float, date)):
         return None
@@ -600,6 +640,32 @@ def pivot_finmind_taiwan_rows(rows: list[dict]) -> pd.DataFrame:
     )
 
 
+def fill_finmind_missing_ordinary_shares(shares: pd.Series) -> pd.Series:
+    """Interpolate isolated interior share gaps; leave other gaps missing."""
+    shares = shares.where(np.isfinite(shares) & (shares > 0))
+    missing = shares.isna()
+    if not missing.any():
+        return shares
+
+    if shares.dropna().empty:
+        return shares
+
+    gap_groups = missing.ne(missing.shift()).cumsum()
+    if missing.groupby(gap_groups).sum().max() > 1:
+        return shares
+
+    patched_shares = shares.interpolate(limit_area="inside")
+    filled = missing & patched_shares.notna()
+    for missing_index in np.flatnonzero(filled.to_numpy()):
+        logger.warning(
+            "!!! PATCHING FINMIND OrdinaryShare gap: date={} method={} patched_value={} !!!",
+            shares.index[missing_index],
+            "linear interpolation",
+            patched_shares.iloc[missing_index],
+        )
+    return patched_shares
+
+
 def normalize_finmind_taiwan_income_statement_rows(
     financial_statement_rows: list[dict],
     balance_sheet_rows: list[dict],
@@ -609,9 +675,12 @@ def normalize_finmind_taiwan_income_statement_rows(
         return {}
 
     balance_sheet = pivot_finmind_taiwan_rows(balance_sheet_rows)
-    df = financial_statement.reindex(columns=["Revenue", "EPS"]).join(
-        balance_sheet.reindex(columns=["OrdinaryShare"]), how="left"
+    df = (
+        financial_statement.reindex(columns=["Revenue", "EPS"])
+        .join(balance_sheet.reindex(columns=["OrdinaryShare"]), how="left")
+        .sort_index()
     )
+    df["OrdinaryShare"] = fill_finmind_missing_ordinary_shares(df["OrdinaryShare"])
     df["OrdinaryShare"] /= FINMIND_TAIWAN_SHARE_PAR_VALUE
     return normalize_income_statement_rows(
         df.reset_index().to_dict("records"),
@@ -668,7 +737,36 @@ def build_aligned_source_quarters(
         align_source_rows(
             aligned_quarters, source_name, source_rows.get(source_name, {})
         )
+    is_bank = any(
+        period.row.get("is_bank") is True
+        for quarter in aligned_quarters.values()
+        for periods in quarter.source_periods.values()
+        for period in periods
+    )
+    for quarter in aligned_quarters.values():
+        normalize_bank_quarter_revenues(quarter, is_bank=is_bank)
     return dict(sorted(aligned_quarters.items()))
+
+
+def normalize_bank_quarter_revenues(quarter: AlignedQuarter, *, is_bank: bool) -> None:
+    """Convert Tiingo's bank net revenue only when its funding cost is usable."""
+    if not is_bank or "tiingo" not in quarter.source_periods:
+        return
+    tiingo_row = quarter.source_periods["tiingo"][-1].row
+    expense = to_source_number(tiingo_row.get("interestExpense"))
+    # Tiingo returns zero for JPM's already-netted funding expense. Treat a zero
+    # as unavailable here rather than allowing net revenue into gross consensus.
+    revenue = (
+        bank_gross_revenue(
+            None,
+            None,
+            net_revenue=tiingo_row.get("revenue"),
+            interest_expense=expense,
+        )
+        if has_source_field_value(expense) and expense != 0
+        else None
+    )
+    quarter.fields.setdefault("revenue", {})["tiingo"] = revenue
 
 
 def select_latest_required_quarters[T](
@@ -985,12 +1083,28 @@ async def fetch_finnhub_income_statements(symbol: str, limit: int) -> dict[str, 
         key=lambda row: row["period"],
         reverse=True,
     )[:limit]
-    return normalize_income_statement_rows(
+    financials = [dict(row) for row in financials]
+    for row in financials:
+        if any(
+            has_source_field_value(value := to_source_number(row.get(field)))
+            and value != 0
+            for field in ("bankInterestIncome", "bankNonInterestIncome")
+        ):
+            row["is_bank"] = True
+            row["revenue"] = bank_gross_revenue(
+                row.get("bankInterestIncome"), row.get("bankNonInterestIncome")
+            )
+    normalized_rows = normalize_income_statement_rows(
         financials,
         field_map=xps_field_map("dilutedAverageSharesOutstanding", "dilutedEPS"),
         date_field="period",
         base_field_scale=FINNHUB_MILLION_SCALE,
+        metadata_fields={"is_bank": "is_bank"},
     )
+    for row in normalized_rows.values():
+        if row.get("is_bank") is None:
+            row.pop("is_bank")
+    return normalized_rows
 
 
 def normalize_tiingo_income_statement_rows(statements: list[dict]) -> dict[str, dict]:
@@ -1012,11 +1126,17 @@ def normalize_tiingo_income_statement_rows(statements: list[dict]) -> dict[str, 
             if isinstance(entry, dict) and entry.get("dataCode") is not None
         }
         rows.append({"date": statement["date"], **values})
-    return normalize_income_statement_rows(
+    normalized_rows = normalize_income_statement_rows(
         rows,
         field_map=field_map,
         date_field="date",
+        metadata_fields={"interestExpense": "intexp"},
     )
+    for row in normalized_rows.values():
+        expense = to_source_number(row.pop("interestExpense"))
+        if has_source_field_value(expense):
+            row["interestExpense"] = expense
+    return normalized_rows
 
 
 async def fetch_tiingo_income_statements(symbol: str, limit: int) -> dict[str, dict]:
@@ -1031,6 +1151,120 @@ async def fetch_tiingo_income_statements(symbol: str, limit: int) -> dict[str, d
         headers={"Authorization": f"Token {TIINGO_API_KEY}"},
     )
     return normalize_tiingo_income_statement_rows(json.loads(text))
+
+
+def normalize_simfin_income_statement_rows(
+    companies: list[dict], weighted_shares: list[dict]
+) -> dict[str, dict]:
+    # SimFin can return cumulative share periods even with a quarterly filter.
+    shares_by_period = {
+        (str(row.get("pid")), str(row.get("fyear")), quarter): row
+        for row in weighted_shares
+        if (quarter := normalize_fiscal_quarter(row.get("period"))) is not None
+    }
+    rows = []
+    for company in companies:
+        # Insurance revenue is passed through without a bank-like correction.
+        # PGR matched reported revenue, but Allstate checks found A&H premiums
+        # missing from revenue and investment-gains values matching pension
+        # expense. Other providers also differ in investment income treatment.
+        # Responses lack enough reliable components for a general repair, so
+        # preserve provider values and leave discrepancies to normal consensus.
+        revenue_field = (
+            "Net Revenue" if company.get("template") == "INSURANCES" else "Revenue"
+        )
+        derived_by_period = {
+            (str(row.get("Fiscal Year")), quarter): row
+            for statement in company.get("statements", [])
+            if statement.get("statement") == "DERIVED"
+            for row in statement.get("data", [])
+            if (quarter := normalize_fiscal_quarter(row.get("Fiscal Period")))
+            is not None
+            and not row.get("TTM")
+        }
+        for statement in company.get("statements", []):
+            if statement.get("statement") != "PL":
+                continue
+            for row in statement.get("data", []):
+                quarter = normalize_fiscal_quarter(row.get("Fiscal Period"))
+                if quarter is None or row.get("TTM"):
+                    continue
+                # Statement report dates may be rounded to calendar month ends;
+                # weighted shares use actual fiscal dates. Join by fiscal period.
+                shares_row = shares_by_period.get(
+                    (str(company.get("id")), str(row.get("Fiscal Year")), quarter),
+                    {},
+                )
+                shares = sanitize_source_field_value(
+                    "weightedAverageShsOutDil",
+                    to_source_number(shares_row.get("diluted")),
+                )
+                earnings = to_source_number(
+                    row.get("Net Income Available to Common Shareholders")
+                )
+                derived_row = derived_by_period.get(
+                    (str(row.get("Fiscal Year")), quarter), {}
+                )
+                eps = to_source_number(derived_row.get("Earnings Per Share, Diluted"))
+                if (
+                    not has_source_field_value(eps)
+                    and has_source_field_value(earnings)
+                    and has_source_field_value(shares)
+                ):
+                    eps = round(earnings / shares, 6)
+                is_bank = company.get("template") == "BANKS"
+                revenue = (
+                    bank_gross_revenue(
+                        row.get("Total Interest Income"),
+                        row.get("Total Non-Interest Income"),
+                        net_revenue=row.get("Net Revenue"),
+                        interest_expense=row.get("Total Interest Expense"),
+                    )
+                    if is_bank
+                    else to_source_number(row.get(revenue_field))
+                )
+                rows.append(
+                    {
+                        "date": row.get("Report Date"),
+                        "quarter": quarter,
+                        "revenue": revenue,
+                        "weightedAverageShsOutDil": shares,
+                        EPS_XPS_FIELD: eps,
+                        "is_bank": True if is_bank else None,
+                    }
+                )
+    normalized_rows = normalize_income_statement_rows(
+        rows,
+        field_map=xps_field_map("weightedAverageShsOutDil", EPS_XPS_FIELD),
+        date_field="date",
+        metadata_fields={"quarter": "quarter", "is_bank": "is_bank"},
+    )
+    for row in normalized_rows.values():
+        if row.get("is_bank") is None:
+            row.pop("is_bank")
+    return normalized_rows
+
+
+async def fetch_simfin_income_statements(symbol: str, limit: int) -> dict[str, dict]:
+    params = {
+        "ticker": symbol,
+        "period": "Q1,Q2,Q3,Q4",
+        "start": quarterly_start_date("u", limit, SIMFIN_QUARTER_BUFFER),
+        "ttm": "false",
+    }
+    headers = {"Authorization": f"api-key {SIMFIN_API_KEY}"}
+    statements_text, shares_text = await asyncio.gather(
+        shared.cached_get(
+            SIMFIN_STATEMENTS_URL,
+            {**params, "statements": "PL,DERIVED", "asreported": "false"},
+            headers=headers,
+        ),
+        shared.cached_get(SIMFIN_WEIGHTED_SHARES_URL, params, headers=headers),
+    )
+    rows = normalize_simfin_income_statement_rows(
+        json.loads(statements_text), json.loads(shares_text)
+    )
+    return dict(sorted(rows.items())[-limit:])
 
 
 def diluted_eps_from_reported_income(
@@ -1366,6 +1600,43 @@ async def add_sec_reference_values(
             quarter.fields.setdefault(field_name, {})["sec"] = value
 
 
+def drop_incomplete_latest_us_quarter(
+    symbol: str,
+    aligned_quarters: AlignedQuarters,
+    required_fields: list[str],
+) -> AlignedQuarters:
+    """Ignore the newest quarter when required fields lack two usable sources."""
+    if not aligned_quarters:
+        return aligned_quarters
+
+    latest_date = max(aligned_quarters)
+    latest_quarter = aligned_quarters[latest_date]
+    insufficient_fields = [
+        field_name
+        for field_name in required_fields
+        if len(usable_source_values(latest_quarter.fields.get(field_name, {}))) < 2
+    ]
+    if not insufficient_fields:
+        return aligned_quarters
+
+    logger.warning(
+        "Dropping latest {} quarter {}: fewer than 2 usable sources\n{}",
+        symbol,
+        latest_date,
+        "\n".join(
+            format_source_field_block(
+                field_name, latest_quarter.fields.get(field_name, {}), latest_date
+            )
+            for field_name in insufficient_fields
+        ),
+    )
+    return {
+        quarter_date: quarter
+        for quarter_date, quarter in aligned_quarters.items()
+        if quarter_date != latest_date
+    }
+
+
 def resolve_us_quarter_consensus(
     symbol: str,
     anchor_date: str,
@@ -1410,9 +1681,12 @@ async def resolve_us_income_statement_quarters(
             required_fields,
         )
 
-    # 3. Retain the requested window. Metric completeness is checked centrally.
+    # 3. Skip an under-supported newest quarter before selecting the window.
+    eligible_quarters = drop_incomplete_latest_us_quarter(
+        symbol, aligned_quarters, required_fields
+    )
     selected_quarters = select_latest_required_quarters(
-        aligned_quarters, limit, symbol=symbol, quarter_label="aligned quarters"
+        eligible_quarters, limit, symbol=symbol, quarter_label="aligned quarters"
     )
 
     # 4. Optionally record diagnostics for the same quarters that will be returned.

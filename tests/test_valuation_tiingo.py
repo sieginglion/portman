@@ -125,6 +125,8 @@ assert 'tiingo' not in valuation.us_income_statement_source_order(include_sec=Tr
             "ENABLE_MASSIVE_FUNDAMENTALS": "true",
             "ENABLE_EODHD_FUNDAMENTALS": "true",
             "ENABLE_TIINGO_FUNDAMENTALS": "true",
+            "SIMFIN_API_KEY": "test",
+            "ENABLE_SIMFIN_FUNDAMENTALS": "true",
         }
         code = """\
 import sys
@@ -136,7 +138,7 @@ sys.modules['dotenv'] = dotenv
 
 from backend import valuation
 
-expected = ('fmp', 'massive', 'eodhd', 'finnhub', 'tiingo')
+expected = ('fmp', 'massive', 'eodhd', 'finnhub', 'tiingo', 'simfin')
 assert tuple(source.name for source in valuation.ENABLED_US_INCOME_STATEMENT_SOURCES) == expected
 assert valuation.us_income_statement_source_order() == expected
 assert valuation.us_income_statement_source_order(include_sec=True) == (

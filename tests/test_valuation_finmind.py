@@ -361,7 +361,7 @@ class TestFinMindValuation:
             }
         }
 
-    def test_normalize_leaves_missing_shares_for_central_validation(self):
+    def test_normalize_leaves_endpoint_share_gaps_missing(self):
         rows = valuation.normalize_finmind_taiwan_income_statement_rows(
             [
                 {"date": "2025-03-31", "type": "Revenue", "value": 100},
@@ -376,6 +376,96 @@ class TestFinMindValuation:
             20,
             None,
         ]
+
+    def test_share_interpolation_keeps_endpoints_missing(self):
+        shares = valuation.pd.Series([None, 1, None, 3, None], dtype=float)
+
+        with patch.object(valuation.logger, "warning") as warning:
+            filled = valuation.fill_finmind_missing_ordinary_shares(shares)
+
+        valuation.pd.testing.assert_series_equal(
+            filled, valuation.pd.Series([None, 1, 2, 3, None], dtype=float)
+        )
+        warning.assert_called_once()
+        assert warning.call_args.args[1:] == (2, "linear interpolation", 2.0)
+
+    @pytest.mark.parametrize("reverse_rows", [False, True])
+    def test_fetch_xps_interpolates_an_isolated_taiwan_share_gap(self, reverse_rows):
+        financial_rows = [
+            {"date": date, "type": field, "value": value}
+            for date, revenue, eps in [
+                ("2025-03-31", 100, 1.0),
+                ("2025-06-30", 150, 1.5),
+                ("2025-09-30", 200, 2.0),
+                ("2025-12-31", 200, 2.0),
+            ]
+            for field, value in [("Revenue", revenue), ("EPS", eps)]
+        ]
+        balance_rows = [
+            {"date": "2025-03-31", "type": "OrdinaryShare", "value": 200},
+            {"date": "2025-09-30", "type": "OrdinaryShare", "value": 400},
+            {"date": "2025-12-31", "type": "OrdinaryShare", "value": 400},
+        ]
+        if reverse_rows:
+            financial_rows.reverse()
+            balance_rows.reverse()
+
+        with (
+            patch.object(
+                valuation,
+                "fetch_finmind_taiwan_rows",
+                new=AsyncMock(side_effect=[financial_rows, balance_rows]),
+            ),
+            patch.object(valuation.logger, "warning") as warning,
+        ):
+            frame = asyncio.run(valuation.fetch_xps("t", "2330", q=1))
+
+        assert frame["rps"].tolist() == [20.0]
+        assert frame["eps"].tolist() == [6.5]
+        warning.assert_called_once()
+        assert warning.call_args.args[1:] == (
+            "2025-06-30",
+            "linear interpolation",
+            300.0,
+        )
+
+    @pytest.mark.parametrize(
+        "gap_positions", [(0,), (3,), (0, 3), (0, 1), (1, 2), (2, 3)]
+    )
+    def test_unfilled_share_gaps_keep_complete_taiwan_eps(self, gap_positions):
+        dates = ["2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31"]
+        financial_rows = [
+            {"date": date, "type": field, "value": value}
+            for date in dates
+            for field, value in [("Revenue", 100), ("EPS", 1.5)]
+        ]
+        balance_rows = [
+            {"date": date, "type": "OrdinaryShare", "value": 200}
+            for index, date in enumerate(dates)
+            if index not in gap_positions
+        ]
+
+        with patch.object(valuation.logger, "warning") as warning:
+            rows = valuation.normalize_finmind_taiwan_income_statement_rows(
+                financial_rows, balance_rows
+            )
+            frame = valuation.build_xps_frame(rows, include_eps=True)
+
+        assert all(
+            rows[dates[index]]["weightedAverageShsOutDil"] is None
+            for index in gap_positions
+        )
+        assert frame.columns.tolist() == ["eps"]
+        assert frame["eps"].tolist() == [6.0]
+        warning.assert_not_called()
+
+    @pytest.mark.parametrize("missing_value", [0, -1, float("inf"), float("nan")])
+    def test_share_gap_filling_treats_invalid_counts_as_missing(self, missing_value):
+        shares = valuation.pd.Series([200.0, missing_value, 400.0])
+
+        filled = valuation.fill_finmind_missing_ordinary_shares(shares)
+
+        assert filled.tolist() == [200.0, 300.0, 400.0]
 
     def test_fetch_derives_shares_from_finmind_balance_sheet(self):
         finmind_financial_rows = [

@@ -106,6 +106,32 @@ class TestSecValuation:
             ("finnhub", 102),
         ]
 
+    @pytest.mark.parametrize("second_value", [None, math.nan, math.inf])
+    def test_latest_quarter_ignores_unusable_second_source(self, second_value):
+        quarters = {
+            "2025-03-31": aligned_quarter(
+                {"revenue": {"fmp": 100, "finnhub": second_value}}
+            )
+        }
+
+        assert (
+            valuation.drop_incomplete_latest_us_quarter("AAPL", quarters, ["revenue"])
+            == {}
+        )
+
+    def test_latest_quarter_fallback_does_not_skip_older_unsupported_quarters(self):
+        quarters = {
+            "2025-03-31": aligned_quarter({"revenue": {"fmp": 100}}),
+            "2025-06-30": aligned_quarter({"revenue": {"fmp": 120}}),
+        }
+
+        eligible = valuation.drop_incomplete_latest_us_quarter(
+            "AAPL", quarters, ["revenue"]
+        )
+
+        assert list(eligible) == ["2025-03-31"]
+        assert list(quarters) == ["2025-03-31", "2025-06-30"]
+
     def test_configured_source_order_drives_alignment_and_consensus(self):
         source_rows = {
             "fmp": {"2025-03-31": {"revenue": 100}},
@@ -307,7 +333,7 @@ class TestSecValuation:
         assert diagnostics["coverage"]["epsDiluted"] == {"fmp": 0, "finnhub": 0}
         assert diagnostics["agreement"]["revenue"] == {"fmp:finnhub": 1}
 
-    def test_diagnostics_records_selected_quarters_without_completeness_filter(self):
+    def test_diagnostics_skips_request_that_falls_short_after_latest_drop(self):
         def row(revenue):
             return {
                 "revenue": revenue,
@@ -333,26 +359,16 @@ class TestSecValuation:
             patch.object(valuation, "_xps_diagnostics", diagnostics_state),
             patch.object(valuation.shared, "ENABLE_XPS_DIAGNOSTICS", True),
             patch.object(valuation, "add_sec_reference_values", new=AsyncMock()),
+            pytest.raises(ValueError, match="need 4 aligned quarters, found 3"),
         ):
-            resolved = asyncio.run(
+            asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
                     "SPCX", source_rows, limit=4, include_eps=True
                 )
             )
 
-        assert list(resolved) == [
-            "2025-03-31",
-            "2025-06-30",
-            "2025-09-30",
-            "2025-12-31",
-        ]
-        assert diagnostics_state.seen == {
-            ("SPCX", "2025-03-31"),
-            ("SPCX", "2025-06-30"),
-            ("SPCX", "2025-09-30"),
-            ("SPCX", "2025-12-31"),
-        }
-        assert diagnostics_state.coverage["revenue"]["finnhub"] == 3
+        assert diagnostics_state.seen == set()
+        assert diagnostics_state.coverage["revenue"]["finnhub"] == 0
 
     def test_resolve_us_income_statement_quarters_accepts_source_rows(self):
         source_rows = {
@@ -493,7 +509,7 @@ class TestSecValuation:
             "2025-03-31": {"revenue": 100, "weightedAverageShsOutDil": 10}
         }
 
-    def test_resolve_us_income_statement_quarters_keeps_latest_single_source_row(
+    def test_resolve_us_income_statement_quarters_drops_latest_single_source_row(
         self,
     ):
         source_rows = {
@@ -532,10 +548,10 @@ class TestSecValuation:
 
         add_sec_values.assert_awaited_once()
         assert resolved == {
-            "2025-06-30": {
-                "revenue": None,
-                "weightedAverageShsOutDil": None,
-                "epsDiluted": None,
+            "2025-03-31": {
+                "revenue": 100,
+                "weightedAverageShsOutDil": 10,
+                "epsDiluted": 1,
             }
         }
 
@@ -586,6 +602,72 @@ class TestSecValuation:
                 "epsDiluted": 1.2,
             }
         }
+
+    @pytest.mark.parametrize("include_eps", [True, False])
+    @pytest.mark.parametrize("missing_field", [None, *valuation.ALL_XPS_FIELDS])
+    def test_fetch_xps_uses_previous_quarters_when_latest_lacks_sources(
+        self, include_eps: bool, missing_field: str | None
+    ):
+        dates = pd.date_range("2024-03-31", periods=6, freq="QE")
+        fmp_rows: valuation.SourceIncomeStatementRows = {
+            date.strftime("%Y-%m-%d"): {
+                "revenue": 100 * (index + 1),
+                "weightedAverageShsOutDil": 100,
+                "epsDiluted": (index + 1) / 10,
+            }
+            for index, date in enumerate(dates)
+        }
+        finnhub_rows: valuation.SourceIncomeStatementRows = {
+            date: dict(row) for date, row in fmp_rows.items()
+        }
+        latest_date = dates[-1].strftime("%Y-%m-%d")
+        if missing_field is None:
+            finnhub_rows.pop(latest_date)
+        else:
+            finnhub_rows[latest_date][missing_field] = None
+        fetch_sources = AsyncMock(
+            return_value={"fmp": fmp_rows, "finnhub": finnhub_rows}
+        )
+        diagnostics = valuation.new_xps_diagnostics()
+
+        with (
+            patch.object(
+                valuation,
+                "ENABLED_US_INCOME_STATEMENT_SOURCES",
+                selected_sources("fmp", "finnhub"),
+            ),
+            patch.object(valuation.shared, "ENABLE_SEC_REFERENCE", False),
+            patch.object(valuation.shared, "ENABLE_XPS_DIAGNOSTICS", True),
+            patch.object(valuation, "_xps_diagnostics", diagnostics),
+            patch.object(valuation, "fetch_us_income_statement_sources", fetch_sources),
+        ):
+            frame = asyncio.run(
+                valuation.fetch_xps("u", "PGR", q=2, include_eps=include_eps)
+            )
+
+        fetch_sources.assert_awaited_once_with("PGR", 6)
+        dropped = missing_field != "epsDiluted" or include_eps
+        if dropped:
+            assert pd.DatetimeIndex(frame.index).strftime("%Y-%m-%d").tolist() == [
+                "2025-01-01",
+                "2025-04-01",
+            ]
+            assert frame["rps"].tolist() == pytest.approx([10, 14])
+            assert ("PGR", latest_date) not in diagnostics.seen
+        else:
+            assert pd.DatetimeIndex(frame.index).strftime("%Y-%m-%d").tolist() == [
+                "2025-04-01",
+                "2025-07-01",
+            ]
+            assert frame["rps"].tolist() == pytest.approx([14, 18])
+            if include_eps:
+                assert ("PGR", latest_date) in diagnostics.seen
+        if include_eps:
+            assert frame["eps"].tolist() == pytest.approx([1, 1.4])
+        else:
+            assert frame.columns.tolist() == ["rps"]
+        assert not frame.isna().to_numpy().any()
+        assert len(diagnostics.seen) == (5 if include_eps else 0)
 
     def test_resolve_us_income_statement_quarters_records_selected_quarters_only(
         self,
