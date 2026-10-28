@@ -1619,40 +1619,32 @@ async def add_sec_reference_values(
 
 def drop_incomplete_latest_us_quarter(
     symbol: str,
-    aligned_quarters: AlignedQuarters,
+    quarters: ResolvedQuarters,
     required_fields: list[str],
-) -> AlignedQuarters:
+) -> ResolvedQuarters:
     """Ignore only the newest quarter when any required field lacks consensus."""
-    if not aligned_quarters:
-        return aligned_quarters
+    if not quarters:
+        return quarters
 
-    latest_date = max(aligned_quarters)
-    latest_quarter = aligned_quarters[latest_date]
+    latest_date = max(quarters)
+    latest_quarter = quarters[latest_date]
     unresolved_fields = [
         field_name
         for field_name in required_fields
-        if resolve_source_consensus(
-            field_name, latest_quarter.fields.get(field_name, {})
-        )
-        is None
+        if latest_quarter.get(field_name) is None
     ]
     if not unresolved_fields:
-        return aligned_quarters
+        return quarters
 
     logger.warning(
-        "Dropping latest {} quarter {}: required fields lack consensus\n{}",
+        "Dropping latest {} quarter {}: required fields lack consensus: {}",
         symbol,
         latest_date,
-        "\n".join(
-            format_source_field_block(
-                field_name, latest_quarter.fields.get(field_name, {}), latest_date
-            )
-            for field_name in unresolved_fields
-        ),
+        ", ".join(unresolved_fields),
     )
     return {
         quarter_date: quarter
-        for quarter_date, quarter in aligned_quarters.items()
+        for quarter_date, quarter in quarters.items()
         if quarter_date != latest_date
     }
 
@@ -1702,15 +1694,22 @@ async def resolve_us_income_statement_quarters(
         )
 
     # 3. Only the latest quarter may fall back on missing sources or no consensus.
-    # Select RPS and EPS windows independently; older failures stay in each history.
-    selected_groups = {}
+    # Resolve every quarter first, then select each metric's window independently.
+    resolved_quarters: ResolvedXpsQuarters = {}
     selected_quarters = {}
     selection_error = None
     for column, fields in XPS_FIELD_GROUPS.items():
         if column == "eps" and not include_eps:
             continue
+        metric_fields = list(fields)
+        metric_quarters = {
+            anchor_date: resolve_us_quarter_consensus(
+                symbol, anchor_date, quarter, metric_fields
+            )
+            for anchor_date, quarter in aligned_quarters.items()
+        }
         eligible_quarters = drop_incomplete_latest_us_quarter(
-            symbol, aligned_quarters, list(fields)
+            symbol, metric_quarters, metric_fields
         )
         try:
             selected = select_latest_required_quarters(
@@ -1723,9 +1722,11 @@ async def resolve_us_income_statement_quarters(
             selection_error = exc
             logger.warning("Skipping {} for {}: {}", column, symbol, exc)
             continue
-        selected_groups[column] = selected
-        selected_quarters.update(selected)
-    if not selected_groups:
+        resolved_quarters[column] = selected
+        selected_quarters.update(
+            (anchor_date, aligned_quarters[anchor_date]) for anchor_date in selected
+        )
+    if not resolved_quarters:
         assert selection_error is not None
         raise selection_error
 
@@ -1733,16 +1734,7 @@ async def resolve_us_income_statement_quarters(
     if include_eps and shared.ENABLE_XPS_DIAGNOSTICS:
         record_xps_diagnostics(symbol, selected_quarters)
 
-    # 5. Reduce each field to the mean of its winning consensus group.
-    return {
-        column: {
-            anchor_date: resolve_us_quarter_consensus(
-                symbol, anchor_date, quarter, list(XPS_FIELD_GROUPS[column])
-            )
-            for anchor_date, quarter in selected.items()
-        }
-        for column, selected in selected_groups.items()
-    }
+    return resolved_quarters
 
 
 async def fetch_resolved_income_statement_quarters(

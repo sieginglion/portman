@@ -109,8 +109,11 @@ class TestSecValuation:
     @pytest.mark.parametrize("second_value", [None, math.nan, math.inf])
     def test_latest_quarter_ignores_unusable_second_source(self, second_value):
         quarters = {
-            "2025-03-31": aligned_quarter(
-                {"revenue": {"fmp": 100, "finnhub": second_value}}
+            "2025-03-31": valuation.resolve_us_quarter_consensus(
+                "AAPL",
+                "2025-03-31",
+                aligned_quarter({"revenue": {"fmp": 100, "finnhub": second_value}}),
+                ["revenue"],
             )
         }
 
@@ -121,8 +124,8 @@ class TestSecValuation:
 
     def test_latest_quarter_fallback_does_not_skip_older_unsupported_quarters(self):
         quarters = {
-            "2025-03-31": aligned_quarter({"revenue": {"fmp": 100}}),
-            "2025-06-30": aligned_quarter({"revenue": {"fmp": 120}}),
+            "2025-03-31": {"revenue": None},
+            "2025-06-30": {"revenue": None},
         }
 
         eligible = valuation.drop_incomplete_latest_us_quarter(
@@ -142,15 +145,20 @@ class TestSecValuation:
     def test_latest_quarter_fallback_does_not_skip_older_consensus_failures(
         self, source_values
     ):
-        quarters = {
-            date: aligned_quarter({"revenue": dict(source_values)})
-            for date in ("2025-03-31", "2025-06-30")
-        }
         with patch.object(
             valuation,
             "ENABLED_US_INCOME_STATEMENT_SOURCES",
             selected_sources("fmp", "massive", "finnhub"),
         ):
+            quarters = {
+                date: valuation.resolve_us_quarter_consensus(
+                    "AAPL",
+                    date,
+                    aligned_quarter({"revenue": dict(source_values)}),
+                    ["revenue"],
+                )
+                for date in ("2025-03-31", "2025-06-30")
+            }
             eligible = valuation.drop_incomplete_latest_us_quarter(
                 "AAPL", quarters, ["revenue"]
             )
@@ -840,7 +848,7 @@ class TestSecValuation:
                 "2025-06-30": row(110),
             },
             "finnhub": {
-                "2025-03-31": row(100),
+                "2025-03-31": row(200),
                 "2025-06-30": row(110),
             },
         }
@@ -849,6 +857,7 @@ class TestSecValuation:
             patch.object(valuation, "_xps_diagnostics", diagnostics_state),
             patch.object(valuation.shared, "ENABLE_XPS_DIAGNOSTICS", True),
             patch.object(valuation, "add_sec_reference_values", new=AsyncMock()),
+            patch.object(valuation.logger, "warning") as warning,
         ):
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
@@ -859,6 +868,13 @@ class TestSecValuation:
         assert list(resolved["rps"]) == ["2025-06-30"]
         assert list(resolved["eps"]) == ["2025-06-30"]
         assert diagnostics_state.seen == {("AAPL", "2025-06-30")}
+        rendered_logs = [
+            call.args[0].format(*call.args[1:]) for call in warning.call_args_list
+        ]
+        assert any(
+            "No consensus for AAPL quarter 2025-03-31 field=revenue" in log
+            for log in rendered_logs
+        )
 
     def test_older_revenue_consensus_failure_stays_in_its_quarter(self):
         source_rows = {
@@ -1022,6 +1038,9 @@ class TestSecValuation:
         failure_log = next(log for log in rendered_logs if "Dropping latest" in log)
         assert "weightedAverageShsOutDil" in failure_log
         assert "AAPL quarter 2025-03-31" in failure_log
+        failure_log = next(
+            log for log in rendered_logs if "field=weightedAverageShsOutDil" in log
+        )
         assert "FMP      date=2025-03-31 value=10" in failure_log
         assert "Finnhub  date=2025-03-31 value=20" in failure_log
         assert "SEC      date=2025-03-31 value=missing" in failure_log
