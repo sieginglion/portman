@@ -9,7 +9,7 @@ from numpy import float64 as f8
 from numpy.typing import NDArray as Array
 
 from .shared import (
-    FMP_KEY,
+    FMP_API_KEY,
     MARKET_TO_TIMEZONE,
     add_suffix,
     gen_dates,
@@ -120,7 +120,7 @@ async def get_rates(sess: AsyncClient, n: int):
 
 
 async def get_prices(market: Literal["j", "t", "u"], symbol: str, n: int, to_usd: bool):
-    async with AsyncClient(timeout=60, params={"apikey": FMP_KEY}) as sess:
+    async with AsyncClient(timeout=60, params={"apikey": FMP_API_KEY}) as sess:
         if market == "t" and to_usd:
             prices, rates = await asyncio.gather(
                 get_adjusted(sess, market, symbol, n), get_rates(sess, n)

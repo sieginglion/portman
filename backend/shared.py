@@ -20,8 +20,8 @@ from numpy.typing import NDArray as Array
 
 dotenv.load_dotenv()
 
-FMP_KEY = os.environ["FMP_KEY"]
-FINMIND_KEY = os.environ["FINMIND_KEY"]
+FMP_API_KEY = os.environ["FMP_API_KEY"]
+FINMIND_API_KEY = os.environ["FINMIND_API_KEY"]
 FINNHUB_API_KEY = os.environ["FINNHUB_API_KEY"]
 ENABLE_MASSIVE_FUNDAMENTALS = (
     os.getenv("ENABLE_MASSIVE_FUNDAMENTALS", "true").lower() == "true"
@@ -41,7 +41,6 @@ ENABLE_SIMFIN_FUNDAMENTALS = os.getenv(
 ).lower() == "true" and bool(SIMFIN_API_KEY)
 ENABLE_SEC_REFERENCE = os.getenv("ENABLE_SEC_REFERENCE", "true").lower() == "true"
 ENABLE_XPS_DIAGNOSTICS = os.getenv("ENABLE_XPS_DIAGNOSTICS", "").lower() == "true"
-FROM_COINGECKO = set(os.environ["FROM_COINGECKO"].split(","))
 MARKET_TO_TIMEZONE = {
     "c": "UTC",
     "j": "Asia/Tokyo",
@@ -147,7 +146,7 @@ async def get_today_dividend(market: Literal["j", "t", "u"], symbol: str):
         text = await cached_get(
             "https://financialmodelingprep.com/api/v3/stock_dividend_calendar",
             {
-                "apikey": FMP_KEY,
+                "apikey": FMP_API_KEY,
                 "from": today,
                 "to": today,
             },

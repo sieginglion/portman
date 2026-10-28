@@ -44,7 +44,7 @@ class TestFinMindValuation:
                 "data_id": "2330",
                 "start_date": "2025-01-01",
             },
-            headers={"Authorization": f"Bearer {valuation.FINMIND_KEY}"},
+            headers={"Authorization": f"Bearer {valuation.FINMIND_API_KEY}"},
         )
         assert rows == [{"type": "EPS"}]
 

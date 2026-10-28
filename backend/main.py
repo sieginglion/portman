@@ -313,7 +313,7 @@ async def get_shares(symbol: str):
         res = await sess.get(
             "https://financialmodelingprep.com/stable/income-statement",
             params={
-                "apikey": shared.FMP_KEY,
+                "apikey": shared.FMP_API_KEY,
                 "limit": 1,
                 "period": "quarter",
                 "symbol": symbol,

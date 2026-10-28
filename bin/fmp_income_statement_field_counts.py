@@ -81,9 +81,9 @@ def load_liquid_us_tickers(api_key: str) -> list[str]:
 
 def main() -> int:
     load_dotenv()
-    api_key = os.environ.get("FMP_API_KEY") or os.environ.get("FMP_KEY")
+    api_key = os.environ.get("FMP_API_KEY")
     if not api_key:
-        raise SystemExit("FMP_API_KEY (or FMP_KEY) is required")
+        raise SystemExit("FMP_API_KEY is required")
 
     tickers = load_liquid_us_tickers(api_key)
 

@@ -16,9 +16,9 @@ from loguru import logger
 from . import shared
 from .shared import (
     EODHD_API_KEY,
-    FINMIND_KEY,
+    FINMIND_API_KEY,
     FINNHUB_API_KEY,
-    FMP_KEY,
+    FMP_API_KEY,
     MASSIVE_API_KEY,
     SIMFIN_API_KEY,
     TIINGO_API_KEY,
@@ -703,7 +703,7 @@ async def fetch_finmind_taiwan_rows(
             "data_id": symbol,
             "start_date": start_date,
         },
-        headers={"Authorization": f"Bearer {FINMIND_KEY}"},
+        headers={"Authorization": f"Bearer {FINMIND_API_KEY}"},
     )
     return json.loads(text).get("data", [])
 
@@ -1018,7 +1018,7 @@ async def fetch_fmp_income_statements(
     limit: int,
 ) -> dict[str, dict]:
     params = {
-        "apikey": FMP_KEY,
+        "apikey": FMP_API_KEY,
         "limit": limit,
         "period": "quarter",
     }
@@ -1809,46 +1809,3 @@ async def calc_px(
     result = df[["ps", "pe"]]
     result.attrs["xps_dates"] = pd.DatetimeIndex(xps.index)
     return result
-
-
-# def avg_by_period_ends(values, ends):
-#     today = pd.Timestamp.now(tz='Asia/Taipei').normalize().tz_localize(None)
-#     series = pd.Series(
-#         values, index=pd.date_range(end=today, periods=len(values), freq='D')
-#     )
-#     ends = pd.to_datetime(ends)
-#     starts = ends[:-1] + pd.Timedelta(days=1)
-#     return pd.Series({e: series.loc[s:e].mean() for s, e in zip(starts, ends[1:])})
-
-
-# async def calc_rps_from_finmind(symbol: str):
-#     url = 'https://api.finmindtrade.com/api/v4/data'
-#     params = {
-#         'data_id': symbol,
-#         'dataset': 'TaiwanStockFinancialStatements',
-#         'start_date': arrow.now('Asia/Taipei')
-#         .shift(days=-10 * 91)
-#         .format('YYYY-MM-DD'),
-#     }
-#     headers = {'Authorization': f'Bearer {FINMIND_KEY}'}
-#     async with AsyncClient() as client:
-#         resp, fx = await asyncio.gather(
-#             client.get(url, params=params, headers=headers), get_rates(client, 10 * 91)
-#         )
-#     df = (
-#         pd.DataFrame(resp.json()['data'])
-#         .pivot(index='date', columns='type', values='value')
-#         .sort_index()
-#         .iloc[-9:]
-#     )
-#     if len(df) != 9:
-#         raise AssertionError
-#     fx = avg_by_period_ends(fx, df.index)
-#     df = df.iloc[1:]
-#     df['Revenue'] /= fx.values
-#     df['rps'] = (
-#         (df['Revenue'] * df['EPS'] / df['EquityAttributableToOwnersOfParent'])
-#         .rolling(4)
-#         .sum()
-#     )
-#     return df['rps'].iloc[3:]

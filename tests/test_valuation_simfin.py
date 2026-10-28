@@ -280,12 +280,11 @@ def test_simfin_failure_is_isolated_from_other_providers():
 def test_simfin_source_enablement(key: str, flag: str | None, enabled: bool):
     env: dict[str, str] = {
         **os.environ,
-        "FMP_KEY": "test",
-        "FINMIND_KEY": "test",
+        "FMP_API_KEY": "test",
+        "FINMIND_API_KEY": "test",
         "FINNHUB_API_KEY": "test",
         "ENABLE_MASSIVE_FUNDAMENTALS": "false",
         "ENABLE_EODHD_FUNDAMENTALS": "false",
-        "FROM_COINGECKO": "",
         "SIMFIN_API_KEY": key,
     }
     if flag is None:
