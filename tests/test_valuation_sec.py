@@ -132,6 +132,32 @@ class TestSecValuation:
         assert list(eligible) == ["2025-03-31"]
         assert list(quarters) == ["2025-03-31", "2025-06-30"]
 
+    @pytest.mark.parametrize(
+        "source_values",
+        [
+            {"fmp": 100, "finnhub": 200},
+            {"fmp": 100, "finnhub": 100, "massive": 200, "sec": 200},
+        ],
+    )
+    def test_latest_quarter_fallback_does_not_skip_older_consensus_failures(
+        self, source_values
+    ):
+        quarters = {
+            date: aligned_quarter({"revenue": dict(source_values)})
+            for date in ("2025-03-31", "2025-06-30")
+        }
+        with patch.object(
+            valuation,
+            "ENABLED_US_INCOME_STATEMENT_SOURCES",
+            selected_sources("fmp", "massive", "finnhub"),
+        ):
+            eligible = valuation.drop_incomplete_latest_us_quarter(
+                "AAPL", quarters, ["revenue"]
+            )
+
+        assert list(eligible) == ["2025-03-31"]
+        assert list(quarters) == ["2025-03-31", "2025-06-30"]
+
     def test_configured_source_order_drives_alignment_and_consensus(self):
         source_rows = {
             "fmp": {"2025-03-31": {"revenue": 100}},
@@ -594,6 +620,49 @@ class TestSecValuation:
             "eps": {"2025-06-30": {"epsDiluted": 1.2}},
         }
 
+    def test_sec_consensus_keeps_latest_quarter_despite_peer_disagreement(self):
+        rows = {
+            date: {
+                "revenue": 100,
+                "weightedAverageShsOutDil": 10,
+                "epsDiluted": 1,
+            }
+            for date in ("2025-03-31", "2025-06-30")
+        }
+        peer_rows = {date: dict(row) for date, row in rows.items()}
+        peer_rows["2025-06-30"]["revenue"] = 200
+
+        async def add_sec_fields(symbol, aligned_quarters, required_fields):
+            aligned_quarters["2025-06-30"].fields["revenue"]["sec"] = 100
+
+        with (
+            patch.object(
+                valuation,
+                "ENABLED_US_INCOME_STATEMENT_SOURCES",
+                selected_sources("fmp", "finnhub"),
+            ),
+            patch.object(valuation.shared, "ENABLE_SEC_REFERENCE", True),
+            patch.object(
+                valuation,
+                "add_sec_reference_values",
+                new=AsyncMock(side_effect=add_sec_fields),
+            ),
+        ):
+            resolved = asyncio.run(
+                valuation.resolve_us_income_statement_quarters(
+                    "AAPL",
+                    {"fmp": rows, "finnhub": peer_rows},
+                    limit=1,
+                    include_eps=True,
+                )
+            )
+
+        assert resolved == {
+            "rps": {"2025-06-30": {"revenue": 100, "weightedAverageShsOutDil": 10}},
+            "eps": {"2025-06-30": {"epsDiluted": 1}},
+        }
+
+    @pytest.mark.parametrize("peer_value", [None, 1000])
     @pytest.mark.parametrize("include_eps", [True, False])
     @pytest.mark.parametrize(
         "missing_fields",
@@ -605,8 +674,8 @@ class TestSecValuation:
             ("epsDiluted",),
         ],
     )
-    def test_fetch_xps_uses_previous_quarters_when_latest_lacks_sources(
-        self, include_eps: bool, missing_fields: tuple[str, ...]
+    def test_fetch_xps_uses_previous_quarters_when_latest_lacks_consensus(
+        self, include_eps: bool, missing_fields: tuple[str, ...], peer_value
     ):
         dates = pd.date_range("2024-03-31", periods=6, freq="QE")
         fmp_rows: valuation.SourceIncomeStatementRows = {
@@ -625,7 +694,7 @@ class TestSecValuation:
             finnhub_rows.pop(latest_date)
         else:
             for field in missing_fields:
-                finnhub_rows[latest_date][field] = None
+                finnhub_rows[latest_date][field] = peer_value
         fetch_sources = AsyncMock(
             return_value={"fmp": fmp_rows, "finnhub": finnhub_rows}
         )
@@ -674,6 +743,44 @@ class TestSecValuation:
             assert list(frame) == ["rps"]
             assert diagnostics.seen == set()
 
+    @pytest.mark.parametrize("latest_also_invalid", [False, True])
+    @pytest.mark.parametrize("peer_value", [None, 1000])
+    def test_fetch_xps_rejects_older_failure_even_with_spare_history(
+        self, latest_also_invalid, peer_value
+    ):
+        dates = pd.date_range("2024-03-31", periods=6, freq="QE").strftime("%Y-%m-%d")
+        rows = {
+            date: {
+                "revenue": 100,
+                "weightedAverageShsOutDil": 10,
+                "epsDiluted": 1,
+            }
+            for date in dates
+        }
+        peer_rows = {date: dict(row) for date, row in rows.items()}
+        bad_dates = dates[-2:] if latest_also_invalid else dates[-2:-1]
+        for date in bad_dates:
+            peer_rows[date]["revenue"] = peer_value
+            peer_rows[date]["epsDiluted"] = peer_value
+
+        with (
+            patch.object(
+                valuation,
+                "ENABLED_US_INCOME_STATEMENT_SOURCES",
+                selected_sources("fmp", "finnhub"),
+            ),
+            patch.object(valuation.shared, "ENABLE_SEC_REFERENCE", False),
+            patch.object(
+                valuation,
+                "fetch_us_income_statement_sources",
+                new=AsyncMock(return_value={"fmp": rows, "finnhub": peer_rows}),
+            ),
+            pytest.raises(
+                ValueError, match="neither a complete RPS nor EPS series is available"
+            ),
+        ):
+            asyncio.run(valuation.fetch_xps("u", "AAPL", q=2))
+
     @pytest.mark.parametrize(
         ("missing_field", "expected_column"),
         [
@@ -683,8 +790,9 @@ class TestSecValuation:
         ],
     )
     @pytest.mark.parametrize("peer_value", [None, 1000])
+    @pytest.mark.parametrize("bad_date", ["2025-09-30", "2025-12-31"])
     def test_fetch_xps_keeps_other_metric_when_one_history_is_incomplete(
-        self, missing_field, expected_column, peer_value
+        self, missing_field, expected_column, peer_value, bad_date
     ):
         rows: valuation.SourceIncomeStatementRows = {
             date.strftime("%Y-%m-%d"): {
@@ -697,7 +805,7 @@ class TestSecValuation:
         peer_rows: valuation.SourceIncomeStatementRows = {
             date: dict(row) for date, row in rows.items()
         }
-        peer_rows["2025-12-31"][missing_field] = peer_value
+        peer_rows[bad_date][missing_field] = peer_value
         with (
             patch.object(valuation.shared, "ENABLE_SEC_REFERENCE", False),
             patch.object(
@@ -752,7 +860,7 @@ class TestSecValuation:
         assert list(resolved["eps"]) == ["2025-06-30"]
         assert diagnostics_state.seen == {("AAPL", "2025-06-30")}
 
-    def test_revenue_consensus_failure_stays_in_its_quarter(self):
+    def test_older_revenue_consensus_failure_stays_in_its_quarter(self):
         source_rows = {
             "fmp": {
                 "2025-03-31": {
@@ -768,12 +876,12 @@ class TestSecValuation:
             },
             "finnhub": {
                 "2025-03-31": {
-                    "revenue": 100,
+                    "revenue": 120,
                     "weightedAverageShsOutDil": 10,
                     "epsDiluted": 1,
                 },
                 "2025-06-30": {
-                    "revenue": 120,
+                    "revenue": 100,
                     "weightedAverageShsOutDil": 10,
                     "epsDiluted": 1,
                 },
@@ -796,8 +904,8 @@ class TestSecValuation:
             )
 
         assert [quarter["revenue"] for quarter in resolved["rps"].values()] == [
-            100,
             None,
+            100,
         ]
         assert [
             quarter["weightedAverageShsOutDil"] for quarter in resolved["rps"].values()
@@ -806,12 +914,12 @@ class TestSecValuation:
             call.args[0].format(*call.args[1:]) for call in warning.call_args_list
         ]
         failure_log = next(log for log in rendered_logs if "field=revenue" in log)
-        assert "AAPL quarter 2025-06-30" in failure_log
-        assert "FMP      date=2025-06-30 value=100" in failure_log
-        assert "Finnhub  date=2025-06-30 value=120" in failure_log
-        assert "SEC      date=2025-06-30 value=missing" in failure_log
+        assert "AAPL quarter 2025-03-31" in failure_log
+        assert "FMP      date=2025-03-31 value=100" in failure_log
+        assert "Finnhub  date=2025-03-31 value=120" in failure_log
+        assert "SEC      date=2025-03-31 value=missing" in failure_log
 
-    def test_eps_consensus_failure_stays_in_its_quarter(self):
+    def test_older_eps_consensus_failure_stays_in_its_quarter(self):
         source_rows = {
             "fmp": {
                 "2025-03-31": {
@@ -829,12 +937,12 @@ class TestSecValuation:
                 "2025-03-31": {
                     "revenue": 100,
                     "weightedAverageShsOutDil": 10,
-                    "epsDiluted": 1,
+                    "epsDiluted": 2,
                 },
                 "2025-06-30": {
                     "revenue": 110,
                     "weightedAverageShsOutDil": 10,
-                    "epsDiluted": 2,
+                    "epsDiluted": 1,
                 },
             },
         }
@@ -855,8 +963,8 @@ class TestSecValuation:
             )
 
         assert [quarter["epsDiluted"] for quarter in resolved["eps"].values()] == [
-            1,
             None,
+            1,
         ]
         assert [quarter["revenue"] for quarter in resolved["rps"].values()] == [
             100,
@@ -866,10 +974,10 @@ class TestSecValuation:
             call.args[0].format(*call.args[1:]) for call in warning.call_args_list
         ]
         failure_log = next(log for log in rendered_logs if "field=epsDiluted" in log)
-        assert "MSFT quarter 2025-06-30" in failure_log
-        assert "FMP      date=2025-06-30 value=1" in failure_log
-        assert "Finnhub  date=2025-06-30 value=2" in failure_log
-        assert "SEC      date=2025-06-30 value=missing" in failure_log
+        assert "MSFT quarter 2025-03-31" in failure_log
+        assert "FMP      date=2025-03-31 value=1" in failure_log
+        assert "Finnhub  date=2025-03-31 value=2" in failure_log
+        assert "SEC      date=2025-03-31 value=missing" in failure_log
 
     def test_diluted_share_consensus_failure_keeps_eps(self):
         source_rows = {
@@ -905,16 +1013,14 @@ class TestSecValuation:
             )
 
         assert resolved == {
-            "rps": {"2025-03-31": {"revenue": 100, "weightedAverageShsOutDil": None}},
             "eps": {"2025-03-31": {"epsDiluted": 1}},
         }
 
         rendered_logs = [
             call.args[0].format(*call.args[1:]) for call in warning.call_args_list
         ]
-        failure_log = next(
-            log for log in rendered_logs if "field=weightedAverageShsOutDil" in log
-        )
+        failure_log = next(log for log in rendered_logs if "Dropping latest" in log)
+        assert "weightedAverageShsOutDil" in failure_log
         assert "AAPL quarter 2025-03-31" in failure_log
         assert "FMP      date=2025-03-31 value=10" in failure_log
         assert "Finnhub  date=2025-03-31 value=20" in failure_log

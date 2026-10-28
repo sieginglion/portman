@@ -1622,29 +1622,32 @@ def drop_incomplete_latest_us_quarter(
     aligned_quarters: AlignedQuarters,
     required_fields: list[str],
 ) -> AlignedQuarters:
-    """Ignore the newest quarter when required fields lack two usable sources."""
+    """Ignore only the newest quarter when any required field lacks consensus."""
     if not aligned_quarters:
         return aligned_quarters
 
     latest_date = max(aligned_quarters)
     latest_quarter = aligned_quarters[latest_date]
-    insufficient_fields = [
+    unresolved_fields = [
         field_name
         for field_name in required_fields
-        if len(usable_source_values(latest_quarter.fields.get(field_name, {}))) < 2
+        if resolve_source_consensus(
+            field_name, latest_quarter.fields.get(field_name, {})
+        )
+        is None
     ]
-    if not insufficient_fields:
+    if not unresolved_fields:
         return aligned_quarters
 
     logger.warning(
-        "Dropping latest {} quarter {}: fewer than 2 usable sources\n{}",
+        "Dropping latest {} quarter {}: required fields lack consensus\n{}",
         symbol,
         latest_date,
         "\n".join(
             format_source_field_block(
                 field_name, latest_quarter.fields.get(field_name, {}), latest_date
             )
-            for field_name in insufficient_fields
+            for field_name in unresolved_fields
         ),
     )
     return {
@@ -1698,7 +1701,8 @@ async def resolve_us_income_statement_quarters(
             required_fields,
         )
 
-    # 3. Select RPS and EPS windows independently; either can lack the latest quarter.
+    # 3. Only the latest quarter may fall back on missing sources or no consensus.
+    # Select RPS and EPS windows independently; older failures stay in each history.
     selected_groups = {}
     selected_quarters = {}
     selection_error = None
