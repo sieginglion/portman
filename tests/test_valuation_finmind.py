@@ -16,16 +16,37 @@ class TestFinMindValuation:
             index=valuation.pd.date_range("2025-01-01", periods=4, freq="QS"),
         )
 
-        result = valuation.complete_and_roll_xps(xps, 4)
+        result = valuation.complete_and_roll_xps(
+            {str(column): values for column, values in xps.items()}, 4
+        )
 
-        assert result.columns.tolist() == ["rps"]
+        assert list(result) == ["rps"]
         assert result["rps"].tolist() == [10.0]
 
     def test_complete_and_roll_xps_rejects_when_neither_column_is_complete(self):
         xps = valuation.pd.DataFrame({"rps": [1.0, None], "eps": [None, 1.0]})
 
         with pytest.raises(ValueError, match="neither a complete"):
-            valuation.complete_and_roll_xps(xps, 2)
+            valuation.complete_and_roll_xps(
+                {str(column): values for column, values in xps.items()}, 2
+            )
+
+    def test_complete_and_roll_xps_preserves_each_series_dates(self):
+        rps = valuation.pd.Series(
+            [1.0, 2.0, 3.0, 4.0, 5.0],
+            index=valuation.pd.date_range("2025-01-01", periods=5, freq="QS"),
+        )
+        eps = valuation.pd.Series(
+            [0.1, 0.2, 0.3, 0.4, 0.5],
+            index=rps.index + valuation.pd.Timedelta(days=15),
+        )
+
+        result = valuation.complete_and_roll_xps({"rps": rps, "eps": eps}, 4)
+
+        assert result["rps"].index.equals(rps.index[-2:])
+        assert result["eps"].index.equals(eps.index[-2:])
+        assert result["rps"].tolist() == [10.0, 14.0]
+        assert result["eps"].tolist() == pytest.approx([1.0, 1.4])
 
     def test_fetch_finmind_taiwan_rows_uses_bearer_authentication(self):
         cached_get = AsyncMock(return_value='{"data": [{"type": "EPS"}]}')
@@ -140,8 +161,8 @@ class TestFinMindValuation:
         assert result == expected
         now_mock.assert_called_once_with(tz=valuation.shared.MARKET_TO_TIMEZONE[market])
 
-    def test_build_xps_frame_returns_ttm_values_with_quarter_dates(self):
-        quarters = {
+    def test_build_xps_series_returns_ttm_values_with_quarter_dates(self):
+        quarters: valuation.ResolvedQuarters = {
             "2025-03-31": {
                 "revenue": 100,
                 "weightedAverageShsOutDil": 10,
@@ -169,31 +190,29 @@ class TestFinMindValuation:
             },
         }
 
-        frame = valuation.build_xps_frame(quarters, include_eps=True)
+        frame = valuation.build_xps_series(valuation.split_xps_quarters(quarters, True))
 
-        assert frame.columns.tolist() == ["rps", "eps"]
-        assert frame.index.strftime("%Y-%m-%d").tolist() == ["2026-01-01", "2026-04-01"]
+        assert list(frame) == ["rps", "eps"]
+        for values in frame.values():
+            assert valuation.pd.DatetimeIndex(values.index).strftime(
+                "%Y-%m-%d"
+            ).tolist() == ["2026-01-01", "2026-04-01"]
         assert frame["rps"].tolist() == [41.0, 41.0]
         assert frame["eps"].tolist() == [4.6, 5.0]
 
-        without_eps = valuation.build_xps_frame(
-            {
-                date: {
-                    "revenue": row["revenue"],
-                    "weightedAverageShsOutDil": row["weightedAverageShsOutDil"],
-                }
-                for date, row in quarters.items()
-            },
-            include_eps=False,
+        without_eps = valuation.build_xps_series(
+            valuation.split_xps_quarters(quarters, False)
         )
-        assert without_eps.columns.tolist() == ["rps"]
-        assert without_eps.index.strftime("%Y-%m-%d").tolist() == [
+        assert list(without_eps) == ["rps"]
+        assert valuation.pd.DatetimeIndex(without_eps["rps"].index).strftime(
+            "%Y-%m-%d"
+        ).tolist() == [
             "2026-01-01",
             "2026-04-01",
         ]
         assert without_eps["rps"].tolist() == [41.0, 41.0]
 
-    def test_build_xps_frame_keeps_each_complete_metric_independently(self):
+    def test_build_xps_series_keeps_each_complete_metric_independently(self):
         quarters = {
             "2025-03-31": {
                 "revenue": 100,
@@ -217,10 +236,37 @@ class TestFinMindValuation:
             },
         }
 
-        frame = valuation.build_xps_frame(quarters, include_eps=True)
+        frame = valuation.build_xps_series(valuation.split_xps_quarters(quarters, True))
 
-        assert frame.columns.tolist() == ["eps"]
+        assert list(frame) == ["eps"]
         assert frame["eps"].tolist() == [4.6]
+
+    def test_calc_px_aligns_each_series_and_preserves_its_update_dates(self):
+        xps = {
+            "rps": valuation.pd.Series(
+                [10.0, 14.0],
+                index=valuation.pd.to_datetime(["2025-12-31", "2026-01-03"]),
+            ),
+            "eps": valuation.pd.Series(
+                [2.0, 3.0],
+                index=valuation.pd.to_datetime(["2026-01-01", "2026-01-04"]),
+            ),
+        }
+        with (
+            patch.object(valuation.shared, "get_prices", return_value=[20, 24, 28, 30]),
+            patch.object(valuation, "fetch_xps", return_value=xps),
+            patch.object(
+                valuation.pd.Timestamp,
+                "now",
+                return_value=valuation.pd.Timestamp("2026-01-04", tz="UTC"),
+            ),
+        ):
+            px = asyncio.run(valuation.calc_px("u", "A", 1))
+
+        assert px["ps"].tolist() == pytest.approx([2, 2.4, 2, 30 / 14])
+        assert px["pe"].tolist() == [10, 12, 14, 10]
+        assert px.attrs["ps_dates"].equals(xps["rps"].index)
+        assert px.attrs["pe_dates"].equals(xps["eps"].index)
 
     def test_calc_px_allows_rps_with_insufficient_initial_coverage(self):
         prices = [20.0, 21.0, 22.0, 23.0]
@@ -234,7 +280,11 @@ class TestFinMindValuation:
 
         with (
             patch.object(valuation.shared, "get_prices", return_value=prices),
-            patch.object(valuation, "fetch_xps", return_value=xps),
+            patch.object(
+                valuation,
+                "fetch_xps",
+                return_value={str(column): values for column, values in xps.items()},
+            ),
             patch.object(
                 valuation.pd.Timestamp,
                 "now",
@@ -246,7 +296,8 @@ class TestFinMindValuation:
         assert valuation.pd.isna(px["ps"].iloc[0])
         assert px["ps"].iloc[1:].tolist() == [2.1, 2.2, 2.3]
         assert px["pe"].tolist() == [10.0, 10.5, 11.0, 11.5]
-        assert px.attrs["xps_dates"].equals(xps.index)
+        assert px.attrs["ps_dates"].equals(xps["rps"].index)
+        assert px.attrs["pe_dates"].equals(xps["eps"].index)
 
     def test_calc_px_allows_eps_with_insufficient_initial_coverage(self):
         prices = [20.0, 21.0, 22.0, 23.0]
@@ -260,7 +311,11 @@ class TestFinMindValuation:
 
         with (
             patch.object(valuation.shared, "get_prices", return_value=prices),
-            patch.object(valuation, "fetch_xps", return_value=xps),
+            patch.object(
+                valuation,
+                "fetch_xps",
+                return_value={str(column): values for column, values in xps.items()},
+            ),
             patch.object(
                 valuation.pd.Timestamp,
                 "now",
@@ -282,7 +337,11 @@ class TestFinMindValuation:
 
         with (
             patch.object(valuation.shared, "get_prices", return_value=prices),
-            patch.object(valuation, "fetch_xps", return_value=xps),
+            patch.object(
+                valuation,
+                "fetch_xps",
+                return_value={str(column): values for column, values in xps.items()},
+            ),
             patch.object(
                 valuation.pd.Timestamp,
                 "now",
@@ -300,7 +359,11 @@ class TestFinMindValuation:
 
         with (
             patch.object(valuation.shared, "get_prices", return_value=[None, 21.0]),
-            patch.object(valuation, "fetch_xps", return_value=xps),
+            patch.object(
+                valuation,
+                "fetch_xps",
+                return_value={str(column): values for column, values in xps.items()},
+            ),
             patch.object(
                 valuation.pd.Timestamp,
                 "now",
@@ -449,13 +512,13 @@ class TestFinMindValuation:
             rows = valuation.normalize_finmind_taiwan_income_statement_rows(
                 financial_rows, balance_rows
             )
-            frame = valuation.build_xps_frame(rows, include_eps=True)
+            frame = valuation.build_xps_series(valuation.split_xps_quarters(rows, True))
 
         assert all(
             rows[dates[index]]["weightedAverageShsOutDil"] is None
             for index in gap_positions
         )
-        assert frame.columns.tolist() == ["eps"]
+        assert list(frame) == ["eps"]
         assert frame["eps"].tolist() == [6.0]
         warning.assert_not_called()
 
@@ -627,7 +690,7 @@ class TestFinMindValuation:
     def test_resolved_taiwan_quarters_do_not_forward_include_eps(
         self, include_eps: bool
     ):
-        resolved = {
+        resolved: valuation.ResolvedQuarters = {
             "2025-06-30": {
                 "revenue": 110,
                 "weightedAverageShsOutDil": 22,
@@ -647,7 +710,7 @@ class TestFinMindValuation:
                 )
             )
 
-        assert result == resolved
+        assert result == valuation.split_xps_quarters(resolved, include_eps)
         fetch.assert_awaited_once_with("2330", 1)
 
     def test_select_latest_required_quarters_does_not_validate_metrics(self):

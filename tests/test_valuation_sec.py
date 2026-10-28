@@ -397,11 +397,8 @@ class TestSecValuation:
             )
 
         assert resolved == {
-            "2025-03-31": {
-                "revenue": 100,
-                "weightedAverageShsOutDil": 10,
-                "epsDiluted": 1,
-            }
+            "rps": {"2025-03-31": {"revenue": 100, "weightedAverageShsOutDil": 10}},
+            "eps": {"2025-03-31": {"epsDiluted": 1}},
         }
 
     def test_resolve_us_income_statement_quarters_without_eps(self):
@@ -440,7 +437,7 @@ class TestSecValuation:
         )
         diagnostics.assert_not_called()
         assert resolved == {
-            "2025-03-31": {"revenue": 100, "weightedAverageShsOutDil": 10}
+            "rps": {"2025-03-31": {"revenue": 100, "weightedAverageShsOutDil": 10}}
         }
 
     def test_resolve_us_income_statement_quarters_skips_diagnostics_when_disabled(
@@ -506,7 +503,7 @@ class TestSecValuation:
 
         add_sec_values.assert_not_awaited()
         assert resolved == {
-            "2025-03-31": {"revenue": 100, "weightedAverageShsOutDil": 10}
+            "rps": {"2025-03-31": {"revenue": 100, "weightedAverageShsOutDil": 10}}
         }
 
     def test_resolve_us_income_statement_quarters_drops_latest_single_source_row(
@@ -548,11 +545,8 @@ class TestSecValuation:
 
         add_sec_values.assert_awaited_once()
         assert resolved == {
-            "2025-03-31": {
-                "revenue": 100,
-                "weightedAverageShsOutDil": 10,
-                "epsDiluted": 1,
-            }
+            "rps": {"2025-03-31": {"revenue": 100, "weightedAverageShsOutDil": 10}},
+            "eps": {"2025-03-31": {"epsDiluted": 1}},
         }
 
     def test_resolve_us_income_statement_quarters_merges_sec_before_dropping_latest(
@@ -596,17 +590,23 @@ class TestSecValuation:
 
         add_sec_values.assert_awaited_once()
         assert resolved == {
-            "2025-06-30": {
-                "revenue": 120.5,
-                "weightedAverageShsOutDil": 10,
-                "epsDiluted": 1.2,
-            }
+            "rps": {"2025-06-30": {"revenue": 120.5, "weightedAverageShsOutDil": 10}},
+            "eps": {"2025-06-30": {"epsDiluted": 1.2}},
         }
 
     @pytest.mark.parametrize("include_eps", [True, False])
-    @pytest.mark.parametrize("missing_field", [None, *valuation.ALL_XPS_FIELDS])
+    @pytest.mark.parametrize(
+        "missing_fields",
+        [
+            (),
+            ("revenue",),
+            ("weightedAverageShsOutDil",),
+            valuation.BASE_XPS_FIELDS,
+            ("epsDiluted",),
+        ],
+    )
     def test_fetch_xps_uses_previous_quarters_when_latest_lacks_sources(
-        self, include_eps: bool, missing_field: str | None
+        self, include_eps: bool, missing_fields: tuple[str, ...]
     ):
         dates = pd.date_range("2024-03-31", periods=6, freq="QE")
         fmp_rows: valuation.SourceIncomeStatementRows = {
@@ -621,10 +621,11 @@ class TestSecValuation:
             date: dict(row) for date, row in fmp_rows.items()
         }
         latest_date = dates[-1].strftime("%Y-%m-%d")
-        if missing_field is None:
+        if not missing_fields:
             finnhub_rows.pop(latest_date)
         else:
-            finnhub_rows[latest_date][missing_field] = None
+            for field in missing_fields:
+                finnhub_rows[latest_date][field] = None
         fetch_sources = AsyncMock(
             return_value={"fmp": fmp_rows, "finnhub": finnhub_rows}
         )
@@ -646,28 +647,74 @@ class TestSecValuation:
             )
 
         fetch_sources.assert_awaited_once_with("PGR", 6)
-        dropped = missing_field != "epsDiluted" or include_eps
-        if dropped:
-            assert pd.DatetimeIndex(frame.index).strftime("%Y-%m-%d").tolist() == [
-                "2025-01-01",
-                "2025-04-01",
-            ]
-            assert frame["rps"].tolist() == pytest.approx([10, 14])
-            assert ("PGR", latest_date) not in diagnostics.seen
-        else:
-            assert pd.DatetimeIndex(frame.index).strftime("%Y-%m-%d").tolist() == [
-                "2025-04-01",
-                "2025-07-01",
-            ]
-            assert frame["rps"].tolist() == pytest.approx([14, 18])
-            if include_eps:
-                assert ("PGR", latest_date) in diagnostics.seen
+        rps_dropped = not missing_fields or bool(
+            set(missing_fields) & set(valuation.BASE_XPS_FIELDS)
+        )
+        rps = frame["rps"]
+        expected_dates = ["2025-01-01", "2025-04-01", "2025-07-01"]
+        assert pd.DatetimeIndex(rps.index).strftime("%Y-%m-%d").tolist() == (
+            expected_dates[:2] if rps_dropped else expected_dates[1:]
+        )
+        assert rps.tolist() == pytest.approx([10, 14] if rps_dropped else [14, 18])
         if include_eps:
-            assert frame["eps"].tolist() == pytest.approx([1, 1.4])
+            eps_dropped = not missing_fields or "epsDiluted" in missing_fields
+            eps = frame["eps"]
+            assert pd.DatetimeIndex(eps.index).strftime("%Y-%m-%d").tolist() == (
+                expected_dates[:2] if eps_dropped else expected_dates[1:]
+            )
+            assert eps.tolist() == pytest.approx(
+                [1, 1.4] if eps_dropped else [1.4, 1.8]
+            )
+            different_windows = rps_dropped != eps_dropped
+            assert len(diagnostics.seen) == (6 if different_windows else 5)
+            assert (("PGR", latest_date) in diagnostics.seen) == (
+                not rps_dropped or not eps_dropped
+            )
         else:
-            assert frame.columns.tolist() == ["rps"]
-        assert not frame.isna().to_numpy().any()
-        assert len(diagnostics.seen) == (5 if include_eps else 0)
+            assert list(frame) == ["rps"]
+            assert diagnostics.seen == set()
+
+    @pytest.mark.parametrize(
+        ("missing_field", "expected_column"),
+        [
+            ("revenue", "eps"),
+            ("weightedAverageShsOutDil", "eps"),
+            ("epsDiluted", "rps"),
+        ],
+    )
+    @pytest.mark.parametrize("peer_value", [None, 1000])
+    def test_fetch_xps_keeps_other_metric_when_one_history_is_incomplete(
+        self, missing_field, expected_column, peer_value
+    ):
+        rows: valuation.SourceIncomeStatementRows = {
+            date.strftime("%Y-%m-%d"): {
+                "revenue": 100,
+                "weightedAverageShsOutDil": 10,
+                "epsDiluted": 1,
+            }
+            for date in pd.date_range("2025-03-31", periods=4, freq="QE")
+        }
+        peer_rows: valuation.SourceIncomeStatementRows = {
+            date: dict(row) for date, row in rows.items()
+        }
+        peer_rows["2025-12-31"][missing_field] = peer_value
+        with (
+            patch.object(valuation.shared, "ENABLE_SEC_REFERENCE", False),
+            patch.object(
+                valuation,
+                "fetch_us_income_statement_sources",
+                new=AsyncMock(return_value={"fmp": rows, "finnhub": peer_rows}),
+            ),
+        ):
+            frame = asyncio.run(valuation.fetch_xps("u", "AAPL", q=1))
+
+        assert list(frame) == [expected_column]
+        assert pd.DatetimeIndex(frame[expected_column].index).strftime(
+            "%Y-%m-%d"
+        ).tolist() == ["2026-01-01"]
+        assert frame[expected_column].tolist() == [
+            4 if expected_column == "eps" else 40
+        ]
 
     def test_resolve_us_income_statement_quarters_records_selected_quarters_only(
         self,
@@ -701,7 +748,8 @@ class TestSecValuation:
                 )
             )
 
-        assert list(resolved) == ["2025-06-30"]
+        assert list(resolved["rps"]) == ["2025-06-30"]
+        assert list(resolved["eps"]) == ["2025-06-30"]
         assert diagnostics_state.seen == {("AAPL", "2025-06-30")}
 
     def test_revenue_consensus_failure_stays_in_its_quarter(self):
@@ -747,9 +795,12 @@ class TestSecValuation:
                 )
             )
 
-        assert [quarter["revenue"] for quarter in resolved.values()] == [100, None]
+        assert [quarter["revenue"] for quarter in resolved["rps"].values()] == [
+            100,
+            None,
+        ]
         assert [
-            quarter["weightedAverageShsOutDil"] for quarter in resolved.values()
+            quarter["weightedAverageShsOutDil"] for quarter in resolved["rps"].values()
         ] == [10, 10]
         rendered_logs = [
             call.args[0].format(*call.args[1:]) for call in warning.call_args_list
@@ -803,8 +854,14 @@ class TestSecValuation:
                 )
             )
 
-        assert [quarter["epsDiluted"] for quarter in resolved.values()] == [1, None]
-        assert [quarter["revenue"] for quarter in resolved.values()] == [100, 110]
+        assert [quarter["epsDiluted"] for quarter in resolved["eps"].values()] == [
+            1,
+            None,
+        ]
+        assert [quarter["revenue"] for quarter in resolved["rps"].values()] == [
+            100,
+            110,
+        ]
         rendered_logs = [
             call.args[0].format(*call.args[1:]) for call in warning.call_args_list
         ]
@@ -848,11 +905,8 @@ class TestSecValuation:
             )
 
         assert resolved == {
-            "2025-03-31": {
-                "revenue": 100,
-                "weightedAverageShsOutDil": None,
-                "epsDiluted": 1,
-            }
+            "rps": {"2025-03-31": {"revenue": 100, "weightedAverageShsOutDil": None}},
+            "eps": {"2025-03-31": {"epsDiluted": 1}},
         }
 
         rendered_logs = [

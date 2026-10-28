@@ -130,8 +130,10 @@ class TestPxRoute:
             },
             index=pd.to_datetime(["2026-01-01", "2026-01-02"]),
         )
-        xps_dates = pd.DatetimeIndex(pd.to_datetime(["2025-12-31", "2026-01-02"]))
-        px.attrs["xps_dates"] = xps_dates
+        ps_dates = pd.DatetimeIndex([])
+        pe_dates = pd.DatetimeIndex(pd.to_datetime(["2025-12-31", "2026-01-02"]))
+        px.attrs["ps_dates"] = ps_dates
+        px.attrs["pe_dates"] = pe_dates
 
         def close_and_return(fig, plt):
             plt.close(fig)
@@ -148,9 +150,8 @@ class TestPxRoute:
         ps, pe = (call.args[1] for call in plot.call_args_list)
         assert ps.empty
         assert pe.equals(px["pe"])
-        assert all(
-            call.kwargs["xps_dates"].equals(xps_dates) for call in plot.call_args_list
-        )
+        assert plot.call_args_list[0].kwargs["xps_dates"].equals(ps_dates)
+        assert plot.call_args_list[1].kwargs["xps_dates"].equals(pe_dates)
 
 
 class TestFigureToPngResponse:

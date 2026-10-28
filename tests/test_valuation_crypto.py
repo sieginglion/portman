@@ -102,8 +102,10 @@ class TestTokenTerminalValuation:
                 rows, periods=12, include_eps=True
             )
 
-        result = valuation.complete_and_roll_xps(inputs, 12)
-        assert result.columns.tolist() == ["eps"]
+        result = valuation.complete_and_roll_xps(
+            {str(column): values for column, values in inputs.items()}, 12
+        )
+        assert list(result) == ["eps"]
         assert result["eps"].tolist() == [12.0]
 
     def test_missing_crypto_month_is_left_for_the_shared_gate(self):
@@ -120,9 +122,11 @@ class TestTokenTerminalValuation:
                 rows, periods=12, include_eps=True
             )
 
-        result = valuation.complete_and_roll_xps(inputs, 12)
+        result = valuation.complete_and_roll_xps(
+            {str(column): values for column, values in inputs.items()}, 12
+        )
         assert valuation.pd.isna(inputs.loc["2025-07-01", "rps"])
-        assert result.columns.tolist() == ["eps"]
+        assert list(result) == ["eps"]
         assert result["eps"].tolist() == [12.0]
 
     def test_missing_supply_fails_at_the_shared_gate(self):
@@ -138,7 +142,9 @@ class TestTokenTerminalValuation:
             )
 
         with pytest.raises(ValueError, match="neither a complete"):
-            valuation.complete_and_roll_xps(inputs, 12)
+            valuation.complete_and_roll_xps(
+                {str(column): values for column, values in inputs.items()}, 12
+            )
 
     @pytest.mark.parametrize("invalid_supply", [0, -1, "not-a-number"])
     def test_invalid_supply_fails_at_the_shared_gate(self, invalid_supply):
@@ -156,7 +162,9 @@ class TestTokenTerminalValuation:
             )
 
         with pytest.raises(ValueError, match="neither a complete"):
-            valuation.complete_and_roll_xps(inputs, 12)
+            valuation.complete_and_roll_xps(
+                {str(column): values for column, values in inputs.items()}, 12
+            )
 
     def test_fetch_xps_returns_quarterly_crypto_samples(self):
         now = valuation.pd.Timestamp("2026-04-15", tz="UTC")
@@ -170,7 +178,9 @@ class TestTokenTerminalValuation:
         ):
             frame = asyncio.run(valuation.fetch_xps("c", "UNI", q=1))
 
-        assert frame.index.strftime("%Y-%m-%d").tolist() == ["2026-04-01"]
+        assert valuation.pd.DatetimeIndex(frame["rps"].index).strftime(
+            "%Y-%m-%d"
+        ).tolist() == ["2026-04-01"]
 
     def test_fetch_xps_returns_every_third_month_for_multiple_quarters(self):
         now = valuation.pd.Timestamp("2026-07-15", tz="UTC")
@@ -184,7 +194,9 @@ class TestTokenTerminalValuation:
         ):
             frame = asyncio.run(valuation.fetch_xps("c", "UNI", q=2))
 
-        assert frame.index.strftime("%Y-%m-%d").tolist() == [
+        assert valuation.pd.DatetimeIndex(frame["rps"].index).strftime(
+            "%Y-%m-%d"
+        ).tolist() == [
             "2026-04-01",
             "2026-07-01",
         ]
@@ -197,7 +209,9 @@ class TestTokenTerminalValuation:
         with (
             patch.object(valuation.shared, "get_prices", return_value=[2.0]),
             patch.object(
-                valuation, "fetch_token_terminal_monthly_xps", return_value=xps
+                valuation,
+                "fetch_token_terminal_monthly_xps",
+                return_value={str(column): values for column, values in xps.items()},
             ) as fetch_monthly_xps,
             patch.object(valuation.pd.Timestamp, "now", return_value=now),
         ):

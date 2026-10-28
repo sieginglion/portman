@@ -75,6 +75,8 @@ class SecQuarterMetadata:
 type AlignedQuarters = dict[str, AlignedQuarter]
 type ResolvedQuarter = dict[str, XpsValue]
 type ResolvedQuarters = dict[str, ResolvedQuarter]
+type ResolvedXpsQuarters = dict[str, ResolvedQuarters]
+type XpsSeries = dict[str, pd.Series]
 
 
 @dataclass(frozen=True)
@@ -152,6 +154,7 @@ BASE_XPS_FIELDS = ("revenue", "weightedAverageShsOutDil")
 EPS_XPS_FIELD = "epsDiluted"
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
 XPS_COLUMNS = ("rps", "eps")
+XPS_FIELD_GROUPS = {"rps": BASE_XPS_FIELDS, "eps": (EPS_XPS_FIELD,)}
 
 
 def xps_field_map(shares_field: str, eps_field: str) -> dict[str, str]:
@@ -618,11 +621,11 @@ def build_token_terminal_xps_frame(
 
 async def fetch_token_terminal_monthly_xps(
     symbol: str, m: int, include_eps: bool
-) -> pd.DataFrame:
+) -> XpsSeries:
     inputs = build_token_terminal_xps_frame(
         await fetch_token_terminal_financial_statement(symbol), m + 11, include_eps
     )
-    return complete_and_roll_xps(inputs, 12)
+    return complete_and_roll_xps({column: inputs[column] for column in XPS_COLUMNS}, 12)
 
 
 def pivot_finmind_taiwan_rows(rows: list[dict]) -> pd.DataFrame:
@@ -788,6 +791,20 @@ def select_latest_required_quarters[T](
 
 def required_xps_fields(include_eps: bool) -> list[str]:
     return [*BASE_XPS_FIELDS, *((EPS_XPS_FIELD,) if include_eps else ())]
+
+
+def split_xps_quarters(
+    quarters: ResolvedQuarters, include_eps: bool
+) -> ResolvedXpsQuarters:
+    """Separate normalized provider fields into independent metric histories."""
+    return {
+        column: {
+            date: {field: row.get(field) for field in fields}
+            for date, row in quarters.items()
+        }
+        for column, fields in XPS_FIELD_GROUPS.items()
+        if column != "eps" or include_eps
+    }
 
 
 def date_str(date: pd.Timestamp) -> str:
@@ -1666,8 +1683,8 @@ async def resolve_us_income_statement_quarters(
     source_rows: IncomeStatementSources,
     limit: int,
     include_eps: bool,
-) -> ResolvedQuarters:
-    """Align US provider data, add SEC references, then resolve consensus values."""
+) -> ResolvedXpsQuarters:
+    """Align provider data and return separate RPS and EPS quarterly histories."""
     required_fields = required_xps_fields(include_eps)
 
     # 1. Group provider rows that describe the same fiscal quarter.
@@ -1681,27 +1698,47 @@ async def resolve_us_income_statement_quarters(
             required_fields,
         )
 
-    # 3. Skip an under-supported newest quarter before selecting the window.
-    eligible_quarters = drop_incomplete_latest_us_quarter(
-        symbol, aligned_quarters, required_fields
-    )
-    selected_quarters = select_latest_required_quarters(
-        eligible_quarters, limit, symbol=symbol, quarter_label="aligned quarters"
-    )
+    # 3. Select RPS and EPS windows independently; either can lack the latest quarter.
+    selected_groups = {}
+    selected_quarters = {}
+    selection_error = None
+    for column, fields in XPS_FIELD_GROUPS.items():
+        if column == "eps" and not include_eps:
+            continue
+        eligible_quarters = drop_incomplete_latest_us_quarter(
+            symbol, aligned_quarters, list(fields)
+        )
+        try:
+            selected = select_latest_required_quarters(
+                eligible_quarters,
+                limit,
+                symbol=symbol,
+                quarter_label="aligned quarters",
+            )
+        except ValueError as exc:
+            selection_error = exc
+            logger.warning("Skipping {} for {}: {}", column, symbol, exc)
+            continue
+        selected_groups[column] = selected
+        selected_quarters.update(selected)
+    if not selected_groups:
+        assert selection_error is not None
+        raise selection_error
 
     # 4. Optionally record diagnostics for the same quarters that will be returned.
     if include_eps and shared.ENABLE_XPS_DIAGNOSTICS:
         record_xps_diagnostics(symbol, selected_quarters)
 
     # 5. Reduce each field to the mean of its winning consensus group.
-    resolved_quarters = {
-        anchor_date: resolve_us_quarter_consensus(
-            symbol, anchor_date, quarter, required_fields
-        )
-        for anchor_date, quarter in selected_quarters.items()
+    return {
+        column: {
+            anchor_date: resolve_us_quarter_consensus(
+                symbol, anchor_date, quarter, list(XPS_FIELD_GROUPS[column])
+            )
+            for anchor_date, quarter in selected.items()
+        }
+        for column, selected in selected_groups.items()
     }
-
-    return resolved_quarters
 
 
 async def fetch_resolved_income_statement_quarters(
@@ -1709,53 +1746,52 @@ async def fetch_resolved_income_statement_quarters(
     symbol: str,
     limit: int,
     include_eps: bool,
-) -> ResolvedQuarters:
+) -> ResolvedXpsQuarters:
     if market == "t":
-        return await fetch_finmind_taiwan_income_statements(symbol, limit)
-
-    if market != "u":
+        quarters = await fetch_finmind_taiwan_income_statements(symbol, limit)
+    elif market == "j":
         fmp_rows = await fetch_fmp_income_statements(market, symbol, limit)
-        return select_latest_required_quarters(fmp_rows, limit, symbol=symbol)
-
-    source_rows = await fetch_us_income_statement_sources(symbol, limit + 1)
-    return await resolve_us_income_statement_quarters(
-        symbol,
-        source_rows,
-        limit,
-        include_eps,
-    )
+        quarters = select_latest_required_quarters(fmp_rows, limit, symbol=symbol)
+    else:
+        source_rows = await fetch_us_income_statement_sources(symbol, limit + 1)
+        return await resolve_us_income_statement_quarters(
+            symbol, source_rows, limit, include_eps
+        )
+    return split_xps_quarters(quarters, include_eps)
 
 
 def build_quarterly_xps_inputs(
-    resolved_quarters: ResolvedQuarters, include_eps: bool
-) -> pd.DataFrame:
+    resolved_quarters: ResolvedXpsQuarters,
+) -> XpsSeries:
     """Derive dated quarterly RPS/EPS inputs without validating completeness."""
-    df = pd.DataFrame.from_dict(resolved_quarters, orient="index")
-    df.index = pd.to_datetime(df.index) + pd.Timedelta(days=1)
-    df = df.reindex(columns=required_xps_fields(include_eps))
-    inputs = pd.DataFrame(index=df.index)
-    inputs["rps"] = df["revenue"] / df["weightedAverageShsOutDil"]
-    inputs["eps"] = df[EPS_XPS_FIELD] if include_eps else np.nan
-    return inputs.reindex(columns=XPS_COLUMNS)
+    inputs = {}
+    for column, quarters in resolved_quarters.items():
+        df = pd.DataFrame.from_dict(quarters, orient="index")
+        df.index = pd.to_datetime(df.index) + pd.Timedelta(days=1)
+        df = df.reindex(columns=list(XPS_FIELD_GROUPS[column]))
+        inputs[column] = (
+            df["revenue"] / df["weightedAverageShsOutDil"]
+            if column == "rps"
+            else df[EPS_XPS_FIELD]
+        ).rename(column)
+    return inputs
 
 
-def complete_and_roll_xps(xps: pd.DataFrame, window: int) -> pd.DataFrame:
-    """Keep complete RPS/EPS columns, then apply the existing rolling TTM logic."""
-    complete = (
-        xps.reindex(columns=XPS_COLUMNS).sort_index().dropna(axis="columns", how="any")
-    )
-    if complete.empty:
+def complete_and_roll_xps(xps: XpsSeries, window: int) -> XpsSeries:
+    """Validate and roll each series on its own dates."""
+    complete = {
+        column: values.sort_index().rolling(window).sum().iloc[window - 1 :]
+        for column, values in xps.items()
+        if not values.empty and values.notna().all()
+    }
+    if not complete:
         raise ValueError("neither a complete RPS nor EPS series is available")
-    return complete.rolling(window).sum().iloc[window - 1 :]
+    return complete
 
 
-def build_xps_frame(
-    resolved_quarters: ResolvedQuarters, include_eps: bool
-) -> pd.DataFrame:
-    """Build quarterly inputs, then use the shared completeness/TTM path."""
-    return complete_and_roll_xps(
-        build_quarterly_xps_inputs(resolved_quarters, include_eps), 4
-    )
+def build_xps_series(resolved_quarters: ResolvedXpsQuarters) -> XpsSeries:
+    """Roll each metric over its selected quarterly window, preserving failures."""
+    return complete_and_roll_xps(build_quarterly_xps_inputs(resolved_quarters), 4)
 
 
 async def fetch_xps(
@@ -1763,18 +1799,18 @@ async def fetch_xps(
     symbol: str,
     q: int,
     include_eps: bool = True,
-) -> pd.DataFrame:
+) -> XpsSeries:
     if market == "c":
-        monthly_frame = await fetch_token_terminal_monthly_xps(
+        monthly_series = await fetch_token_terminal_monthly_xps(
             symbol, q * 3, include_eps
         )
-        return monthly_frame.iloc[2::3]
+        return {column: values.iloc[2::3] for column, values in monthly_series.items()}
 
     limit = q + 3
     resolved_quarters = await fetch_resolved_income_statement_quarters(
         market, symbol, limit, include_eps
     )
-    return build_xps_frame(resolved_quarters, include_eps)
+    return build_xps_series(resolved_quarters)
 
 
 async def calc_px(
@@ -1789,23 +1825,28 @@ async def calc_px(
         shared.get_prices(market, symbol, 91 * q, False),
         xps_task,
     )
-    xps = xps.reindex(columns=["rps", "eps"])
     index = pd.date_range(
         end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date(),
         periods=len(prices),
     )
-    df = (
-        pd.DataFrame({"price": prices}, index)
-        .join(xps, how="outer")
-        .ffill()
-        .tail(len(index))
-    )
-    if pd.isna(df["price"].iloc[0]):
+    price = pd.Series(prices, index=index, name="price").ffill()
+    if pd.isna(price.iloc[0]):
         raise ValueError("initial price is missing")
-    if df[["rps", "eps"]].iloc[0].isna().all():
+    result = pd.DataFrame(index=index)
+    initial_values = []
+    for column, ratio in (("rps", "ps"), ("eps", "pe")):
+        values = xps.get(column, pd.Series(dtype=float, index=pd.DatetimeIndex([])))
+        denominator = (
+            values.reindex(values.index.union(index))
+            .sort_index()
+            .ffill()
+            .reindex(index)
+        )
+        initial_values.append(denominator.iloc[0])
+        if column == "eps":
+            denominator = denominator.where(denominator > 0)
+        result[ratio] = price / denominator
+        result.attrs[f"{ratio}_dates"] = pd.DatetimeIndex(values.index)
+    if all(pd.isna(value) for value in initial_values):
         raise ValueError("initial RPS and EPS values are missing")
-    df["ps"] = df["price"] / df["rps"]
-    df["pe"] = df["price"] / df["eps"].where(df["eps"] > 0)
-    result = df[["ps", "pe"]]
-    result.attrs["xps_dates"] = pd.DatetimeIndex(xps.index)
     return result

@@ -158,9 +158,9 @@ def test_jpm_provider_pipeline_resolves_gross_revenue_before_rps(jpm_responses):
         "simfin": GROSS_REVENUE,
     }
     assert aligned.fields["epsDiluted"]["tiingo"] == 7.7
-    assert resolved[QUARTER_END]["revenue"] == GROSS_REVENUE
-    inputs = valuation.build_quarterly_xps_inputs(resolved, True)
-    assert inputs.iloc[0]["rps"] == pytest.approx(GROSS_REVENUE / DILUTED_SHARES)
+    assert resolved["rps"][QUARTER_END]["revenue"] == GROSS_REVENUE
+    inputs = valuation.build_quarterly_xps_inputs(resolved)
+    assert inputs["rps"].iloc[0] == pytest.approx(GROSS_REVENUE / DILUTED_SHARES)
     # Alignment preserves the original provider period for diagnostics.
     assert source_rows["tiingo"][QUARTER_END]["revenue"] == NET_REVENUE
 

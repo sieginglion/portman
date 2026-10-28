@@ -267,13 +267,28 @@ async def get_px(
     px = await valuation.calc_px(market, symbol, q)
     ps = px["ps"].dropna()
     pe = px["pe"].dropna()
-    xps_dates = pd.DatetimeIndex(px.attrs.get("xps_dates", []))
 
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), dpi=160, sharex=True)
     ps_ax, pe_ax = axes
 
-    plot_valuation_series(ps_ax, ps, symbol, "P/S", q, "#2563eb", xps_dates=xps_dates)
-    plot_valuation_series(pe_ax, pe, symbol, "P/E", q, "#dc2626", xps_dates=xps_dates)
+    plot_valuation_series(
+        ps_ax,
+        ps,
+        symbol,
+        "P/S",
+        q,
+        "#2563eb",
+        xps_dates=pd.DatetimeIndex(px.attrs.get("ps_dates", [])),
+    )
+    plot_valuation_series(
+        pe_ax,
+        pe,
+        symbol,
+        "P/E",
+        q,
+        "#dc2626",
+        xps_dates=pd.DatetimeIndex(px.attrs.get("pe_dates", [])),
+    )
 
     return figure_to_png_response(fig, plt)
 
