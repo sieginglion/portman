@@ -198,8 +198,9 @@ async def get_price_series(
     symbol: str,
     n: int,
     to_usd: bool,
+    adjust_dividends: bool = True,
 ):
-    cache_key = (__name__, "get_price_series", market, symbol, to_usd)
+    cache_key = (__name__, "get_price_series", market, symbol, to_usd, adjust_dividends)
     cached_prices = cache.get(cache_key)
     if cached_prices is not None and len(cached_prices) >= n:
         return cached_prices.iloc[-n:]
@@ -209,7 +210,9 @@ async def get_price_series(
     prices = await (
         crypto.get_price_series(symbol, n)
         if market == "c"
-        else stock.get_price_series(market, symbol, n, to_usd)
+        else stock.get_price_series(
+            market, symbol, n, to_usd, adjust_dividends=adjust_dividends
+        )
     )
     cache.set(cache_key, prices, PRICE_CACHE_TTL)
     return prices

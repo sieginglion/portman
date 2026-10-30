@@ -242,6 +242,47 @@ class TestStock:
             result, pd.Series([95.0, 95.0, 96.0], index=dates)
         )
 
+    @pytest.mark.parametrize("adjust_dividends", [True, False])
+    @pytest.mark.parametrize(
+        ("market", "to_usd"), [("u", False), ("t", False), ("t", True)]
+    )
+    def test_price_series_dividend_option_preserves_currency_conversion(
+        self, market, to_usd, adjust_dividends
+    ):
+        client = AsyncClientStub()
+        prices = pd.Series([100.0, 95.0])
+        with (
+            patch.object(stock, "AsyncClient", return_value=client),
+            patch.object(
+                stock, "get_fmp_unadjusted", new=AsyncMock(return_value=prices)
+            ),
+            patch.object(
+                stock,
+                "get_fmp_dividends",
+                new=AsyncMock(return_value=pd.Series([0.0, 5.0])),
+            ) as dividends,
+            patch.object(
+                stock, "get_rates", new=AsyncMock(return_value=pd.Series([10.0, 10.0]))
+            ) as rates,
+        ):
+            result = asyncio.run(
+                stock.get_price_series(
+                    market, "TEST", 2, to_usd, adjust_dividends=adjust_dividends
+                )
+            )
+
+        expected = pd.Series([95.0, 95.0]) if adjust_dividends else prices
+        if to_usd:
+            expected = expected / 10
+            rates.assert_awaited_once_with(client, 2)
+        else:
+            rates.assert_not_awaited()
+        pd.testing.assert_series_equal(result, expected)
+        if adjust_dividends:
+            dividends.assert_awaited_once_with(client, market, "TEST", 2)
+        else:
+            dividends.assert_not_awaited()
+
     def test_get_prices_converts_taiwan_prices_to_usd(self):
         client = AsyncClientStub()
         prices = pd.Series([300.0, 600.0])

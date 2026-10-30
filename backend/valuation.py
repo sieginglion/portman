@@ -1822,7 +1822,7 @@ async def calc_px(
         else fetch_xps(market, symbol, q + EXTRA_Q)
     )
     price, xps = await asyncio.gather(
-        shared.get_price_series(market, symbol, 91 * q, False),
+        shared.get_price_series(market, symbol, 91 * q, False, adjust_dividends=False),
         xps_task,
     )
     price = price.ffill()

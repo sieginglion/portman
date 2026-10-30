@@ -133,15 +133,20 @@ async def get_rates(sess: AsyncClient, n: int):
 
 
 async def get_price_series(
-    market: Literal["j", "t", "u"], symbol: str, n: int, to_usd: bool
+    market: Literal["j", "t", "u"],
+    symbol: str,
+    n: int,
+    to_usd: bool,
+    adjust_dividends: bool = True,
 ):
+    fetch_prices = get_adjusted if adjust_dividends else get_fmp_unadjusted
     async with AsyncClient(timeout=60, params={"apikey": FMP_API_KEY}) as sess:
         if market == "t" and to_usd:
             prices, rates = await asyncio.gather(
-                get_adjusted(sess, market, symbol, n), get_rates(sess, n)
+                fetch_prices(sess, market, symbol, n), get_rates(sess, n)
             )
             return prices / rates.reindex(prices.index, method="ffill")
-        return await get_adjusted(sess, market, symbol, n)
+        return await fetch_prices(sess, market, symbol, n)
 
 
 async def get_prices(market: Literal["j", "t", "u"], symbol: str, n: int, to_usd: bool):
