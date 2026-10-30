@@ -190,7 +190,7 @@ async def get_scores(
     ps, pe = df["ps"], df["pe"]
     return (
         None if pd.isna(ps.iloc[0]) else calc_downside_score(ps, u),
-        None if pd.isna(pe.iloc[0]) else calc_downside_score(pe, u),
+        None if pe.isna().any() else calc_downside_score(pe, u),
     )
 
 

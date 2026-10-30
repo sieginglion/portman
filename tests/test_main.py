@@ -207,6 +207,7 @@ class TestScoresRoute:
         [
             ({"ps": [None, 1], "pe": [1, 1]}, [None, 0.0]),
             ({"ps": [1, 1], "pe": [None, 1]}, [0.0, None]),
+            ({"ps": [1, 1, 1], "pe": [1, None, 1]}, [0.0, None]),
         ],
     )
     def test_stock_scores_allow_either_multiple_to_be_unavailable(
