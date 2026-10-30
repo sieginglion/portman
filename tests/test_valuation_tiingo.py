@@ -522,6 +522,57 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
             headers={"Authorization": f"Token {valuation.TIINGO_API_KEY}"},
         )
 
+    @pytest.mark.parametrize("order", [(0, 1, 2), (2, 1, 0), (2, 0, 1)])
+    @pytest.mark.parametrize(
+        ("limit", "expected_dates"),
+        [
+            (2, ["2025-06-30", "2025-09-30"]),
+            (3, ["2025-03-31", "2025-06-30", "2025-09-30"]),
+            (4, ["2025-03-31", "2025-06-30", "2025-09-30"]),
+        ],
+    )
+    def test_tiingo_fetch_returns_latest_quarters(self, order, limit, expected_dates):
+        statements = [
+            {
+                "date": date,
+                "quarter": quarter,
+                "statementData": {
+                    "incomeStatement": [
+                        {"dataCode": "revenue", "value": revenue},
+                        {"dataCode": "shareswaDil", "value": 20},
+                        {"dataCode": "epsDil", "value": 1.5},
+                    ]
+                },
+            }
+            for date, quarter, revenue in [
+                ("2025-03-31", 1, 100),
+                ("2025-06-30", 2, 200),
+                ("2025-09-30", 3, 300),
+            ]
+        ]
+        payload = [statements[index] for index in order]
+        with patch.object(
+            valuation.shared,
+            "cached_get",
+            new=AsyncMock(return_value=json.dumps(payload)),
+        ):
+            rows = asyncio.run(valuation.fetch_tiingo_income_statements("HOOD", limit))
+
+        assert list(rows) == expected_dates
+        expected_revenue = {
+            "2025-03-31": 100,
+            "2025-06-30": 200,
+            "2025-09-30": 300,
+        }
+        assert rows == {
+            date: {
+                "revenue": expected_revenue[date],
+                "weightedAverageShsOutDil": 20,
+                "epsDiluted": 1.5,
+            }
+            for date in expected_dates
+        }
+
     def test_normalize_tiingo_income_statement_rows_uses_quarterly_income_fields(self):
         statements = [
             {

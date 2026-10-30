@@ -1167,7 +1167,8 @@ async def fetch_tiingo_income_statements(symbol: str, limit: int) -> dict[str, d
         params,
         headers={"Authorization": f"Token {TIINGO_API_KEY}"},
     )
-    return normalize_tiingo_income_statement_rows(json.loads(text))
+    rows = normalize_tiingo_income_statement_rows(json.loads(text))
+    return dict(sorted(rows.items())[-limit:])
 
 
 def normalize_simfin_income_statement_rows(
