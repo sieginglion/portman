@@ -32,11 +32,17 @@ def aligned_quarter(fields):
 
 
 class TestDateMatching:
-    def test_select_closest_date_key_uses_six_day_limit_and_stable_tiebreaking(self):
+    def test_select_closest_date_key_uses_fourteen_day_limit_and_stable_tiebreaking(self):
         cases = (
             ("2025-03-31", ["2025-03-31"], "2025-03-31"),
             ("2025-04-06", ["2025-03-31"], "2025-03-31"),
-            ("2025-04-07", ["2025-03-31"], None),
+            ("2025-04-07", ["2025-03-31"], "2025-03-31"),
+            ("2025-04-13", ["2025-03-31"], "2025-03-31"),
+            ("2025-03-18", ["2025-03-31"], "2025-03-31"),
+            ("2025-04-14", ["2025-03-31"], None),
+            ("2025-03-17", ["2025-03-31"], None),
+            ("2025-04-15", ["2025-03-31"], None),
+            ("2025-03-16", ["2025-03-31"], None),
             ("2025-04-04", ["2025-03-31", "2025-04-05"], "2025-04-05"),
             ("2025-04-03", ["2025-04-05", "2025-04-01"], "2025-04-01"),
         )
@@ -48,11 +54,11 @@ class TestDateMatching:
         row = {"commonStockSharesOutstanding": "123"}
 
         assert (
-            valuation.select_eodhd_balance_sheet_row("2025-03-31", {"2025-04-06": row})
+            valuation.select_eodhd_balance_sheet_row("2025-03-31", {"2025-04-13": row})
             is row
         )
         assert (
-            valuation.select_eodhd_balance_sheet_row("2025-03-31", {"2025-04-07": row})
+            valuation.select_eodhd_balance_sheet_row("2025-03-31", {"2025-04-14": row})
             is None
         )
 

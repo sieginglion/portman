@@ -27,7 +27,10 @@ from .shared import (
 
 EXTRA_Q = 1
 SOURCE_DIFF_THRESHOLD = 0.065
-MAX_DATE_MATCH_DIFFERENCE_DAYS = 6
+# SimFin can round fiscal period ends to calendar month ends: QCOM's 2024-06-23
+# quarter appears as 2024-06-30 with identical revenue. Allow less than 14 days so
+# these rows align instead of creating extra quarters with only one source.
+MAX_DATE_MATCH_DIFFERENCE_DAYS = 14
 EPS_ABS_TOLERANCE = 0.02
 FINNHUB_MILLION_SCALE = 1_000_000
 
@@ -343,7 +346,7 @@ def select_closest_date_key(target_date: str, date_keys: list[str]) -> str | Non
     matches = []
     for date_key in date_keys:
         delta_days = abs((pd.Timestamp(date_key) - target_ts).days)
-        if delta_days > MAX_DATE_MATCH_DIFFERENCE_DAYS:
+        if delta_days >= MAX_DATE_MATCH_DIFFERENCE_DAYS:
             continue
         matches.append((delta_days, date_key))
 
