@@ -193,23 +193,32 @@ def post_process(prices: Array[f8], n: int, limited: bool = False):
 PRICE_CACHE_TTL = 43200
 
 
+async def get_price_series(
+    market: Literal["c", "j", "t", "u"],
+    symbol: str,
+    n: int,
+    to_usd: bool,
+):
+    cache_key = (__name__, "get_price_series", market, symbol, to_usd)
+    cached_prices = cache.get(cache_key)
+    if cached_prices is not None and len(cached_prices) >= n:
+        return cached_prices.iloc[-n:]
+
+    from . import crypto, stock
+
+    prices = await (
+        crypto.get_price_series(symbol, n)
+        if market == "c"
+        else stock.get_price_series(market, symbol, n, to_usd)
+    )
+    cache.set(cache_key, prices, PRICE_CACHE_TTL)
+    return prices
+
+
 async def get_prices(
     market: Literal["c", "j", "t", "u"],
     symbol: str,
     n: int,
     to_usd: bool,
 ):
-    cache_key = (__name__, "get_prices", market, symbol, to_usd)
-    cached_prices = cache.get(cache_key)
-    if cached_prices is not None and len(cached_prices) >= n:
-        return cached_prices[-n:]
-
-    from . import crypto, stock
-
-    prices = await (
-        crypto.get_prices(symbol, n)
-        if market == "c"
-        else stock.get_prices(market, symbol, n, to_usd)
-    )
-    cache.set(cache_key, prices, PRICE_CACHE_TTL)
-    return prices
+    return (await get_price_series(market, symbol, n, to_usd)).to_numpy()

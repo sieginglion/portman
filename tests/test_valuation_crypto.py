@@ -207,7 +207,13 @@ class TestTokenTerminalValuation:
         )
         now = valuation.pd.Timestamp("2026-01-02", tz="UTC")
         with (
-            patch.object(valuation.shared, "get_prices", return_value=[2.0]),
+            patch.object(
+                valuation.shared,
+                "get_price_series",
+                return_value=valuation.pd.Series(
+                    [2.0], index=valuation.pd.to_datetime(["2026-01-02"])
+                ),
+            ),
             patch.object(
                 valuation,
                 "fetch_token_terminal_monthly_xps",

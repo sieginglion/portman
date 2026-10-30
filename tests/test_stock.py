@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 import arrow
 import numpy as np
+import pandas as pd
 import pytest
 
 from backend import stock
@@ -206,8 +207,8 @@ class TestStock:
 
     def test_get_adjusted_uses_fmp(self):
         client = object()
-        prices = np.array([100.0, 101.0])
-        dividends = np.zeros(2)
+        prices = pd.Series([100.0, 101.0])
+        dividends = pd.Series([0.0, 0.0])
         get_fmp_unadjusted = AsyncMock(return_value=prices)
         get_fmp_dividends = AsyncMock(return_value=dividends)
 
@@ -221,10 +222,30 @@ class TestStock:
         get_fmp_unadjusted.assert_awaited_once_with(client, "u", "AAPL", 2)
         get_fmp_dividends.assert_awaited_once_with(client, "u", "AAPL", 2)
 
+    def test_get_adjusted_aligns_dividends_when_requests_cross_midnight(self):
+        dates = pd.date_range("2026-09-29", periods=3)
+        prices = pd.Series([100.0, 95.0, 96.0], index=dates)
+        dividends = pd.Series(
+            [5.0, 0.0, 0.0], index=pd.date_range("2026-09-30", periods=3)
+        )
+        with (
+            patch.object(
+                stock, "get_fmp_unadjusted", new=AsyncMock(return_value=prices)
+            ),
+            patch.object(
+                stock, "get_fmp_dividends", new=AsyncMock(return_value=dividends)
+            ),
+        ):
+            result = asyncio.run(stock.get_adjusted(object(), "u", "AAPL", 3))
+
+        pd.testing.assert_series_equal(
+            result, pd.Series([95.0, 95.0, 96.0], index=dates)
+        )
+
     def test_get_prices_converts_taiwan_prices_to_usd(self):
         client = AsyncClientStub()
-        prices = np.array([300.0, 600.0])
-        rates = np.array([30.0, 40.0])
+        prices = pd.Series([300.0, 600.0])
+        rates = pd.Series([30.0, 40.0])
 
         with (
             patch.object(stock, "AsyncClient", return_value=client),
@@ -243,7 +264,7 @@ class TestStock:
 
     def test_get_prices_skips_rates_without_taiwan_usd_conversion(self):
         client = AsyncClientStub()
-        prices = np.array([100.0, 101.0])
+        prices = pd.Series([100.0, 101.0])
 
         for market, to_usd in (("t", False), ("j", True), ("u", True)):
             with (

@@ -4,6 +4,7 @@ from typing import Literal
 import arrow
 import numba as nb
 import numpy as np
+import pandas as pd
 from httpx import AsyncClient
 from numpy import float64 as f8
 from numpy.typing import NDArray as Array
@@ -44,7 +45,10 @@ async def _fetch_fmp_price_history(sess: AsyncClient, symbol: str, start):
 
 def _normalize_fmp_price_history(historical, start, end, n: int, limited: bool):
     date_to_value = daily_values(start, end, historical, "close")
-    return post_process(get_sorted_values(date_to_value), n, limited)
+    values = post_process(get_sorted_values(date_to_value), n, limited)
+    return pd.Series(
+        values, index=pd.to_datetime(sorted(date_to_value)[-len(values) :])
+    )
 
 
 async def get_fmp_series(
@@ -88,7 +92,10 @@ async def get_fmp_dividends(
         raise ValueError(f"No dividend history for {symbol}")
     date_to_dividend = daily_values(start, now, historical, "adjDividend")
     date_to_dividend[max(date_to_dividend)] = today
-    return get_sorted_values(date_to_dividend)[-n:]
+    return pd.Series(
+        get_sorted_values(date_to_dividend)[-n:],
+        index=pd.to_datetime(sorted(date_to_dividend)[-n:]),
+    )
 
 
 @nb.njit
@@ -111,7 +118,13 @@ async def get_adjusted(
         get_fmp_unadjusted(sess, market, symbol, n),
         get_fmp_dividends(sess, market, symbol, n),
     )
-    return calc_adjusted(unadjusted, dividends)
+    return pd.Series(
+        calc_adjusted(
+            unadjusted.to_numpy(),
+            dividends.reindex(unadjusted.index, fill_value=0).to_numpy(),
+        ),
+        index=unadjusted.index,
+    )
 
 
 async def get_rates(sess: AsyncClient, n: int):
@@ -119,11 +132,17 @@ async def get_rates(sess: AsyncClient, n: int):
     return await get_fmp_series(sess, "USDTWD", start, now, n)
 
 
-async def get_prices(market: Literal["j", "t", "u"], symbol: str, n: int, to_usd: bool):
+async def get_price_series(
+    market: Literal["j", "t", "u"], symbol: str, n: int, to_usd: bool
+):
     async with AsyncClient(timeout=60, params={"apikey": FMP_API_KEY}) as sess:
         if market == "t" and to_usd:
             prices, rates = await asyncio.gather(
                 get_adjusted(sess, market, symbol, n), get_rates(sess, n)
             )
-            return prices / rates
+            return prices / rates.reindex(prices.index, method="ffill")
         return await get_adjusted(sess, market, symbol, n)
+
+
+async def get_prices(market: Literal["j", "t", "u"], symbol: str, n: int, to_usd: bool):
+    return (await get_price_series(market, symbol, n, to_usd)).to_numpy()

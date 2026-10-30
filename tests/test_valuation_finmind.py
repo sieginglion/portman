@@ -253,7 +253,14 @@ class TestFinMindValuation:
             ),
         }
         with (
-            patch.object(valuation.shared, "get_prices", return_value=[20, 24, 28, 30]),
+            patch.object(
+                valuation.shared,
+                "get_price_series",
+                return_value=valuation.pd.Series(
+                    [20, 24, 28, 30],
+                    index=valuation.pd.date_range("2026-01-01", periods=4),
+                ),
+            ),
             patch.object(valuation, "fetch_xps", return_value=xps),
             patch.object(
                 valuation.pd.Timestamp,
@@ -268,6 +275,40 @@ class TestFinMindValuation:
         assert px.attrs["ps_dates"].equals(xps["rps"].index)
         assert px.attrs["pe_dates"].equals(xps["eps"].index)
 
+    def test_calc_px_keeps_cached_price_dates_across_a_quarter_boundary(self):
+        prices = valuation.pd.Series(
+            [129.94, 134.01, 137.76],
+            index=valuation.pd.date_range("2026-09-29", periods=3),
+        )
+        xps = {
+            "rps": valuation.pd.Series(
+                [10.0, 12.0],
+                index=valuation.pd.to_datetime(["2026-07-01", "2026-10-01"]),
+            ),
+            "eps": valuation.pd.Series(
+                [2.0, 1.5],
+                index=valuation.pd.to_datetime(["2026-07-01", "2026-10-01"]),
+            ),
+        }
+        with (
+            patch.object(valuation.shared, "get_price_series", return_value=prices),
+            patch.object(valuation, "fetch_xps", return_value=xps),
+            patch.object(
+                valuation.pd.Timestamp,
+                "now",
+                return_value=valuation.pd.Timestamp("2026-10-02", tz="UTC"),
+            ),
+        ):
+            px = asyncio.run(valuation.calc_px("u", "NOW", 2))
+
+        assert px.index.equals(prices.index)
+        assert px["ps"].tolist() == pytest.approx(
+            [129.94 / 10, 134.01 / 10, 137.76 / 12]
+        )
+        assert px["pe"].tolist() == pytest.approx(
+            [129.94 / 2, 134.01 / 2, 137.76 / 1.5]
+        )
+
     def test_calc_px_allows_rps_with_insufficient_initial_coverage(self):
         prices = [20.0, 21.0, 22.0, 23.0]
         xps = valuation.pd.DataFrame(
@@ -279,7 +320,14 @@ class TestFinMindValuation:
         )
 
         with (
-            patch.object(valuation.shared, "get_prices", return_value=prices),
+            patch.object(
+                valuation.shared,
+                "get_price_series",
+                return_value=valuation.pd.Series(
+                    prices,
+                    index=valuation.pd.date_range("2026-01-01", periods=len(prices)),
+                ),
+            ),
             patch.object(
                 valuation,
                 "fetch_xps",
@@ -310,7 +358,14 @@ class TestFinMindValuation:
         )
 
         with (
-            patch.object(valuation.shared, "get_prices", return_value=prices),
+            patch.object(
+                valuation.shared,
+                "get_price_series",
+                return_value=valuation.pd.Series(
+                    prices,
+                    index=valuation.pd.date_range("2026-01-01", periods=len(prices)),
+                ),
+            ),
             patch.object(
                 valuation,
                 "fetch_xps",
@@ -336,7 +391,14 @@ class TestFinMindValuation:
         )
 
         with (
-            patch.object(valuation.shared, "get_prices", return_value=prices),
+            patch.object(
+                valuation.shared,
+                "get_price_series",
+                return_value=valuation.pd.Series(
+                    prices,
+                    index=valuation.pd.date_range("2026-01-01", periods=len(prices)),
+                ),
+            ),
             patch.object(
                 valuation,
                 "fetch_xps",
@@ -358,7 +420,14 @@ class TestFinMindValuation:
         )
 
         with (
-            patch.object(valuation.shared, "get_prices", return_value=[None, 21.0]),
+            patch.object(
+                valuation.shared,
+                "get_price_series",
+                return_value=valuation.pd.Series(
+                    [None, 21.0],
+                    index=valuation.pd.date_range("2026-01-01", periods=2),
+                ),
+            ),
             patch.object(
                 valuation,
                 "fetch_xps",

@@ -1,4 +1,5 @@
 import arrow
+import pandas as pd
 from httpx import AsyncClient
 
 from .shared import (
@@ -10,7 +11,7 @@ from .shared import (
 )
 
 
-async def get_prices(symbol: str, n: int):
+async def get_price_series(symbol: str, n: int):
     tz = MARKET_TO_TIMEZONE["c"]
     now = arrow.now(tz)
     date_to_price = dict.fromkeys(gen_dates(now.shift(days=-n), now), 0.0)
@@ -39,6 +40,13 @@ async def get_prices(symbol: str, n: int):
                 break
             end_time = klines[0][0] - 1
     try:
-        return post_process(get_sorted_values(date_to_price), n)
+        values = post_process(get_sorted_values(date_to_price), n)
     except AssertionError:
         raise AssertionError(symbol) from None
+    return pd.Series(
+        values, index=pd.to_datetime(sorted(date_to_price)[-len(values) :])
+    )
+
+
+async def get_prices(symbol: str, n: int):
+    return (await get_price_series(symbol, n)).to_numpy()

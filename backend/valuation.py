@@ -1818,15 +1818,12 @@ async def calc_px(
         if market == "c"
         else fetch_xps(market, symbol, q + EXTRA_Q)
     )
-    prices, xps = await asyncio.gather(
-        shared.get_prices(market, symbol, 91 * q, False),
+    price, xps = await asyncio.gather(
+        shared.get_price_series(market, symbol, 91 * q, False),
         xps_task,
     )
-    index = pd.date_range(
-        end=pd.Timestamp.now(shared.MARKET_TO_TIMEZONE[market]).date(),
-        periods=len(prices),
-    )
-    price = pd.Series(prices, index=index, name="price").ffill()
+    price = price.ffill()
+    index = price.index
     if pd.isna(price.iloc[0]):
         raise ValueError("initial price is missing")
     result = pd.DataFrame(index=index)
