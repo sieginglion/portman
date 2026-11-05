@@ -4,8 +4,9 @@ import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 
-from backend import valuation
+from backend import main, valuation
 
 
 def monthly_rows(start: str, periods: int) -> list[dict]:
@@ -29,6 +30,90 @@ def monthly_rows(start: str, periods: int) -> list[dict]:
 
 
 class TestTokenTerminalValuation:
+    @pytest.mark.parametrize(
+        "missing_metric", [None, "fees", "earnings", "token_supply_circulating"]
+    )
+    def test_growth_handles_independent_earnings_supply_and_missing_metrics(
+        self, missing_metric
+    ):
+        rows = monthly_rows("2024-01-01", 27)
+        for i in range(27):
+            rows[3 * i + 1]["value"] = 30 if i < 14 else 90
+            rows[3 * i + 2]["value"] = 10 if i < 8 else 20 if i < 18 else 40
+        # The current month must not affect either TTM calculation.
+        for row in rows[-3:]:
+            row["value"] = 1_000_000
+        if missing_metric is not None:
+            # A single missing month makes only the dependent metric unavailable.
+            rows = [
+                row
+                for row in rows
+                if not (
+                    row["metric_id"] == missing_metric
+                    and row["timestamp"].startswith("2024-06")
+                )
+            ]
+        with (
+            patch.object(
+                valuation, "fetch_token_terminal_financial_statement", return_value=rows
+            ),
+            patch.object(
+                valuation.pd.Timestamp,
+                "now",
+                return_value=valuation.pd.Timestamp("2026-03-15", tz="UTC"),
+            ),
+        ):
+            response = TestClient(main.app).get(
+                "/growths", params={"market": "c", "symbol": "UNI"}
+            )
+
+        assert response.status_code == 200
+        revenue, eps = response.json()
+        if missing_metric == "fees":
+            assert revenue is None
+        else:
+            assert revenue == pytest.approx(1434 / 1290 - 1)
+        if missing_metric in ("earnings", "token_supply_circulating"):
+            assert eps is None
+        else:
+            # Previous TTM EPS: 6 * 3 + 6 * 1.5 = 27.
+            # Latest TTM EPS: 4 * 4.5 + 8 * 2.25 = 36.
+            assert eps == pytest.approx(36 / 27 - 1)
+
+    @pytest.mark.parametrize("missing_supply", [False, True])
+    async def test_growth_uses_ttm_total_fees_independently_of_supply(
+        self, missing_supply
+    ):
+        rows = monthly_rows("2024-01-01", 26)
+        if missing_supply:
+            rows = [
+                row for row in rows if row["metric_id"] != "token_supply_circulating"
+            ]
+        with (
+            patch.object(
+                valuation, "fetch_token_terminal_financial_statement", return_value=rows
+            ),
+            patch.object(
+                valuation.pd.Timestamp,
+                "now",
+                return_value=valuation.pd.Timestamp("2026-03-15", tz="UTC"),
+            ),
+        ):
+            series = await valuation.fetch_growth_series("c", "UNI")
+
+        revenue = series["revenue"]
+        assert len(revenue) == 5
+        assert revenue.iloc[0] == sum(range(102, 114))
+        assert revenue.iloc[-1] == sum(range(114, 126))
+        assert revenue.index[[0, -1]].tolist() == [
+            valuation.pd.Timestamp("2025-03-01"),
+            valuation.pd.Timestamp("2026-03-01"),
+        ]
+        if missing_supply:
+            assert "eps" not in series
+        else:
+            assert series["eps"].tolist() == [12.0] * 5
+
     def test_headers_do_not_require_a_cookie(self):
         with patch.dict(os.environ, {"TOKEN_TERMINAL_JWT": "jwt"}, clear=True):
             headers = valuation.token_terminal_headers("uniswap")

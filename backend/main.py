@@ -199,14 +199,34 @@ async def get_diagnostics():
     return valuation.get_xps_diagnostics()
 
 
-@app.get("/growth")
-async def get_growth(market: Literal["c", "j", "t", "u"], symbol: str):
+@app.get("/growths")
+async def get_growths(
+    market: Literal["c", "j", "t", "u"], symbol: str
+) -> tuple[float | None, float | None]:
     if is_btc(market, symbol):
-        return await calc_btc_growth()
+        return await calc_btc_growth(), None
 
-    xps = await valuation.fetch_xps(market, symbol, 5, include_eps=False)
-    r = xps["rps"]
-    return r.iloc[-1] / r.iloc[-5] - 1
+    try:
+        series = await valuation.fetch_growth_series(market, symbol)
+    except valuation.UnavailableHistoryError:
+        return None, None
+    return calc_growth(series.get("revenue")), calc_growth(
+        series.get("eps"), positive_baseline=True
+    )
+
+
+def calc_growth(
+    series: pd.Series | None, *, positive_baseline: bool = False
+) -> float | None:
+    if series is None or len(series) < 5:
+        return None
+    previous, latest = float(series.iloc[-5]), float(series.iloc[-1])
+    if not np.isfinite([previous, latest]).all() or previous == 0:
+        return None
+    if positive_baseline and previous < 0:
+        return None
+    growth = latest / previous - 1
+    return growth if np.isfinite(growth) else None
 
 
 async def get_btc_prices_and_sma(n: int, window: int):

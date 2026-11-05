@@ -46,6 +46,10 @@ type SecQ4ValueKind = Literal["flow", "average"]
 type SecFiscalQuarter = Literal["Q1", "Q2", "Q3", "Q4"]
 
 
+class UnavailableHistoryError(ValueError):
+    """The requested financial history is incomplete or too short."""
+
+
 @dataclass(frozen=True)
 class SourcePeriod:
     """A provider row and the period-end date it reported."""
@@ -158,6 +162,7 @@ EPS_XPS_FIELD = "epsDiluted"
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
 XPS_COLUMNS = ("rps", "eps")
 XPS_FIELD_GROUPS = {"rps": BASE_XPS_FIELDS, "eps": (EPS_XPS_FIELD,)}
+GROWTH_FIELD_GROUPS = {"revenue": ("revenue",), "eps": (EPS_XPS_FIELD,)}
 
 
 def xps_field_map(shares_field: str, eps_field: str) -> dict[str, str]:
@@ -581,17 +586,22 @@ async def fetch_token_terminal_financial_statement(symbol: str) -> list[dict]:
 
 
 def build_token_terminal_xps_frame(
-    rows: list[dict], periods: int, include_eps: bool
+    rows: list[dict],
+    periods: int,
+    include_eps: bool,
+    *,
+    total_revenue: bool = False,
 ) -> pd.DataFrame:
-    """Map Token Terminal rows to dated monthly RPS/EPS inputs."""
-    metric_map = {"fees": "rps"}
+    """Map monthly fees and earnings to total revenue or per-token inputs."""
+    columns = ("revenue", "eps") if total_revenue else XPS_COLUMNS
+    metric_map = {"fees": columns[0]}
     if include_eps:
         metric_map["earnings"] = "eps"
     tracked_metrics = [*metric_map, "token_supply_circulating"]
     frame = pd.DataFrame(rows)
     required_columns = {"timestamp", "metric_id", "value"}
     if not required_columns.issubset(frame.columns):
-        return pd.DataFrame(columns=XPS_COLUMNS, dtype=float)
+        return pd.DataFrame(columns=columns, dtype=float)
 
     frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce", utc=True)
     frame["timestamp"] = frame["timestamp"].dt.tz_localize(None)
@@ -611,24 +621,31 @@ def build_token_terminal_xps_frame(
     )
     frame = frame.loc[frame.index < incomplete_month_start].tail(periods)
     if frame.empty:
-        return pd.DataFrame(columns=XPS_COLUMNS, dtype=float)
+        return pd.DataFrame(columns=columns, dtype=float)
     expected_dates = pd.date_range(end=frame.index[-1], periods=periods, freq="MS")
     frame = frame.reindex(expected_dates)
     supply = frame.get("token_supply_circulating", pd.Series(np.nan, index=frame.index))
     supply = supply.where(supply > 0)
-    per_token = frame.reindex(columns=metric_map).div(supply, axis=0)
-    per_token = per_token.rename(columns=metric_map).reindex(columns=XPS_COLUMNS)
-    per_token.index += pd.DateOffset(months=1)
-    return per_token
+    result = frame.reindex(columns=metric_map).div(supply, axis=0)
+    result = result.rename(columns=metric_map).reindex(columns=columns)
+    if total_revenue:
+        result["revenue"] = frame.reindex(columns=["fees"])["fees"]
+    result.index += pd.DateOffset(months=1)
+    return result
 
 
 async def fetch_token_terminal_monthly_xps(
-    symbol: str, m: int, include_eps: bool
+    symbol: str, m: int, include_eps: bool, *, total_revenue: bool = False
 ) -> XpsSeries:
     inputs = build_token_terminal_xps_frame(
-        await fetch_token_terminal_financial_statement(symbol), m + 11, include_eps
+        await fetch_token_terminal_financial_statement(symbol),
+        m + 11,
+        include_eps,
+        total_revenue=total_revenue,
     )
-    return complete_and_roll_xps({column: inputs[column] for column in XPS_COLUMNS}, 12)
+    return complete_and_roll_xps(
+        {str(column): values for column, values in inputs.items()}, 12
+    )
 
 
 def pivot_finmind_taiwan_rows(rows: list[dict]) -> pd.DataFrame:
@@ -783,7 +800,7 @@ def select_latest_required_quarters[T](
     selected = dict(sorted(quarters.items())[-limit:])
     if len(selected) != limit:
         subject = f" for {symbol}" if symbol is not None else ""
-        raise ValueError(
+        raise UnavailableHistoryError(
             f"need {limit} {quarter_label}, found {len(selected)}{subject}; "
             f"available={sorted(quarters)}"
         )
@@ -795,7 +812,10 @@ def required_xps_fields(include_eps: bool) -> list[str]:
 
 
 def split_xps_quarters(
-    quarters: ResolvedQuarters, include_eps: bool
+    quarters: ResolvedQuarters,
+    include_eps: bool,
+    *,
+    field_groups: dict[str, tuple[str, ...]] | None = None,
 ) -> ResolvedXpsQuarters:
     """Separate normalized provider fields into independent metric histories."""
     return {
@@ -803,7 +823,9 @@ def split_xps_quarters(
             date: {field: row.get(field) for field in fields}
             for date, row in quarters.items()
         }
-        for column, fields in XPS_FIELD_GROUPS.items()
+        for column, fields in (
+            XPS_FIELD_GROUPS if field_groups is None else field_groups
+        ).items()
         if column != "eps" or include_eps
     }
 
@@ -1680,9 +1702,19 @@ async def resolve_us_income_statement_quarters(
     source_rows: IncomeStatementSources,
     limit: int,
     include_eps: bool,
+    *,
+    field_groups: dict[str, tuple[str, ...]] | None = None,
 ) -> ResolvedXpsQuarters:
-    """Align provider data and return separate RPS and EPS quarterly histories."""
-    required_fields = required_xps_fields(include_eps)
+    """Align provider data and resolve each metric's quarterly history."""
+    groups = XPS_FIELD_GROUPS if field_groups is None else field_groups
+    required_fields = list(
+        dict.fromkeys(
+            field
+            for column, fields in groups.items()
+            if column != "eps" or include_eps
+            for field in fields
+        )
+    )
 
     # 1. Group provider rows that describe the same fiscal quarter.
     aligned_quarters = build_aligned_source_quarters(source_rows)
@@ -1700,7 +1732,7 @@ async def resolve_us_income_statement_quarters(
     resolved_quarters: ResolvedXpsQuarters = {}
     selected_quarters = {}
     selection_error = None
-    for column, fields in XPS_FIELD_GROUPS.items():
+    for column, fields in groups.items():
         if column == "eps" and not include_eps:
             continue
         metric_fields = list(fields)
@@ -1744,6 +1776,8 @@ async def fetch_resolved_income_statement_quarters(
     symbol: str,
     limit: int,
     include_eps: bool,
+    *,
+    field_groups: dict[str, tuple[str, ...]] | None = None,
 ) -> ResolvedXpsQuarters:
     if market == "t":
         quarters = await fetch_finmind_taiwan_income_statements(symbol, limit)
@@ -1753,24 +1787,29 @@ async def fetch_resolved_income_statement_quarters(
     else:
         source_rows = await fetch_us_income_statement_sources(symbol, limit + 1)
         return await resolve_us_income_statement_quarters(
-            symbol, source_rows, limit, include_eps
+            symbol, source_rows, limit, include_eps, field_groups=field_groups
         )
-    return split_xps_quarters(quarters, include_eps)
+    return split_xps_quarters(quarters, include_eps, field_groups=field_groups)
 
 
 def build_quarterly_xps_inputs(
     resolved_quarters: ResolvedXpsQuarters,
 ) -> XpsSeries:
-    """Derive dated quarterly RPS/EPS inputs without validating completeness."""
+    """Derive dated quarterly metric inputs without validating completeness."""
     inputs = {}
     for column, quarters in resolved_quarters.items():
         df = pd.DataFrame.from_dict(quarters, orient="index")
         df.index = pd.to_datetime(df.index) + pd.Timedelta(days=1)
-        df = df.reindex(columns=list(XPS_FIELD_GROUPS[column]))
+        fields = (
+            GROWTH_FIELD_GROUPS[column]
+            if column == "revenue"
+            else XPS_FIELD_GROUPS[column]
+        )
+        df = df.reindex(columns=list(fields))
         inputs[column] = (
             df["revenue"] / df["weightedAverageShsOutDil"]
             if column == "rps"
-            else df[EPS_XPS_FIELD]
+            else df[fields[0]]
         ).rename(column)
     return inputs
 
@@ -1783,7 +1822,9 @@ def complete_and_roll_xps(xps: XpsSeries, window: int) -> XpsSeries:
         if not values.empty and values.notna().all()
     }
     if not complete:
-        raise ValueError("neither a complete RPS nor EPS series is available")
+        raise UnavailableHistoryError(
+            "neither a complete RPS nor EPS series is available"
+        )
     return complete
 
 
@@ -1809,6 +1850,21 @@ async def fetch_xps(
         market, symbol, limit, include_eps
     )
     return build_xps_series(resolved_quarters)
+
+
+async def fetch_growth_series(
+    market: Literal["c", "j", "t", "u"], symbol: str, q: int = 5
+) -> XpsSeries:
+    if market == "c":
+        monthly_series = await fetch_token_terminal_monthly_xps(
+            symbol, q * 3, True, total_revenue=True
+        )
+        return {column: values.iloc[2::3] for column, values in monthly_series.items()}
+
+    quarters = await fetch_resolved_income_statement_quarters(
+        market, symbol, q + 3, True, field_groups=GROWTH_FIELD_GROUPS
+    )
+    return build_xps_series(quarters)
 
 
 async def calc_px(

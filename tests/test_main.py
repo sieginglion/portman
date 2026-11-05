@@ -18,6 +18,228 @@ class TestDownsideScore:
         assert score == 1
 
 
+class TestGrowthRoute:
+    @pytest.mark.parametrize("market", ["c", "j", "t", "u"])
+    @pytest.mark.parametrize("periods", [0, 7])
+    def test_unavailable_histories_return_nulls_through_the_real_pipeline(
+        self, market, periods
+    ):
+        stock_rows = {
+            date.strftime("%Y-%m-%d"): {"revenue": 100, "epsDiluted": 1}
+            for date in pd.date_range("2024-03-31", periods=periods, freq="QE")
+        }
+        taiwan_rows = [
+            {"date": date, "type": field, "value": row[key]}
+            for date, row in stock_rows.items()
+            for field, key in (("Revenue", "revenue"), ("EPS", "epsDiluted"))
+        ]
+        crypto_rows = [
+            {"timestamp": date.isoformat(), "metric_id": metric, "value": value}
+            for date in pd.date_range("2024-01-01", periods=periods, freq="MS")
+            for metric, value in (
+                ("fees", 100),
+                ("earnings", 10),
+                ("token_supply_circulating", 10),
+            )
+        ]
+        with (
+            patch.object(valuation.shared, "ENABLE_SEC_REFERENCE", False),
+            patch.object(valuation.shared, "ENABLE_XPS_DIAGNOSTICS", False),
+            patch.object(
+                valuation, "fetch_fmp_income_statements", return_value=stock_rows
+            ),
+            patch.object(
+                valuation, "fetch_finmind_taiwan_rows", return_value=taiwan_rows
+            ),
+            patch.object(
+                valuation,
+                "fetch_us_income_statement_sources",
+                return_value={"fmp": stock_rows, "finnhub": stock_rows},
+            ),
+            patch.object(
+                valuation,
+                "fetch_token_terminal_financial_statement",
+                return_value=crypto_rows,
+            ),
+        ):
+            response = TestClient(main.app).get(
+                "/growths", params={"market": market, "symbol": "A"}
+            )
+
+        assert response.status_code == 200
+        assert response.json() == [None, None]
+
+    @pytest.mark.parametrize("market", ["j", "t", "u"])
+    @pytest.mark.parametrize(
+        "missing", [("revenue",), ("epsDiluted",), ("revenue", "epsDiluted")]
+    )
+    async def test_incomplete_metrics_are_independent_through_the_real_pipeline(
+        self, market, missing
+    ):
+        rows = {
+            date.strftime("%Y-%m-%d"): {"revenue": 100 + 10 * i, "epsDiluted": 1 + i}
+            for i, date in enumerate(pd.date_range("2024-03-31", periods=8, freq="QE"))
+        }
+        for field in missing:
+            rows["2024-03-31"][field] = None
+        with (
+            patch.object(valuation.shared, "ENABLE_SEC_REFERENCE", False),
+            patch.object(valuation.shared, "ENABLE_XPS_DIAGNOSTICS", False),
+            patch.object(valuation, "fetch_fmp_income_statements", return_value=rows),
+            patch.object(
+                valuation, "fetch_finmind_taiwan_income_statements", return_value=rows
+            ),
+            patch.object(
+                valuation,
+                "fetch_us_income_statement_sources",
+                return_value={"fmp": rows, "finnhub": rows},
+            ),
+        ):
+            revenue, eps = await main.get_growths(market, "A")
+
+        if "revenue" in missing:
+            assert revenue is None
+        else:
+            assert revenue == pytest.approx(620 / 460 - 1)
+        if "epsDiluted" in missing:
+            assert eps is None
+        else:
+            assert eps == pytest.approx(26 / 10 - 1)
+
+    @pytest.mark.parametrize(
+        ("market", "provider"),
+        [
+            ("c", "fetch_token_terminal_financial_statement"),
+            ("j", "fetch_fmp_income_statements"),
+            ("t", "fetch_finmind_taiwan_rows"),
+            ("u", "fetch_us_income_statement_sources"),
+        ],
+    )
+    @pytest.mark.parametrize("error", [RuntimeError, ValueError])
+    def test_provider_failures_are_not_confused_with_unavailable_history(
+        self, market, provider, error
+    ):
+        with (
+            patch.object(valuation, provider, side_effect=error("provider failure")),
+            pytest.raises(error, match="provider failure"),
+        ):
+            TestClient(main.app).get(
+                "/growths", params={"market": market, "symbol": "A"}
+            )
+
+    @pytest.mark.parametrize("market", ["j", "t", "u"])
+    @pytest.mark.parametrize("missing_shares", [True, False])
+    async def test_uses_ttm_total_revenue_and_diluted_eps(self, market, missing_shares):
+        rows = {
+            date.strftime("%Y-%m-%d"): {
+                "revenue": 100 + 10 * i,
+                "weightedAverageShsOutDil": None if missing_shares else 10 + i,
+                "epsDiluted": 1 + i,
+            }
+            for i, date in enumerate(pd.date_range("2024-03-31", periods=8, freq="QE"))
+        }
+        with (
+            patch.object(valuation.shared, "ENABLE_SEC_REFERENCE", False),
+            patch.object(valuation.shared, "ENABLE_XPS_DIAGNOSTICS", False),
+            patch.object(
+                valuation, "fetch_finmind_taiwan_income_statements", return_value=rows
+            ),
+            patch.object(valuation, "fetch_fmp_income_statements", return_value=rows),
+            patch.object(
+                valuation,
+                "fetch_us_income_statement_sources",
+                return_value={"fmp": rows, "finnhub": rows},
+            ),
+        ):
+            revenue, eps = await main.get_growths(market, "A")
+
+        assert revenue == pytest.approx(620 / 460 - 1)
+        assert eps == pytest.approx(26 / 10 - 1)
+
+    async def test_us_metrics_keep_independent_latest_quarter_fallbacks(self):
+        rows = {
+            date.strftime("%Y-%m-%d"): {
+                "revenue": 100 + 10 * i,
+                "epsDiluted": 1 + i if i < 8 else None,
+            }
+            for i, date in enumerate(pd.date_range("2024-03-31", periods=9, freq="QE"))
+        }
+        with (
+            patch.object(valuation.shared, "ENABLE_SEC_REFERENCE", False),
+            patch.object(valuation.shared, "ENABLE_XPS_DIAGNOSTICS", False),
+            patch.object(
+                valuation,
+                "fetch_us_income_statement_sources",
+                return_value={"fmp": rows, "finnhub": rows},
+            ),
+        ):
+            revenue, eps = await main.get_growths("u", "A")
+
+        assert revenue == pytest.approx(660 / 500 - 1)
+        assert eps == pytest.approx(26 / 10 - 1)
+
+    @pytest.mark.parametrize(
+        ("revenue", "eps", "expected"),
+        [
+            ([100, 110, 120, 130, 150], [2, 3, 4, 5, 6], [0.5, 2.0]),
+            ([100, 100, 100, 100, 80], [2, 2, 2, 2, -1], [-0.2, -1.5]),
+            ([100] * 5, [-2, 1, 2, 3, 4], [0.0, None]),
+            ([100] * 5, [0, 1, 2, 3, 4], [0.0, None]),
+            ([0, 1, 2, 3, 4], [2] * 5, [None, 0.0]),
+            (None, [2] * 5, [None, 0.0]),
+            ([100] * 5, None, [0.0, None]),
+            ([100] * 5, [2] * 4, [0.0, None]),
+            ([100] * 5, [2, 2, 2, 2, float("inf")], [0.0, None]),
+            ([float("nan"), 1, 2, 3, 4], [2] * 5, [None, 0.0]),
+            (None, None, [None, None]),
+        ],
+    )
+    def test_returns_independent_revenue_and_eps_growth(self, revenue, eps, expected):
+        series = {
+            key: pd.Series(values)
+            for key, values in (("revenue", revenue), ("eps", eps))
+            if values is not None
+        }
+        with patch.object(valuation, "fetch_growth_series", return_value=series):
+            response = TestClient(main.app).get(
+                "/growths", params={"market": "u", "symbol": "A"}
+            )
+
+        assert response.status_code == 200
+        for actual, value in zip(response.json(), expected, strict=True):
+            if value is None:
+                assert actual is None
+            else:
+                assert actual == pytest.approx(value)
+
+    def test_btc_keeps_sma_growth_proxy(self):
+        with patch.object(main, "calc_btc_growth", return_value=0.25):
+            response = TestClient(main.app).get(
+                "/growths", params={"market": "c", "symbol": "BTC"}
+            )
+        assert response.json() == [0.25, None]
+
+    def test_other_crypto_uses_total_revenue_and_per_token_earnings(self):
+        series = {"revenue": pd.Series([2, 3, 4, 5, 6]), "eps": pd.Series([1] * 5)}
+        with patch.object(
+            valuation, "fetch_growth_series", return_value=series
+        ) as fetch_growth_series:
+            response = TestClient(main.app).get(
+                "/growths", params={"market": "c", "symbol": "UNI"}
+            )
+        assert response.json() == [2.0, 0.0]
+        fetch_growth_series.assert_awaited_once_with("c", "UNI")
+
+    def test_provider_errors_are_not_suppressed(self):
+        with (
+            patch.object(
+                valuation, "fetch_growth_series", side_effect=RuntimeError("provider")
+            ),
+            pytest.raises(RuntimeError, match="provider"),
+        ):
+            TestClient(main.app).get("/growths", params={"market": "u", "symbol": "A"})
+
+
 class TestBtcValuationProxy:
     async def test_uses_a_fixed_sixteen_quarter_moving_average(self):
         with patch.object(

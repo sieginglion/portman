@@ -348,6 +348,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
             rows,
             8,
             True,
+            field_groups=None,
         )
 
     def test_us_resolution_preserves_disabled_eps_after_fetch(self):
@@ -371,7 +372,9 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
             )
 
         fetch_sources.assert_awaited_once_with("HOOD", 9)
-        resolve_quarters.assert_awaited_once_with("HOOD", rows, 8, False)
+        resolve_quarters.assert_awaited_once_with(
+            "HOOD", rows, 8, False, field_groups=None
+        )
 
     def test_disabled_massive_is_not_fetched(self):
         with (
