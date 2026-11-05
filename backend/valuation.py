@@ -235,8 +235,9 @@ SIMFIN_STATEMENTS_URL = "https://prod.simfin.com/api/v3/companies/statements/ver
 SIMFIN_WEIGHTED_SHARES_URL = (
     "https://prod.simfin.com/api/v3/companies/weighted-shares-outstanding"
 )
-FINMIND_TAIWAN_QUARTER_BUFFER = 1
-FINMIND_TAIWAN_MONTH_BUFFER = 2
+# Allow one extra quarter for reporting delays and one for the preceding share
+# value needed to interpolate a gap in the oldest selected quarter.
+FINMIND_TAIWAN_QUARTER_BUFFER = 2
 TIINGO_QUARTER_BUFFER = 1
 SIMFIN_QUARTER_BUFFER = 1
 FINMIND_TAIWAN_SHARE_PAR_VALUE = 10
@@ -505,11 +506,10 @@ def quarterly_start_date(
     market: Literal["t", "u"],
     limit: int,
     quarter_buffer: int,
-    month_buffer: int = 0,
 ) -> str:
     start = pd.Timestamp.now(
         tz=shared.MARKET_TO_TIMEZONE[market]
-    ).normalize() - pd.DateOffset(months=3 * (limit + quarter_buffer) + month_buffer)
+    ).normalize() - pd.DateOffset(months=3 * (limit + quarter_buffer))
     return date_str(start)
 
 
@@ -656,11 +656,10 @@ def fill_finmind_missing_ordinary_shares(shares: pd.Series) -> pd.Series:
     if shares.dropna().empty:
         return shares
 
-    gap_groups = missing.ne(missing.shift()).cumsum()
-    if missing.groupby(gap_groups).sum().max() > 1:
-        return shares
-
-    patched_shares = shares.interpolate(limit_area="inside")
+    isolated_gaps = missing & shares.shift().notna() & shares.shift(-1).notna()
+    patched_shares = shares.interpolate(limit_area="inside").where(
+        ~missing | isolated_gaps
+    )
     filled = missing & patched_shares.notna()
     for missing_index in np.flatnonzero(filled.to_numpy()):
         logger.warning(
@@ -722,7 +721,6 @@ async def fetch_finmind_taiwan_income_statements(
         "t",
         limit,
         FINMIND_TAIWAN_QUARTER_BUFFER,
-        FINMIND_TAIWAN_MONTH_BUFFER,
     )
     financial_statement_rows, balance_sheet_rows = await asyncio.gather(
         fetch_finmind_taiwan_rows("TaiwanStockFinancialStatements", symbol, start_date),

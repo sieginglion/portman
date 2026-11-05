@@ -1,4 +1,5 @@
 import asyncio
+import json
 from unittest.mock import AsyncMock, call, patch
 
 import pytest
@@ -124,9 +125,9 @@ class TestFinMindValuation:
             )
             assert (
                 valuation.quarterly_start_date(
-                    "t", limit=4, quarter_buffer=1, month_buffer=2
+                    "t", limit=4, quarter_buffer=valuation.FINMIND_TAIWAN_QUARTER_BUFFER
                 )
-                == "2025-02-22"
+                == "2025-01-22"
             )
 
         now_mock.assert_has_calls(
@@ -137,16 +138,16 @@ class TestFinMindValuation:
         )
 
     @pytest.mark.parametrize(
-        ("market", "utc_now", "month_buffer", "expected"),
+        ("market", "utc_now", "quarter_buffer", "expected"),
         [
-            ("t", "2026-07-21T16:30:00Z", 2, "2025-02-22"),
-            ("u", "2026-07-22T00:30:00Z", 0, "2025-04-21"),
-            ("t", "2026-01-31T16:30:00Z", 2, "2024-09-01"),
-            ("u", "2026-02-01T00:30:00Z", 0, "2024-10-31"),
+            ("t", "2026-07-21T16:30:00Z", 2, "2025-01-22"),
+            ("u", "2026-07-22T00:30:00Z", 1, "2025-04-21"),
+            ("t", "2026-01-31T16:30:00Z", 2, "2024-08-01"),
+            ("u", "2026-02-01T00:30:00Z", 1, "2024-10-31"),
         ],
     )
     def test_quarterly_start_date_preserves_market_date_at_utc_boundary(
-        self, market, utc_now, month_buffer, expected
+        self, market, utc_now, quarter_buffer, expected
     ):
         now = valuation.pd.Timestamp(utc_now)
         with patch.object(
@@ -155,7 +156,7 @@ class TestFinMindValuation:
             side_effect=lambda *, tz: now.tz_convert(tz),
         ) as now_mock:
             result = valuation.quarterly_start_date(
-                market, limit=4, quarter_buffer=1, month_buffer=month_buffer
+                market, limit=4, quarter_buffer=quarter_buffer
             )
 
         assert result == expected
@@ -521,11 +522,34 @@ class TestFinMindValuation:
         warning.assert_called_once()
         assert warning.call_args.args[1:] == (2, "linear interpolation", 2.0)
 
+    @pytest.mark.parametrize(
+        ("values", "expected"),
+        [
+            ([100, None, 300, None, None, 600], [100, 200, 300, None, None, 600]),
+            ([None, None, 100, None, 300], [None, None, 100, 200, 300]),
+            ([100, None, 300, None, None], [100, 200, 300, None, None]),
+            ([100, None, 300, None, 500], [100, 200, 300, 400, 500]),
+        ],
+    )
+    def test_share_interpolation_patches_each_isolated_gap(self, values, expected):
+        shares = valuation.pd.Series(values, dtype=float)
+        expected_shares = valuation.pd.Series(expected, dtype=float)
+
+        with patch.object(valuation.logger, "warning") as warning:
+            filled = valuation.fill_finmind_missing_ordinary_shares(shares)
+
+        valuation.pd.testing.assert_series_equal(filled, expected_shares)
+        assert warning.call_count == (shares.isna() & expected_shares.notna()).sum()
+
     @pytest.mark.parametrize("reverse_rows", [False, True])
-    def test_fetch_xps_interpolates_an_isolated_taiwan_share_gap(self, reverse_rows):
+    def test_fetch_xps_interpolates_share_gap_despite_older_missing_history(
+        self, reverse_rows
+    ):
         financial_rows = [
             {"date": date, "type": field, "value": value}
             for date, revenue, eps in [
+                ("2024-09-30", 80, 0.8),
+                ("2024-12-31", 90, 0.9),
                 ("2025-03-31", 100, 1.0),
                 ("2025-06-30", 150, 1.5),
                 ("2025-09-30", 200, 2.0),
@@ -560,6 +584,71 @@ class TestFinMindValuation:
             "linear interpolation",
             300.0,
         )
+
+    def test_fetch_repairs_oldest_selected_quarter_using_buffered_history(self):
+        # Q1 2026 is delayed; Q1 2025 needs the preceding Q4 to repair its shares.
+        dates = [
+            "2024-12-31",
+            "2025-03-31",
+            "2025-06-30",
+            "2025-09-30",
+            "2025-12-31",
+        ]
+        datasets = {
+            "TaiwanStockFinancialStatements": [
+                {"date": date, "type": field, "value": value}
+                for date in dates
+                for field, value in [("Revenue", 1000), ("EPS", 1.0)]
+            ],
+            "TaiwanStockBalanceSheet": [
+                {"date": date, "type": "OrdinaryShare", "value": value}
+                for date, value in [
+                    ("2024-12-31", 1000),
+                    ("2025-06-30", 1200),
+                    ("2025-09-30", 1200),
+                    ("2025-12-31", 1200),
+                ]
+            ],
+        }
+
+        def cached_response(url, params, *, headers):
+            return json.dumps(
+                {
+                    "data": [
+                        row
+                        for row in datasets[params["dataset"]]
+                        if row["date"] >= params["start_date"]
+                    ]
+                }
+            )
+
+        now = valuation.pd.Timestamp("2026-05-01", tz="Asia/Taipei")
+        with (
+            patch.object(valuation.pd.Timestamp, "now", return_value=now),
+            patch.object(
+                valuation.shared,
+                "cached_get",
+                new=AsyncMock(side_effect=cached_response),
+            ),
+        ):
+            rows = asyncio.run(
+                valuation.fetch_finmind_taiwan_income_statements("2330", limit=4)
+            )
+
+        assert list(rows) == dates[1:]
+        assert rows == {
+            date: {
+                "revenue": 1000,
+                "weightedAverageShsOutDil": shares,
+                "epsDiluted": 1.0,
+            }
+            for date, shares in [
+                ("2025-03-31", 110),
+                ("2025-06-30", 120),
+                ("2025-09-30", 120),
+                ("2025-12-31", 120),
+            ]
+        }
 
     @pytest.mark.parametrize(
         "gap_positions", [(0,), (3,), (0, 3), (0, 1), (1, 2), (2, 3)]
@@ -629,7 +718,6 @@ class TestFinMindValuation:
             "t",
             1,
             valuation.FINMIND_TAIWAN_QUARTER_BUFFER,
-            valuation.FINMIND_TAIWAN_MONTH_BUFFER,
         )
         finmind_fetch.assert_any_await(
             "TaiwanStockFinancialStatements", "2330", "2024-01-01"
