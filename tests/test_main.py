@@ -17,6 +17,11 @@ class TestDownsideScore:
 
         assert score == 1
 
+    def test_current_valuation_above_upper_quantile_returns_negative_score(self):
+        series = pd.Series([1, 2, 3, 4, 5])
+
+        assert main.calc_downside_score(series, valuation_score_upper=0.5) == -2
+
 
 class TestGrowthRoute:
     @pytest.mark.parametrize("market", ["c", "j", "t", "u"])

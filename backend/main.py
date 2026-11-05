@@ -173,7 +173,7 @@ def calc_downside_score(s: pd.Series, valuation_score_upper: float) -> float:
     if lower == upper:
         return 0
 
-    return float(max(upper - s.iloc[-1], 0) / (upper - lower))
+    return float((upper - s.iloc[-1]) / (upper - lower))
 
 
 @app.get("/scores")
