@@ -164,16 +164,12 @@ def figure_to_png_response(fig, plt) -> fastapi.Response:
         plt.close(fig)
 
 
-def calc_downside_score(s: pd.Series, valuation_score_upper: float) -> float:
+def calc_downside_score(s: pd.Series) -> float:
+    """Return the fraction of historical values above the latest valuation."""
     if s.empty or s.isna().any() or (s <= 0).any():
         raise ValueError
 
-    upper = float(s.quantile(valuation_score_upper))
-    lower = float(s.quantile(valuation_score_upper / 2))
-    if lower == upper:
-        return 0
-
-    return float((upper - s.iloc[-1]) / (upper - lower))
+    return float((s > s.iloc[-1]).mean())
 
 
 @app.get("/scores")
@@ -181,16 +177,15 @@ async def get_scores(
     market: Literal["c", "j", "t", "u"],
     symbol: str,
     q: int,
-    u: float,
 ):
     if is_btc(market, symbol):
-        return await calc_btc_score(q, u), None
+        return await calc_btc_score(q), None
 
     df = await valuation.calc_px(market, symbol, q)
     ps, pe = df["ps"], df["pe"]
     return (
-        None if pd.isna(ps.iloc[0]) else calc_downside_score(ps, u),
-        None if pe.isna().any() else calc_downside_score(pe, u),
+        None if pd.isna(ps.iloc[0]) else calc_downside_score(ps),
+        None if pe.isna().any() else calc_downside_score(pe),
     )
 
 
@@ -263,8 +258,8 @@ async def get_btc_valuation_proxy(q: int) -> pd.Series:
     return await get_btc_price_to_sma_series(periods, window)
 
 
-async def calc_btc_score(q: int, valuation_score_upper: float) -> float:
-    return calc_downside_score(await get_btc_valuation_proxy(q), valuation_score_upper)
+async def calc_btc_score(q: int) -> float:
+    return calc_downside_score(await get_btc_valuation_proxy(q))
 
 
 @app.get("/px")

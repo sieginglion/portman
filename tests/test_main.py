@@ -10,17 +10,32 @@ from backend import main, valuation
 
 
 class TestDownsideScore:
-    def test_lower_quantile_is_half_the_requested_upper_quantile(self):
+    @pytest.mark.parametrize(
+        ("values", "expected"),
+        [
+            ([1, 2, 4, 8, 16, 3], 0.5),
+            ([2, 3, 4, 5, 1], 0.8),
+            ([1, 2, 3, 4, 5], 0.0),
+            ([1, 2, 2, 3, 2], 0.2),
+            ([2, 2, 2], 0.0),
+            ([2], 0.0),
+        ],
+    )
+    def test_inverted_empirical_percentile(self, values, expected):
+        assert main.calc_downside_score(pd.Series(values)) == expected
+
+    @pytest.mark.parametrize("values", [[], [1, None, 2], [0, 1], [-1, 1]])
+    def test_rejects_invalid_history(self, values):
+        with pytest.raises(ValueError, match=r"^$"):
+            main.calc_downside_score(pd.Series(values, dtype=float))
+
+    async def test_bitcoin_scores_use_the_valuation_proxy(self):
         series = pd.Series([1, 2, 4, 8, 16, 3])
+        with patch.object(main, "get_btc_valuation_proxy", return_value=series) as proxy:
+            score = await main.calc_btc_score(16)
 
-        score = main.calc_downside_score(series, valuation_score_upper=0.8)
-
-        assert score == 1
-
-    def test_current_valuation_above_upper_quantile_returns_negative_score(self):
-        series = pd.Series([1, 2, 3, 4, 5])
-
-        assert main.calc_downside_score(series, valuation_score_upper=0.5) == -2
+        assert score == 0.5
+        proxy.assert_awaited_once_with(16)
 
 
 class TestGrowthRoute:
@@ -412,21 +427,21 @@ class TestFigureToPngResponse:
 
 
 class TestScoresRoute:
-    def test_stock_scores_use_the_requested_upper_quantile(self):
+    def test_stock_scores_use_inverted_empirical_percentiles(self):
         prices = pd.DataFrame(
             {
                 "ps": [1, 2, 4, 8, 16, 3],
-                "pe": [1, 2, 4, 8, 16, 3],
+                "pe": [2, 3, 4, 5, 6, 1],
             }
         )
         with patch.object(valuation, "calc_px", return_value=prices) as calc_px:
             response = TestClient(main.app).get(
                 "/scores",
-                params={"market": "u", "symbol": "A", "q": 16, "u": 0.8},
+                params={"market": "u", "symbol": "A", "q": 16},
             )
 
         assert response.status_code == 200
-        assert response.json() == [1.0, 1.0]
+        assert response.json() == [0.5, 5 / 6]
         calc_px.assert_awaited_once_with("u", "A", 16)
 
     @pytest.mark.parametrize(
@@ -443,30 +458,30 @@ class TestScoresRoute:
         with patch.object(valuation, "calc_px", return_value=pd.DataFrame(values)):
             response = TestClient(main.app).get(
                 "/scores",
-                params={"market": "u", "symbol": "A", "q": 16, "u": 0.8},
+                params={"market": "u", "symbol": "A", "q": 16},
             )
 
         assert response.status_code == 200
         assert response.json() == expected
 
-    def test_bitcoin_scores_forward_the_requested_upper_quantile(self):
-        with patch.object(main, "calc_btc_score", return_value=1.25) as calc_btc_score:
+    def test_bitcoin_scores_forward_the_requested_quarters(self):
+        with patch.object(main, "calc_btc_score", return_value=0.5) as calc_btc_score:
             response = TestClient(main.app).get(
                 "/scores",
-                params={"market": "c", "symbol": "BTC", "q": 16, "u": 0.8},
+                params={"market": "c", "symbol": "BTC", "q": 16},
             )
 
         assert response.status_code == 200
-        assert response.json() == [1.25, None]
-        calc_btc_score.assert_awaited_once_with(16, 0.8)
+        assert response.json() == [0.5, None]
+        calc_btc_score.assert_awaited_once_with(16)
 
-    def test_scores_require_the_upper_quantile(self):
-        response = TestClient(main.app).get(
-            "/scores",
-            params={"market": "c", "symbol": "BTC", "q": 16},
-        )
+    def test_scores_schema_only_requires_market_symbol_and_quarters(self):
+        response = TestClient(main.app).get("/openapi.json")
 
-        assert response.status_code == 422
+        assert response.status_code == 200
+        parameters = response.json()["paths"]["/scores"]["get"]["parameters"]
+        assert {parameter["name"] for parameter in parameters} == {"market", "symbol", "q"}
+        assert all(parameter["required"] for parameter in parameters)
 
 
 class TestDiagnosticsRoute:
