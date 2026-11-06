@@ -338,7 +338,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
             ) as resolve_quarters,
         ):
             result = asyncio.run(
-                valuation.fetch_resolved_income_statement_quarters("u", "HOOD", 8, True)
+                valuation.fetch_resolved_income_statement_quarters("u", "HOOD", 8)
             )
 
         assert result == resolved
@@ -347,11 +347,10 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
             "HOOD",
             rows,
             8,
-            True,
             field_groups=None,
         )
 
-    def test_us_resolution_preserves_disabled_eps_after_fetch(self):
+    def test_us_resolution_forwards_growth_fields(self):
         rows = {"fmp": {"2025-03-31": {"revenue": 100}}}
         with (
             patch.object(
@@ -367,13 +366,13 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
         ):
             asyncio.run(
                 valuation.fetch_resolved_income_statement_quarters(
-                    "u", "HOOD", 8, False
+                    "u", "HOOD", 8, field_groups=valuation.GROWTH_FIELD_GROUPS
                 )
             )
 
         fetch_sources.assert_awaited_once_with("HOOD", 9)
         resolve_quarters.assert_awaited_once_with(
-            "HOOD", rows, 8, False, field_groups=None
+            "HOOD", rows, 8, field_groups=valuation.GROWTH_FIELD_GROUPS
         )
 
     def test_disabled_massive_is_not_fetched(self):

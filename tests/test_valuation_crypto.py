@@ -148,7 +148,7 @@ class TestTokenTerminalValuation:
         now = valuation.pd.Timestamp("2026-01-15", tz="UTC")
         with patch.object(valuation.pd.Timestamp, "now", return_value=now):
             frame = valuation.build_token_terminal_xps_frame(
-                monthly_rows("2025-01-01", 12), periods=12, include_eps=True
+                monthly_rows("2025-01-01", 12), periods=12
             )
 
         assert frame.columns.tolist() == ["rps", "eps"]
@@ -170,28 +170,33 @@ class TestTokenTerminalValuation:
         now = valuation.pd.Timestamp("2026-01-15", tz="UTC")
 
         with patch.object(valuation.pd.Timestamp, "now", return_value=now):
-            frame = valuation.build_token_terminal_xps_frame(
-                rows, periods=12, include_eps=True
-            )
+            frame = valuation.build_token_terminal_xps_frame(rows, periods=12)
 
         assert frame.index.strftime("%Y-%m-%d").tolist()[-1] == "2026-01-01"
         assert frame.loc["2026-01-01", "rps"] == pytest.approx(111 / 21)
 
-    def test_missing_crypto_metric_is_left_for_the_shared_gate(self):
+    @pytest.mark.parametrize("missing_metric", ["fees", "earnings"])
+    def test_missing_crypto_metric_is_left_for_the_shared_gate(self, missing_metric):
         rows = [
-            row for row in monthly_rows("2025-01-01", 12) if row["metric_id"] != "fees"
+            row
+            for row in monthly_rows("2025-01-01", 12)
+            if row["metric_id"] != missing_metric
         ]
         now = valuation.pd.Timestamp("2026-01-15", tz="UTC")
         with patch.object(valuation.pd.Timestamp, "now", return_value=now):
-            inputs = valuation.build_token_terminal_xps_frame(
-                rows, periods=12, include_eps=True
-            )
+            inputs = valuation.build_token_terminal_xps_frame(rows, periods=12)
 
         result = valuation.complete_and_roll_xps(
             {str(column): values for column, values in inputs.items()}, 12
         )
-        assert list(result) == ["eps"]
-        assert result["eps"].tolist() == [12.0]
+        if missing_metric == "fees":
+            assert list(result) == ["eps"]
+            assert result["eps"].tolist() == [12.0]
+        else:
+            assert list(result) == ["rps"]
+            assert result["rps"].iloc[0] == pytest.approx(
+                sum((100 + index) / (10 + index) for index in range(12))
+            )
 
     def test_missing_crypto_month_is_left_for_the_shared_gate(self):
         rows = [
@@ -203,9 +208,7 @@ class TestTokenTerminalValuation:
         ]
         now = valuation.pd.Timestamp("2026-01-15", tz="UTC")
         with patch.object(valuation.pd.Timestamp, "now", return_value=now):
-            inputs = valuation.build_token_terminal_xps_frame(
-                rows, periods=12, include_eps=True
-            )
+            inputs = valuation.build_token_terminal_xps_frame(rows, periods=12)
 
         result = valuation.complete_and_roll_xps(
             {str(column): values for column, values in inputs.items()}, 12
@@ -222,9 +225,7 @@ class TestTokenTerminalValuation:
         ]
         now = valuation.pd.Timestamp("2026-01-15", tz="UTC")
         with patch.object(valuation.pd.Timestamp, "now", return_value=now):
-            inputs = valuation.build_token_terminal_xps_frame(
-                rows, periods=12, include_eps=True
-            )
+            inputs = valuation.build_token_terminal_xps_frame(rows, periods=12)
 
         with pytest.raises(ValueError, match="neither a complete"):
             valuation.complete_and_roll_xps(
@@ -242,9 +243,7 @@ class TestTokenTerminalValuation:
         )["value"] = invalid_supply
         now = valuation.pd.Timestamp("2026-01-15", tz="UTC")
         with patch.object(valuation.pd.Timestamp, "now", return_value=now):
-            inputs = valuation.build_token_terminal_xps_frame(
-                rows, periods=12, include_eps=True
-            )
+            inputs = valuation.build_token_terminal_xps_frame(rows, periods=12)
 
         with pytest.raises(ValueError, match="neither a complete"):
             valuation.complete_and_roll_xps(
@@ -310,4 +309,4 @@ class TestTokenTerminalValuation:
 
         assert valuation.pd.isna(result["ps"].iloc[0])
         assert result["pe"].tolist() == [2.0]
-        fetch_monthly_xps.assert_awaited_once_with("UNI", 4, True)
+        fetch_monthly_xps.assert_awaited_once_with("UNI", 4)

@@ -146,7 +146,7 @@ def test_jpm_provider_pipeline_resolves_gross_revenue_before_rps(jpm_responses):
     ):
         source_rows = asyncio.run(valuation.fetch_us_income_statement_sources("JPM", 1))
         resolved = asyncio.run(
-            valuation.resolve_us_income_statement_quarters("JPM", source_rows, 1, True)
+            valuation.resolve_us_income_statement_quarters("JPM", source_rows, 1)
         )
         aligned = valuation.build_aligned_source_quarters(source_rows)[QUARTER_END]
 

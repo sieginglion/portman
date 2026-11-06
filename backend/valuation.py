@@ -162,7 +162,10 @@ EPS_XPS_FIELD = "epsDiluted"
 ALL_XPS_FIELDS = (*BASE_XPS_FIELDS, EPS_XPS_FIELD)
 XPS_COLUMNS = ("rps", "eps")
 XPS_FIELD_GROUPS = {"rps": BASE_XPS_FIELDS, "eps": (EPS_XPS_FIELD,)}
-GROWTH_FIELD_GROUPS = {"revenue": ("revenue",), "eps": (EPS_XPS_FIELD,)}
+GROWTH_FIELD_GROUPS: dict[str, tuple[str, ...]] = {
+    "revenue": ("revenue",),
+    "eps": (EPS_XPS_FIELD,),
+}
 
 
 def xps_field_map(shares_field: str, eps_field: str) -> dict[str, str]:
@@ -588,15 +591,12 @@ async def fetch_token_terminal_financial_statement(symbol: str) -> list[dict]:
 def build_token_terminal_xps_frame(
     rows: list[dict],
     periods: int,
-    include_eps: bool,
     *,
     total_revenue: bool = False,
 ) -> pd.DataFrame:
     """Map monthly fees and earnings to total revenue or per-token inputs."""
     columns = ("revenue", "eps") if total_revenue else XPS_COLUMNS
-    metric_map = {"fees": columns[0]}
-    if include_eps:
-        metric_map["earnings"] = "eps"
+    metric_map = {"fees": columns[0], "earnings": "eps"}
     tracked_metrics = [*metric_map, "token_supply_circulating"]
     frame = pd.DataFrame(rows)
     required_columns = {"timestamp", "metric_id", "value"}
@@ -635,12 +635,11 @@ def build_token_terminal_xps_frame(
 
 
 async def fetch_token_terminal_monthly_xps(
-    symbol: str, m: int, include_eps: bool, *, total_revenue: bool = False
+    symbol: str, m: int, *, total_revenue: bool = False
 ) -> XpsSeries:
     inputs = build_token_terminal_xps_frame(
         await fetch_token_terminal_financial_statement(symbol),
         m + 11,
-        include_eps,
         total_revenue=total_revenue,
     )
     return complete_and_roll_xps(
@@ -807,13 +806,8 @@ def select_latest_required_quarters[T](
     return selected
 
 
-def required_xps_fields(include_eps: bool) -> list[str]:
-    return [*BASE_XPS_FIELDS, *((EPS_XPS_FIELD,) if include_eps else ())]
-
-
 def split_xps_quarters(
     quarters: ResolvedQuarters,
-    include_eps: bool,
     *,
     field_groups: dict[str, tuple[str, ...]] | None = None,
 ) -> ResolvedXpsQuarters:
@@ -826,7 +820,6 @@ def split_xps_quarters(
         for column, fields in (
             XPS_FIELD_GROUPS if field_groups is None else field_groups
         ).items()
-        if column != "eps" or include_eps
     }
 
 
@@ -1701,19 +1694,13 @@ async def resolve_us_income_statement_quarters(
     symbol: str,
     source_rows: IncomeStatementSources,
     limit: int,
-    include_eps: bool,
     *,
     field_groups: dict[str, tuple[str, ...]] | None = None,
 ) -> ResolvedXpsQuarters:
     """Align provider data and resolve each metric's quarterly history."""
     groups = XPS_FIELD_GROUPS if field_groups is None else field_groups
     required_fields = list(
-        dict.fromkeys(
-            field
-            for column, fields in groups.items()
-            if column != "eps" or include_eps
-            for field in fields
-        )
+        dict.fromkeys(field for fields in groups.values() for field in fields)
     )
 
     # 1. Group provider rows that describe the same fiscal quarter.
@@ -1733,8 +1720,6 @@ async def resolve_us_income_statement_quarters(
     selected_quarters = {}
     selection_error = None
     for column, fields in groups.items():
-        if column == "eps" and not include_eps:
-            continue
         metric_fields = list(fields)
         metric_quarters = {
             anchor_date: resolve_us_quarter_consensus(
@@ -1765,7 +1750,7 @@ async def resolve_us_income_statement_quarters(
         raise selection_error
 
     # 4. Optionally record diagnostics for the same quarters that will be returned.
-    if include_eps and shared.ENABLE_XPS_DIAGNOSTICS:
+    if shared.ENABLE_XPS_DIAGNOSTICS:
         record_xps_diagnostics(symbol, selected_quarters)
 
     return resolved_quarters
@@ -1775,7 +1760,6 @@ async def fetch_resolved_income_statement_quarters(
     market: Literal["j", "t", "u"],
     symbol: str,
     limit: int,
-    include_eps: bool,
     *,
     field_groups: dict[str, tuple[str, ...]] | None = None,
 ) -> ResolvedXpsQuarters:
@@ -1787,9 +1771,9 @@ async def fetch_resolved_income_statement_quarters(
     else:
         source_rows = await fetch_us_income_statement_sources(symbol, limit + 1)
         return await resolve_us_income_statement_quarters(
-            symbol, source_rows, limit, include_eps, field_groups=field_groups
+            symbol, source_rows, limit, field_groups=field_groups
         )
-    return split_xps_quarters(quarters, include_eps, field_groups=field_groups)
+    return split_xps_quarters(quarters, field_groups=field_groups)
 
 
 def build_quarterly_xps_inputs(
@@ -1837,17 +1821,14 @@ async def fetch_xps(
     market: Literal["c", "j", "t", "u"],
     symbol: str,
     q: int,
-    include_eps: bool = True,
 ) -> XpsSeries:
     if market == "c":
-        monthly_series = await fetch_token_terminal_monthly_xps(
-            symbol, q * 3, include_eps
-        )
+        monthly_series = await fetch_token_terminal_monthly_xps(symbol, q * 3)
         return {column: values.iloc[2::3] for column, values in monthly_series.items()}
 
     limit = q + 3
     resolved_quarters = await fetch_resolved_income_statement_quarters(
-        market, symbol, limit, include_eps
+        market, symbol, limit
     )
     return build_xps_series(resolved_quarters)
 
@@ -1857,12 +1838,12 @@ async def fetch_growth_series(
 ) -> XpsSeries:
     if market == "c":
         monthly_series = await fetch_token_terminal_monthly_xps(
-            symbol, q * 3, True, total_revenue=True
+            symbol, q * 3, total_revenue=True
         )
         return {column: values.iloc[2::3] for column, values in monthly_series.items()}
 
     quarters = await fetch_resolved_income_statement_quarters(
-        market, symbol, q + 3, True, field_groups=GROWTH_FIELD_GROUPS
+        market, symbol, q + 3, field_groups=GROWTH_FIELD_GROUPS
     )
     return build_xps_series(quarters)
 
@@ -1871,7 +1852,7 @@ async def calc_px(
     market: Literal["c", "j", "t", "u"], symbol: str, q: int
 ) -> pd.DataFrame:
     xps_task = (
-        fetch_token_terminal_monthly_xps(symbol, q * 3 + 1, True)
+        fetch_token_terminal_monthly_xps(symbol, q * 3 + 1)
         if market == "c"
         else fetch_xps(market, symbol, q + EXTRA_Q)
     )

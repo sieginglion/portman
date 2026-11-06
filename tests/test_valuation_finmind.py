@@ -191,7 +191,7 @@ class TestFinMindValuation:
             },
         }
 
-        frame = valuation.build_xps_series(valuation.split_xps_quarters(quarters, True))
+        frame = valuation.build_xps_series(valuation.split_xps_quarters(quarters))
 
         assert list(frame) == ["rps", "eps"]
         for values in frame.values():
@@ -202,7 +202,9 @@ class TestFinMindValuation:
         assert frame["eps"].tolist() == [4.6, 5.0]
 
         without_eps = valuation.build_xps_series(
-            valuation.split_xps_quarters(quarters, False)
+            valuation.split_xps_quarters(
+                {date: {**row, "epsDiluted": None} for date, row in quarters.items()}
+            )
         )
         assert list(without_eps) == ["rps"]
         assert valuation.pd.DatetimeIndex(without_eps["rps"].index).strftime(
@@ -237,7 +239,7 @@ class TestFinMindValuation:
             },
         }
 
-        frame = valuation.build_xps_series(valuation.split_xps_quarters(quarters, True))
+        frame = valuation.build_xps_series(valuation.split_xps_quarters(quarters))
 
         assert list(frame) == ["eps"]
         assert frame["eps"].tolist() == [4.6]
@@ -670,7 +672,7 @@ class TestFinMindValuation:
             rows = valuation.normalize_finmind_taiwan_income_statement_rows(
                 financial_rows, balance_rows
             )
-            frame = valuation.build_xps_series(valuation.split_xps_quarters(rows, True))
+            frame = valuation.build_xps_series(valuation.split_xps_quarters(rows))
 
         assert all(
             rows[dates[index]]["weightedAverageShsOutDil"] is None
@@ -843,10 +845,7 @@ class TestFinMindValuation:
 
         assert list(rows) == ["2025-06-30"]
 
-    @pytest.mark.parametrize("include_eps", [True, False])
-    def test_resolved_taiwan_quarters_do_not_forward_include_eps(
-        self, include_eps: bool
-    ):
+    def test_resolved_taiwan_quarters_preserve_missing_eps(self):
         resolved: valuation.ResolvedQuarters = {
             "2025-06-30": {
                 "revenue": 110,
@@ -862,12 +861,10 @@ class TestFinMindValuation:
             new=fetch,
         ):
             result = asyncio.run(
-                valuation.fetch_resolved_income_statement_quarters(
-                    "t", "2330", 1, include_eps
-                )
+                valuation.fetch_resolved_income_statement_quarters("t", "2330", 1)
             )
 
-        assert result == valuation.split_xps_quarters(resolved, include_eps)
+        assert result == valuation.split_xps_quarters(resolved)
         fetch.assert_awaited_once_with("2330", 1)
 
     def test_select_latest_required_quarters_does_not_validate_metrics(self):

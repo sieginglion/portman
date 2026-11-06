@@ -32,7 +32,9 @@ def aligned_quarter(fields):
 
 
 class TestDateMatching:
-    def test_select_closest_date_key_uses_fourteen_day_limit_and_stable_tiebreaking(self):
+    def test_select_closest_date_key_uses_fourteen_day_limit_and_stable_tiebreaking(
+        self,
+    ):
         cases = (
             ("2025-03-31", ["2025-03-31"], "2025-03-31"),
             ("2025-04-06", ["2025-03-31"], "2025-03-31"),
@@ -403,7 +405,7 @@ class TestSecValuation:
         ):
             asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
-                    "SPCX", source_rows, limit=4, include_eps=True
+                    "SPCX", source_rows, limit=4
                 )
             )
 
@@ -431,9 +433,7 @@ class TestSecValuation:
 
         with patch.object(valuation, "add_sec_reference_values", new=AsyncMock()):
             resolved = asyncio.run(
-                valuation.resolve_us_income_statement_quarters(
-                    "AAPL", source_rows, 1, include_eps=True
-                )
+                valuation.resolve_us_income_statement_quarters("AAPL", source_rows, 1)
             )
 
         assert resolved == {
@@ -441,7 +441,7 @@ class TestSecValuation:
             "eps": {"2025-03-31": {"epsDiluted": 1}},
         }
 
-    def test_resolve_us_income_statement_quarters_without_eps(self):
+    def test_resolve_us_income_statement_quarters_allows_missing_eps(self):
         source_rows = {
             "fmp": {
                 "2025-03-31": {
@@ -459,6 +459,7 @@ class TestSecValuation:
 
         with (
             patch.object(valuation.shared, "ENABLE_SEC_REFERENCE", True),
+            patch.object(valuation.shared, "ENABLE_XPS_DIAGNOSTICS", True),
             patch.object(
                 valuation, "add_sec_reference_values", new=AsyncMock()
             ) as add_sec_values,
@@ -466,16 +467,16 @@ class TestSecValuation:
         ):
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
-                    "AAPL", source_rows, limit=1, include_eps=False
+                    "AAPL", source_rows, limit=1
                 )
             )
 
         add_sec_values.assert_awaited_once_with(
             "AAPL",
             ANY,
-            ["revenue", "weightedAverageShsOutDil"],
+            ["revenue", "weightedAverageShsOutDil", "epsDiluted"],
         )
-        diagnostics.assert_not_called()
+        diagnostics.assert_called_once_with("AAPL", ANY)
         assert resolved == {
             "rps": {"2025-03-31": {"revenue": 100, "weightedAverageShsOutDil": 10}}
         }
@@ -507,7 +508,7 @@ class TestSecValuation:
         ):
             asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
-                    "AAPL", source_rows, limit=1, include_eps=True
+                    "AAPL", source_rows, limit=1
                 )
             )
 
@@ -537,7 +538,7 @@ class TestSecValuation:
         ):
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
-                    "AAPL", source_rows, limit=1, include_eps=False
+                    "AAPL", source_rows, limit=1
                 )
             )
 
@@ -579,7 +580,7 @@ class TestSecValuation:
         ):
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
-                    "AAPL", source_rows, limit=1, include_eps=True
+                    "AAPL", source_rows, limit=1
                 )
             )
 
@@ -624,7 +625,7 @@ class TestSecValuation:
         ):
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
-                    "AAPL", source_rows, limit=1, include_eps=True
+                    "AAPL", source_rows, limit=1
                 )
             )
 
@@ -667,7 +668,6 @@ class TestSecValuation:
                     "AAPL",
                     {"fmp": rows, "finnhub": peer_rows},
                     limit=1,
-                    include_eps=True,
                 )
             )
 
@@ -677,7 +677,6 @@ class TestSecValuation:
         }
 
     @pytest.mark.parametrize("peer_value", [None, 1000])
-    @pytest.mark.parametrize("include_eps", [True, False])
     @pytest.mark.parametrize(
         "missing_fields",
         [
@@ -689,7 +688,7 @@ class TestSecValuation:
         ],
     )
     def test_fetch_xps_uses_previous_quarters_when_latest_lacks_consensus(
-        self, include_eps: bool, missing_fields: tuple[str, ...], peer_value
+        self, missing_fields: tuple[str, ...], peer_value
     ):
         dates = pd.date_range("2024-03-31", periods=6, freq="QE")
         fmp_rows: valuation.SourceIncomeStatementRows = {
@@ -725,9 +724,7 @@ class TestSecValuation:
             patch.object(valuation, "_xps_diagnostics", diagnostics),
             patch.object(valuation, "fetch_us_income_statement_sources", fetch_sources),
         ):
-            frame = asyncio.run(
-                valuation.fetch_xps("u", "PGR", q=2, include_eps=include_eps)
-            )
+            frame = asyncio.run(valuation.fetch_xps("u", "PGR", q=2))
 
         fetch_sources.assert_awaited_once_with("PGR", 6)
         rps_dropped = not missing_fields or bool(
@@ -739,23 +736,17 @@ class TestSecValuation:
             expected_dates[:2] if rps_dropped else expected_dates[1:]
         )
         assert rps.tolist() == pytest.approx([10, 14] if rps_dropped else [14, 18])
-        if include_eps:
-            eps_dropped = not missing_fields or "epsDiluted" in missing_fields
-            eps = frame["eps"]
-            assert pd.DatetimeIndex(eps.index).strftime("%Y-%m-%d").tolist() == (
-                expected_dates[:2] if eps_dropped else expected_dates[1:]
-            )
-            assert eps.tolist() == pytest.approx(
-                [1, 1.4] if eps_dropped else [1.4, 1.8]
-            )
-            different_windows = rps_dropped != eps_dropped
-            assert len(diagnostics.seen) == (6 if different_windows else 5)
-            assert (("PGR", latest_date) in diagnostics.seen) == (
-                not rps_dropped or not eps_dropped
-            )
-        else:
-            assert list(frame) == ["rps"]
-            assert diagnostics.seen == set()
+        eps_dropped = not missing_fields or "epsDiluted" in missing_fields
+        eps = frame["eps"]
+        assert pd.DatetimeIndex(eps.index).strftime("%Y-%m-%d").tolist() == (
+            expected_dates[:2] if eps_dropped else expected_dates[1:]
+        )
+        assert eps.tolist() == pytest.approx([1, 1.4] if eps_dropped else [1.4, 1.8])
+        different_windows = rps_dropped != eps_dropped
+        assert len(diagnostics.seen) == (6 if different_windows else 5)
+        assert (("PGR", latest_date) in diagnostics.seen) == (
+            not rps_dropped or not eps_dropped
+        )
 
     @pytest.mark.parametrize("latest_also_invalid", [False, True])
     @pytest.mark.parametrize("peer_value", [None, 1000])
@@ -867,7 +858,7 @@ class TestSecValuation:
         ):
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
-                    "AAPL", source_rows, limit=1, include_eps=True
+                    "AAPL", source_rows, limit=1
                 )
             )
 
@@ -921,7 +912,7 @@ class TestSecValuation:
         ):
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
-                    "AAPL", source_rows, limit=2, include_eps=True
+                    "AAPL", source_rows, limit=2
                 )
             )
 
@@ -980,7 +971,7 @@ class TestSecValuation:
         ):
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
-                    "MSFT", source_rows, limit=2, include_eps=True
+                    "MSFT", source_rows, limit=2
                 )
             )
 
@@ -1030,7 +1021,7 @@ class TestSecValuation:
         ):
             resolved = asyncio.run(
                 valuation.resolve_us_income_statement_quarters(
-                    "AAPL", source_rows, limit=1, include_eps=True
+                    "AAPL", source_rows, limit=1
                 )
             )
 
