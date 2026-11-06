@@ -125,7 +125,7 @@ class TestFinMindValuation:
             )
             assert (
                 valuation.quarterly_start_date(
-                    "t", limit=4, quarter_buffer=valuation.FINMIND_TAIWAN_QUARTER_BUFFER
+                    "t", limit=4, quarter_buffer=valuation.QUARTER_LOOKBACK_BUFFER
                 )
                 == "2025-01-22"
             )
@@ -719,7 +719,7 @@ class TestFinMindValuation:
         start_date.assert_called_once_with(
             "t",
             1,
-            valuation.FINMIND_TAIWAN_QUARTER_BUFFER,
+            valuation.QUARTER_LOOKBACK_BUFFER,
         )
         finmind_fetch.assert_any_await(
             "TaiwanStockFinancialStatements", "2330", "2024-01-01"

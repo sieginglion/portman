@@ -567,7 +567,7 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
             rows = asyncio.run(valuation.fetch_tiingo_income_statements("HOOD", 8))
 
         assert rows == {}
-        start_date.assert_called_once_with("u", 8, valuation.TIINGO_QUARTER_BUFFER)
+        start_date.assert_called_once_with("u", 8, valuation.QUARTER_LOOKBACK_BUFFER - 1)
         cached_get.assert_awaited_once_with(
             valuation.TIINGO_FUNDAMENTALS_STATEMENTS_URL.format("HOOD"),
             {"asReported": "false", "startDate": "2024-01-01"},

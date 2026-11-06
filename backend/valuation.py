@@ -243,11 +243,14 @@ SIMFIN_STATEMENTS_URL = "https://prod.simfin.com/api/v3/companies/statements/ver
 SIMFIN_WEIGHTED_SHARES_URL = (
     "https://prod.simfin.com/api/v3/companies/weighted-shares-outstanding"
 )
-# Allow one extra quarter for reporting delays and one for the preceding share
-# value needed to interpolate a gap in the oldest selected quarter.
-FINMIND_TAIWAN_QUARTER_BUFFER = 2
-TIINGO_QUARTER_BUFFER = 1
-SIMFIN_QUARTER_BUFFER = 1
+# Total start-date buffer relative to the requested resolved history: look back
+# limit + 2 quarters to allow limit + 1 published quarters with a one-quarter
+# reporting delay, assuming sufficient history and no missing data. The extra
+# published quarter supports US latest-quarter fallback or FinMind share-gap
+# interpolation at the oldest selected quarter.
+# US provider limits already include one quarter for latest-quarter fallback,
+# so date-based US providers subtract that quarter from this buffer.
+QUARTER_LOOKBACK_BUFFER = 2
 FINMIND_TAIWAN_SHARE_PAR_VALUE = 10
 SEC_DEDUPE_COLS = ["filed", "val", "start", "end"]
 SEC_ALLOWED_FORMS = {"10-Q", "10-K", "10-Q/A", "10-K/A"}
@@ -736,7 +739,7 @@ async def fetch_finmind_taiwan_income_statements(
     start_date = quarterly_start_date(
         "t",
         limit,
-        FINMIND_TAIWAN_QUARTER_BUFFER,
+        QUARTER_LOOKBACK_BUFFER,
     )
     financial_statement_rows, balance_sheet_rows = await asyncio.gather(
         fetch_finmind_taiwan_rows("TaiwanStockFinancialStatements", symbol, start_date),
@@ -1175,7 +1178,7 @@ async def fetch_tiingo_income_statements(symbol: str, limit: int) -> dict[str, d
     params = {
         # Use Tiingo's latest restated values, whose dates are fiscal period ends.
         "asReported": "false",
-        "startDate": quarterly_start_date("u", limit, TIINGO_QUARTER_BUFFER),
+        "startDate": quarterly_start_date("u", limit, QUARTER_LOOKBACK_BUFFER - 1),
     }
     text = await shared.cached_get(
         TIINGO_FUNDAMENTALS_STATEMENTS_URL.format(symbol),
@@ -1282,7 +1285,7 @@ async def fetch_simfin_income_statements(symbol: str, limit: int) -> dict[str, d
     params = {
         "ticker": symbol,
         "period": "Q1,Q2,Q3,Q4",
-        "start": quarterly_start_date("u", limit, SIMFIN_QUARTER_BUFFER),
+        "start": quarterly_start_date("u", limit, QUARTER_LOOKBACK_BUFFER - 1),
         "ttm": "false",
     }
     headers = {"Authorization": f"api-key {SIMFIN_API_KEY}"}
