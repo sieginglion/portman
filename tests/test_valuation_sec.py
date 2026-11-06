@@ -32,7 +32,7 @@ def aligned_quarter(fields):
 
 
 class TestDateMatching:
-    def test_select_closest_date_key_uses_fourteen_day_limit_and_stable_tiebreaking(
+    def test_select_closest_date_key_uses_thirty_day_limit_and_stable_tiebreaking(
         self,
     ):
         cases = (
@@ -41,10 +41,14 @@ class TestDateMatching:
             ("2025-04-07", ["2025-03-31"], "2025-03-31"),
             ("2025-04-13", ["2025-03-31"], "2025-03-31"),
             ("2025-03-18", ["2025-03-31"], "2025-03-31"),
-            ("2025-04-14", ["2025-03-31"], None),
-            ("2025-03-17", ["2025-03-31"], None),
-            ("2025-04-15", ["2025-03-31"], None),
-            ("2025-03-16", ["2025-03-31"], None),
+            ("2025-04-14", ["2025-03-31"], "2025-03-31"),
+            ("2025-03-17", ["2025-03-31"], "2025-03-31"),
+            ("2025-04-29", ["2025-03-31"], "2025-03-31"),
+            ("2025-03-02", ["2025-03-31"], "2025-03-31"),
+            ("2025-04-30", ["2025-03-31"], None),
+            ("2025-03-01", ["2025-03-31"], None),
+            ("2025-05-01", ["2025-03-31"], None),
+            ("2025-02-28", ["2025-03-31"], None),
             ("2025-04-04", ["2025-03-31", "2025-04-05"], "2025-04-05"),
             ("2025-04-03", ["2025-04-05", "2025-04-01"], "2025-04-01"),
         )
@@ -56,11 +60,11 @@ class TestDateMatching:
         row = {"commonStockSharesOutstanding": "123"}
 
         assert (
-            valuation.select_eodhd_balance_sheet_row("2025-03-31", {"2025-04-13": row})
+            valuation.select_eodhd_balance_sheet_row("2025-03-31", {"2025-04-29": row})
             is row
         )
         assert (
-            valuation.select_eodhd_balance_sheet_row("2025-03-31", {"2025-04-14": row})
+            valuation.select_eodhd_balance_sheet_row("2025-03-31", {"2025-04-30": row})
             is None
         )
 

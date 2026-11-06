@@ -501,6 +501,56 @@ assert valuation.us_income_statement_source_order(include_sec=True) == (
         }
         cached_get.assert_awaited_once()
 
+    def test_finnhub_invalid_dates_are_skipped_after_limiting(self):
+        payload = {
+            "financials": [
+                {"period": "2025-09-30", "revenue": 10},
+                {"period": "invalid", "revenue": 20},
+                {"period": "2025-12-31", "revenue": 30},
+            ]
+        }
+        with patch.object(
+            valuation.shared,
+            "cached_get",
+            new=AsyncMock(return_value=json.dumps(payload)),
+        ):
+            rows = asyncio.run(valuation.fetch_finnhub_income_statements("HOOD", 2))
+
+        assert rows == {
+            "2025-12-31": {
+                "revenue": 30_000_000,
+                "weightedAverageShsOutDil": None,
+                "epsDiluted": None,
+            }
+        }
+
+    def test_finnhub_last_selected_duplicate_replaces_bank_metadata(self):
+        payload = {
+            "financials": [
+                {
+                    "period": "2025-12-31",
+                    "bankInterestIncome": 10,
+                    "bankNonInterestIncome": 20,
+                },
+                {"period": "2025-12-31", "revenue": 40},
+                {"period": "2025-09-30", "revenue": 50},
+            ]
+        }
+        with patch.object(
+            valuation.shared,
+            "cached_get",
+            new=AsyncMock(return_value=json.dumps(payload)),
+        ):
+            rows = asyncio.run(valuation.fetch_finnhub_income_statements("HOOD", 2))
+
+        assert rows == {
+            "2025-12-31": {
+                "revenue": 40_000_000,
+                "weightedAverageShsOutDil": None,
+                "epsDiluted": None,
+            }
+        }
+
     def test_tiingo_fetch_uses_shared_start_date(self):
         with (
             patch.object(

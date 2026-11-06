@@ -28,9 +28,9 @@ from .shared import (
 EXTRA_Q = 1
 SOURCE_DIFF_THRESHOLD = 0.065
 # SimFin can round fiscal period ends to calendar month ends: QCOM's 2024-06-23
-# quarter appears as 2024-06-30 with identical revenue. Allow less than 14 days so
+# quarter appears as 2024-06-30 with identical revenue. Allow less than 30 days so
 # these rows align instead of creating extra quarters with only one source.
-MAX_DATE_MATCH_DIFFERENCE_DAYS = 14
+MAX_DATE_MATCH_DIFFERENCE_DAYS = 30
 EPS_ABS_TOLERANCE = 0.02
 FINNHUB_MILLION_SCALE = 1_000_000
 
@@ -1111,13 +1111,13 @@ async def fetch_finnhub_income_statements(symbol: str, limit: int) -> dict[str, 
     }
     text = await shared.cached_get("https://finnhub.io/api/v1/stock/financials", params)
 
-    financials = sorted(
+    field_map = xps_field_map("dilutedAverageSharesOutstanding", "dilutedEPS")
+    normalized_rows = {}
+    for row in sorted(
         json.loads(text)["financials"] or [],
         key=lambda row: row["period"],
         reverse=True,
-    )[:limit]
-    financials = [dict(row) for row in financials]
-    for row in financials:
+    )[:limit]:
         if any(
             has_source_field_value(value := to_source_number(row.get(field)))
             and value != 0
@@ -1127,16 +1127,15 @@ async def fetch_finnhub_income_statements(symbol: str, limit: int) -> dict[str, 
             row["revenue"] = bank_gross_revenue(
                 row.get("bankInterestIncome"), row.get("bankNonInterestIncome")
             )
-    normalized_rows = normalize_income_statement_rows(
-        financials,
-        field_map=xps_field_map("dilutedAverageSharesOutstanding", "dilutedEPS"),
-        date_field="period",
-        base_field_scale=FINNHUB_MILLION_SCALE,
-        metadata_fields={"is_bank": "is_bank"},
-    )
-    for row in normalized_rows.values():
-        if row.get("is_bank") is None:
-            row.pop("is_bank")
+        date = parse_timestamp(row.get("period"))
+        if date is None:
+            continue
+        normalized_row = normalize_source_row(
+            row, field_map, base_field_scale=FINNHUB_MILLION_SCALE
+        )
+        if row.get("is_bank") is not None:
+            normalized_row["is_bank"] = row["is_bank"]
+        normalized_rows[date_str(date)] = normalized_row
     return normalized_rows
 
 
